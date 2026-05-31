@@ -83,34 +83,57 @@ const registerUser = catchAsync(async (req, res) => {
 const loginUser = catchAsync(async (req, res) => {
     const { email, password, fcmToken, isRemember } = req.body;
 
-    if (!email || !password) {
-        throw new ApiError(400, "All fields are required");
+    if (!email?.trim() || !password?.trim()) {
+        throw new ApiError(400, "Email and password are required");
     }
 
     const user = await User.findOne({ email });
 
     if (!user) {
-        throw new ApiError(404, "Invalid credential");
+        throw new ApiError(401, "Invalid credentials");
+    }
+
+    if (!user.isEmailVerified) {
+        throw new ApiError(403, "Please verify your email before logging in");
+    }
+
+    if (user.accountStatus !== "active") {
+        throw new ApiError(403, `Your account has been ${user.accountStatus}`);
     }
 
     const isPasswordValid = await user.isPasswordCorrect(password);
 
     if (!isPasswordValid) {
-        throw new ApiError(401, "Invalid user credential");
+        throw new ApiError(401, "Invalid credentials");
     }
 
-    const { accessToken, refreshToken } = await generateAccessAndRefreshToken(user._id, isRemember);
+    const { accessToken, refreshToken } = await generateAccessAndRefreshToken(
+        user._id,
+        isRemember
+    );
+
+    // Only update fcmToken if provided
+    if (fcmToken?.trim()) {
+        user.fcmToken = fcmToken;
+    }
+
     user.refreshToken = refreshToken;
-    user.fcmToken = fcmToken;
     user.lastLoginAt = new Date();
     await user.save({ validateBeforeSave: false });
 
+    // Strip sensitive fields before sending — never trust select() alone in responses
+    const loggedInUser = user.toObject();
+    delete loggedInUser.password;
+    delete loggedInUser.refreshToken;
+    delete loggedInUser.emailOtp;
+    delete loggedInUser.emailOtpExpiry;
+
     return res.status(200).json(
-        new ApiResponse(200, {
-            loggedInUser: user,
-            accessToken,
-            refreshToken
-        }, "User logged in successfully")
+        new ApiResponse(
+            200,
+            { loggedInUser, accessToken, refreshToken },
+            "User logged in successfully"
+        )
     );
 });
 
@@ -129,7 +152,7 @@ const logoutUser = catchAsync(async (req, res) => {
         {
             $unset: {
                 refreshToken: 1,
-                FCMToken: 1,
+                fcmToken: 1,
             },
         },
         { new: true }
@@ -145,7 +168,7 @@ const getCurrentUser = catchAsync(async (req, res) => {
 });
 
 const refreshAccessToken = catchAsync(async (req, res) => {
-    const incomingRefreshToken = req.header("Authorization")?.replace("Bearer ", "");
+    const incomingRefreshToken = req.header("x-refresh-token");
 
     if (!incomingRefreshToken || incomingRefreshToken === "null" || incomingRefreshToken === "undefined") {
         throw new ApiError(401, "Unauthorized request");
@@ -156,18 +179,18 @@ const refreshAccessToken = catchAsync(async (req, res) => {
         decodedToken = jwt.verify(incomingRefreshToken, process.env.REFRESH_TOKEN_SECRET);
     } catch (err) {
         if (err.name === 'TokenExpiredError') {
-            throw new ApiError(401, "Session expired. Please login again.");
+            throw new ApiError(401, "Refresh token is expired");
         }
-        throw new ApiError(401, "Session expired. Please login again.");
+        throw new ApiError(403, "Invalid refresh token");
     }
 
     const user = await User.findById(decodedToken?._id);
     if (!user || user.accountStatus !== "active") {
-        throw new ApiError(401, "Session expired. Please login again.");
+        throw new ApiError(401, "Invalid refresh token");
     }
 
     if (incomingRefreshToken !== user.refreshToken) {
-        throw new ApiError(401, "Session expired. Please login again.");
+        throw new ApiError(401, "Refresh token is expired or used");
     }
 
     const { accessToken, refreshToken } = await generateAccessAndRefreshToken(user._id);
