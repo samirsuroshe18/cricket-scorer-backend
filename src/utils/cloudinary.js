@@ -17,7 +17,7 @@ const uploadOnCloudinary = async (localFilePath) => {
         if (!localFilePath) return null;
 
         if (fs.existsSync(localFilePath)) {
-            response = await cloud.uploader.upload(localFilePath, { resource_type: "auto", folder: "lth-complaint-files", });
+            response = await cloud.uploader.upload(localFilePath, { resource_type: "auto", folder: "cricket-scorer-files", });
             console.log("file is uploaded on cloudinary sdk : ", response.secure_url);
             fs.unlinkSync(localFilePath)//remove the locally saved temporary files as the upload operation got successfull
         }else{

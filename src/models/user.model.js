@@ -93,8 +93,8 @@ const userSchema = new Schema(
     { timestamps: true },
 );
 
-// Create TTL index manually (only applies to documents where `lastModifiedDate` exists)
-userSchema.index({ expireDocAfterSeconds: 1 }, { expireAfterSeconds: 600 });
+// Create TTL index manually (only applies to documents where `expireDocAfterSeconds` exists)
+userSchema.index({ expireDocAfterSeconds: 1 }, { expireAfterSeconds: 0 });
 
 //pre hooks allow us to do any operation before saving the data in database
 //in pre hook the first parameter on which event you have to do the operation like save, validation, etc

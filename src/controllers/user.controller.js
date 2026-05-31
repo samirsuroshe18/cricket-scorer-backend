@@ -40,7 +40,6 @@ const registerUser = catchAsync(async (req, res) => {
     }
     
     const existedUser = await User.findOne({ email });
-    console.log('samir');
     
     if (existedUser) {
         throw new ApiError(409, "User with same email already exists");
@@ -56,9 +55,8 @@ const registerUser = catchAsync(async (req, res) => {
         userName,
         emailOtp: otp,
         emailOtpExpiry: otpExpiry,
-        expireDocAfterSeconds: new Date(),
+        expireDocAfterSeconds: new Date(Date.now() + 24 * 60 * 60 * 1000),
     });
-    console.log("Suroshe");
 
     const createdUser = await User.findById(user._id);
 
@@ -392,7 +390,7 @@ const resendOtp = catchAsync(async (req, res) => {
 
     // Refresh TTL window for unverified users so doc doesn't expire mid-flow
     if (type === "VERIFY_EMAIL") {
-        user.expireDocAfterSeconds = new Date();
+        user.expireDocAfterSeconds = new Date(Date.now() + 24 * 60 * 60 * 1000);
     }
 
     await user.save();
