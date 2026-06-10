@@ -72,21 +72,29 @@ const userSchema = new Schema(
         fcmToken: {
             type: String,
         },
-
+        
         // Account Management
         accountStatus: {
             type: String,
             enum: ["active", "blocked", "suspended"],
             default: "active"
         },
-
+        
         isDeleted: {
             type: Boolean,
             default: false,
             index: true
         },
-
+        
         expireDocAfterSeconds: {
+            type: Date,
+        },
+        
+        otpVerifyToken : {
+            type: String,
+        },
+
+        otpVerifyTokenExpiry : {
             type: Date,
         },
     },

@@ -8,6 +8,8 @@ import { User } from '../models/user.model.js';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { uploadOnCloudinary } from '../utils/cloudinary.js';
+import { generateSecureToken } from "../utils/token.js";
+import { OTP_TYPES } from "../constants/otp.constants.js";
 
 const generateAccessAndRefreshToken = async (userId, isRemember = false) => {
     try {
@@ -34,17 +36,17 @@ const generateAccessAndRefreshToken = async (userId, isRemember = false) => {
 
 const registerUser = catchAsync(async (req, res) => {
     const { userName, email, password } = req.body;
-    
+
     if (!userName?.trim() || !email?.trim() || !password?.trim()) {
         throw new ApiError(400, "All fields are required");
     }
-    
+
     const existedUser = await User.findOne({ email });
-    
+
     if (existedUser) {
         throw new ApiError(409, "User with same email already exists");
     }
-    
+
     // Generate OTP before creating user
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
@@ -260,6 +262,25 @@ const forgotPassword = catchAsync(async (req, res) => {
 });
 
 const verifyOtp = catchAsync(async (req, res) => {
+    const { type } = req.body;
+
+    if (!Object.values(OTP_TYPES).includes(type)) {
+        throw new ApiError(400, "Invalid OTP type");
+    }
+
+    switch (type) {
+        case OTP_TYPES.EMAIL_VERIFICATION:
+            return await verifyEmail(req, res);
+
+        case OTP_TYPES.FORGOT_PASSWORD:
+            return await verifyForgotPasswordOtp(req, res);
+
+        default:
+            throw new ApiError(400, "Invalid OTP type");
+    }
+});
+
+const verifyEmail = async (req, res) => {
     const { email, emailOtp } = req.body;
 
     if (!email || !emailOtp) {
@@ -297,10 +318,52 @@ const verifyOtp = catchAsync(async (req, res) => {
     return res.status(200).json(
         new ApiResponse(200, {}, "Email verified successfully")
     );
-});
+};
+
+const verifyForgotPasswordOtp = async (req, res) => {
+    const { email, emailOtp } = req.body;
+    
+    if (!email || !emailOtp) {
+        throw new ApiError(400, "Email and OTP are required");
+    }
+    
+    const user = await User.findOne({ email, isEmailVerified: true }).select(
+        "+emailOtp +emailOtpExpiry"
+    );
+    
+    if (!user) {
+        throw new ApiError(404, "User not found");
+    }
+    
+    if (user.emailOtpExpiry < Date.now()) {
+        user.emailOtp = null;
+        user.emailOtpExpiry = null;
+        await user.save();
+        throw new ApiError(400, "OTP has expired, please request a new one");
+    }
+
+    if (user.emailOtp !== emailOtp) {
+        throw new ApiError(400, "Invalid OTP");
+    }
+
+    // Generate a short-lived reset token instead of allowing direct password change
+    // This prevents skipping OTP and hitting the reset endpoint directly
+    const { token, hashedToken } = generateSecureToken();
+    const otpVerifyTokenExpiry = Date.now() + 5 * 60 * 1000;
+
+    user.otpVerifyToken = hashedToken;
+    user.otpVerifyTokenExpiry = otpVerifyTokenExpiry; // 10 minutes
+    user.emailOtp = null;
+    user.emailOtpExpiry = null;
+    await user.save({ validateBeforeSave: false });
+
+    return res.status(200).json(
+        new ApiResponse(200, { resetToken: token }, "OTP verified successfully")
+    );
+};
 
 const setPassword = catchAsync(async (req, res) => {
-    const { email, newPassword, confirmPassword } = req.body;
+    const { email, newPassword, confirmPassword, resetToken } = req.body;
 
     if (!email || !newPassword || !confirmPassword) {
         throw new ApiError(400, "Email, new password and confirm password are required");
@@ -316,11 +379,27 @@ const setPassword = catchAsync(async (req, res) => {
         throw new ApiError(404, "Invalid email or email is not verified");
     }
 
-    if (user.emailOtp !== null || user.emailOtpExpiry !== null) {
+    if (user.emailOtp || user.emailOtpExpiry) {
         throw new ApiError(400, "Please verify your OTP first before resetting the password");
     }
 
+    const hashedToken = crypto
+        .createHash("sha256")
+        .update(resetToken)
+        .digest("hex");
+
+    const user2 = await User.findOne({
+        otpVerifyToken: hashedToken,
+        otpVerifyTokenExpiry: { $gt: Date.now() },
+    });
+
+    if (!user2) {
+        throw new ApiError(400, "Reset token is invalid or has expired");
+    }
+
     user.password = newPassword;
+    user.otpVerifyToken = undefined;
+    user.otpVerifyTokenExpiry = undefined;
     user.passwordChangedAt = new Date();
     await user.save({ validateBeforeSave: false });
 
@@ -382,41 +461,53 @@ const resendOtp = catchAsync(async (req, res) => {
         throw new ApiError(400, "Email is required");
     }
 
-    const validTypes = ["VERIFY_EMAIL", "FORGOT_PASSWORD"];
-    if (!type || !validTypes.includes(type)) {
-        throw new ApiError(400, "Valid type is required: VERIFY_EMAIL or FORGOT_PASSWORD");
+    if (!Object.values(OTP_TYPES).includes(type)) {
+        throw new ApiError(400, "Invalid OTP type");
     }
 
     // Build query based on type
-    const query = type === "VERIFY_EMAIL"
-        ? { email, isEmailVerified: false }
-        : { email, isEmailVerified: true };
+    let query;
+    switch (type) {
+        case OTP_TYPES.EMAIL_VERIFICATION:
+            query = { email, isEmailVerified: false };
+            break;
+        case OTP_TYPES.FORGOT_PASSWORD:
+            query = { email, isEmailVerified: true };
+            break;
+        default:
+            throw new ApiError(400, "Invalid OTP type");
+    }
 
+    console.log(type === OTP_TYPES.EMAIL_VERIFICATION);
     const user = await User.findOne(query).select("+emailOtp +emailOtpExpiry");
 
     if (!user) {
-        // Intentionally vague to prevent user enumeration
         throw new ApiError(404, "No account found or action not applicable");
     }
 
-    // Rate limit: don't resend if a valid OTP was sent less than 1 minute ago
-    const ONE_MINUTE = 60 * 1000;
-    if (user.emailOtpExpiry && user.emailOtpExpiry.getTime() - Date.now() > (10 * 60 * 1000 - ONE_MINUTE)) {
-        throw new ApiError(429, "Please wait at least 1 minute before requesting a new OTP");
+    // Rate limit: don't resend if OTP was sent less than 1 minute ago
+    const ONE_MINUTE = 30 * 1000;
+    const OTP_VALIDITY = 10 * 60 * 1000; // 10 minutes
+    if (user.emailOtpExpiry) {
+        const otpSentAt = user.emailOtpExpiry.getTime() - OTP_VALIDITY;
+        if (Date.now() - otpSentAt < ONE_MINUTE) {
+            throw new ApiError(429, "Please wait at least 30 seconds before requesting a new OTP");
+        }
     }
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    // Cryptographically secure OTP
+    const otp = crypto.randomInt(100000, 999999).toString();
+    const otpExpiry = new Date(Date.now() + OTP_VALIDITY);
 
     user.emailOtp = otp;
     user.emailOtpExpiry = otpExpiry;
 
     // Refresh TTL window for unverified users so doc doesn't expire mid-flow
-    if (type === "VERIFY_EMAIL") {
+    if (type === OTP_TYPES.EMAIL_VERIFICATION) {
         user.expireDocAfterSeconds = new Date(Date.now() + 24 * 60 * 60 * 1000);
     }
 
-    await user.save();
+    await user.save({ validateBeforeSave: false });
 
     const mailResponse = await mailSender(email, type, otp);
 
