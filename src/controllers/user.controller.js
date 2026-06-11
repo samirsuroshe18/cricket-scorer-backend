@@ -35,9 +35,9 @@ const generateAccessAndRefreshToken = async (userId, isRemember = false) => {
 }
 
 const registerUser = catchAsync(async (req, res) => {
-    const { userName, email, password } = req.body;
+    const { fullName, email, password } = req.body;
 
-    if (!userName?.trim() || !email?.trim() || !password?.trim()) {
+    if (!fullName?.trim() || !email?.trim() || !password?.trim()) {
         throw new ApiError(400, "All fields are required");
     }
 
@@ -54,7 +54,7 @@ const registerUser = catchAsync(async (req, res) => {
     const user = await User.create({
         email,
         password,
-        userName,
+        fullName,
         emailOtp: otp,
         emailOtpExpiry: otpExpiry,
         expireDocAfterSeconds: new Date(Date.now() + 24 * 60 * 60 * 1000),
@@ -67,7 +67,7 @@ const registerUser = catchAsync(async (req, res) => {
     }
 
     // Pass OTP to mailSender
-    const mailResponse = await mailSender(email, "VERIFY_EMAIL", otp);
+    const mailResponse = await mailSender(email, OTP_TYPES.EMAIL_VERIFICATION, otp);
 
     if (mailResponse) {
         return res.status(200).json(
@@ -96,6 +96,12 @@ const loginUser = catchAsync(async (req, res) => {
     }
 
     if (!user.isEmailVerified) {
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+        user.emailOtp = otp;
+        user.emailOtpExpiry = otpExpiry;
+        await user.save({ validateBeforeSave: false });
+        await mailSender(email, OTP_TYPES.EMAIL_VERIFICATION, otp);
         throw new ApiError(403, "Please verify your email before logging in");
     }
 
@@ -322,19 +328,19 @@ const verifyEmail = async (req, res) => {
 
 const verifyForgotPasswordOtp = async (req, res) => {
     const { email, emailOtp } = req.body;
-    
+
     if (!email || !emailOtp) {
         throw new ApiError(400, "Email and OTP are required");
     }
-    
+
     const user = await User.findOne({ email, isEmailVerified: true }).select(
         "+emailOtp +emailOtpExpiry"
     );
-    
+
     if (!user) {
         throw new ApiError(404, "User not found");
     }
-    
+
     if (user.emailOtpExpiry < Date.now()) {
         user.emailOtp = null;
         user.emailOtpExpiry = null;
@@ -485,12 +491,12 @@ const resendOtp = catchAsync(async (req, res) => {
         throw new ApiError(404, "No account found or action not applicable");
     }
 
-    // Rate limit: don't resend if OTP was sent less than 1 minute ago
-    const ONE_MINUTE = 30 * 1000;
+    // Rate limit: don't resend if OTP was sent less than 30 seconds ago
+    const THIRTY_SECONDS = 30 * 1000;
     const OTP_VALIDITY = 10 * 60 * 1000; // 10 minutes
     if (user.emailOtpExpiry) {
         const otpSentAt = user.emailOtpExpiry.getTime() - OTP_VALIDITY;
-        if (Date.now() - otpSentAt < ONE_MINUTE) {
+        if (Date.now() - otpSentAt < THIRTY_SECONDS) {
             throw new ApiError(429, "Please wait at least 30 seconds before requesting a new OTP");
         }
     }

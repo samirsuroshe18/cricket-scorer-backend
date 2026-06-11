@@ -42,16 +42,17 @@ const userSchema = new Schema(
         lastLoginAt: Date,
 
         // Profile
-        userName: {
+        fullName: {
             type: String,
             required: true,
             trim: true,
         },
 
-        fullName: {
+        userName: {
             type: String,
+            unique: true,
+            sparse: true,
             trim: true,
-            maxlength: 80
         },
 
         photoUrl: {
@@ -72,29 +73,29 @@ const userSchema = new Schema(
         fcmToken: {
             type: String,
         },
-        
+
         // Account Management
         accountStatus: {
             type: String,
             enum: ["active", "blocked", "suspended"],
             default: "active"
         },
-        
+
         isDeleted: {
             type: Boolean,
             default: false,
             index: true
         },
-        
+
         expireDocAfterSeconds: {
             type: Date,
         },
-        
-        otpVerifyToken : {
+
+        otpVerifyToken: {
             type: String,
         },
 
-        otpVerifyTokenExpiry : {
+        otpVerifyTokenExpiry: {
             type: Date,
         },
     },

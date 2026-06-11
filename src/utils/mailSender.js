@@ -1,12 +1,13 @@
 import { createTransport } from 'nodemailer';
 import bcrypt from 'bcrypt';
 import { User } from '../models/user.model.js';
+import { OTP_TYPES } from '../constants/otp.constants.js';
 
 async function mailSender(email, emailType, otp) {
   let subject, htmlContent;
 
   switch (emailType) {
-    case "FORGOT_PASSWORD":
+    case OTP_TYPES.FORGOT_PASSWORD:
       subject = "Password Reset OTP";
       htmlContent = `
         <div style="font-family:Arial,sans-serif;max-width:480px;margin:auto;padding:32px;border:1px solid #e5e7eb;border-radius:8px;">
@@ -19,7 +20,7 @@ async function mailSender(email, emailType, otp) {
         </div>`;
       break;
 
-    case "VERIFY_EMAIL":
+    case OTP_TYPES.EMAIL_VERIFICATION:
       subject = "Verify Your Email Address",
         htmlContent = `
         <div style="font-family:Arial,sans-serif;max-width:480px;margin:auto;padding:32px;border:1px solid #e5e7eb;border-radius:8px;">
