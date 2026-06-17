@@ -415,11 +415,11 @@ const setPassword = catchAsync(async (req, res) => {
 });
 
 const updateProfile = catchAsync(async (req, res) => {
-    const { fullName, bio } = req.body;
+    const { userName, bio } = req.body;
     let imageUrl = null;
     const imagePath = req.file?.path || null;
 
-    if (typeof fullName !== "string" || !fullName.trim()) {
+    if (typeof userName !== "string" || !userName.trim()) {
         throw new ApiError(400, "Full name is required");
     }
 
@@ -429,7 +429,7 @@ const updateProfile = catchAsync(async (req, res) => {
     }
 
     const updateData = {
-        fullName: fullName.trim(),
+        userName: userName.trim(),
         profileCompleted: true,
     };
 
@@ -484,7 +484,6 @@ const resendOtp = catchAsync(async (req, res) => {
             throw new ApiError(400, "Invalid OTP type");
     }
 
-    console.log(type === OTP_TYPES.EMAIL_VERIFICATION);
     const user = await User.findOne(query).select("+emailOtp +emailOtpExpiry");
 
     if (!user) {
@@ -493,7 +492,7 @@ const resendOtp = catchAsync(async (req, res) => {
 
     // Rate limit: don't resend if OTP was sent less than 30 seconds ago
     const THIRTY_SECONDS = 30 * 1000;
-    const OTP_VALIDITY = 10 * 60 * 1000; // 10 minutes
+    const OTP_VALIDITY = 10 * 60 * 1000;
     if (user.emailOtpExpiry) {
         const otpSentAt = user.emailOtpExpiry.getTime() - OTP_VALIDITY;
         if (Date.now() - otpSentAt < THIRTY_SECONDS) {
