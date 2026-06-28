@@ -10,6 +10,7 @@ import crypto from 'crypto';
 import { uploadOnCloudinary } from '../utils/cloudinary.js';
 import { generateSecureToken } from "../utils/token.js";
 import { OTP_TYPES } from "../constants/otp.constants.js";
+import { SUPPORTED_LANGUAGES } from "../constants/language.constants.js";
 
 const generateAccessAndRefreshToken = async (userId, isRemember = false) => {
     try {
@@ -525,6 +526,46 @@ const resendOtp = catchAsync(async (req, res) => {
     throw new ApiError(500, "Failed to send OTP email, please try again");
 });
 
+const getUserLanguage = catchAsync(async (req, res) => {
+    return res.status(200).json(
+        new ApiResponse(
+            200,
+            { language: req.user.language },
+            "Language fetched successfully"
+        )
+    );
+});
+
+const updateUserLanguage = catchAsync(async (req, res) => {
+    const { language } = req.body;
+
+    if (!language?.trim()) {
+        throw new ApiError(400, "Language is required");
+    }
+
+    if (!Object.values(SUPPORTED_LANGUAGES).includes(language.toLowerCase())) {
+        throw new ApiError(400, `Unsupported language. Supported languages are: ${Object.values(SUPPORTED_LANGUAGES).join(', ')}`);
+    }
+
+    const user = await User.findByIdAndUpdate(
+        req.user._id,
+        { language: language.toLowerCase().trim() },
+        { new: true }
+    ).select('language');
+
+    if (!user) {
+        throw new ApiError(404, "User not found");
+    }
+
+    return res.status(200).json(
+        new ApiResponse(
+            200,
+            { language: user.language },
+            "Language updated successfully"
+        )
+    );
+});
+
 export {
     registerUser,
     loginUser,
@@ -538,4 +579,6 @@ export {
     setPassword,
     updateProfile,
     resendOtp,
+    getUserLanguage, 
+    updateUserLanguage,
 };

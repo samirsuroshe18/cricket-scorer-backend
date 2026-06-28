@@ -98,6 +98,15 @@ const userSchema = new Schema(
         otpVerifyTokenExpiry: {
             type: Date,
         },
+
+        language: {
+            type: String,
+            required: true,
+            trim: true,
+            lowercase: true,
+            enum: ['en', 'hi', 'mr'],
+            default: 'en'
+        },
     },
     { timestamps: true },
 );

@@ -34,9 +34,11 @@ app.use(cookieParser());
 
 // routes import
 import userRouter from './routes/user.routes.js';
+import translationRouter from './routes/translation.routes.js';
 
 //Routes declaration
 app.use("/api/v1/user", userRouter);
+app.use("/api/v1/translations", translationRouter);
 
 // Custom error handeling
 app.use(errorHandler)
