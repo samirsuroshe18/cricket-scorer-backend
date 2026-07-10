@@ -107,6 +107,13 @@ const userSchema = new Schema(
             enum: ['en', 'hi', 'mr'],
             default: 'en'
         },
+
+        userType: {
+            type: String,
+            enum: ['player', 'organization'],
+            default: 'player',
+            required: true,
+        },
     },
     { timestamps: true },
 );

@@ -1,3 +1,5 @@
+import { TranslationMeta } from "../models/translationMeta.model.js";
+
 const incrementGlobalVersion = () =>
     TranslationMeta.findOneAndUpdate(
         {},
