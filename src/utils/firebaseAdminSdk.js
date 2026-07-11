@@ -5,7 +5,7 @@ import path from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const serviceAccount = path.join(__dirname, '../../service-account-file.json');
+const serviceAccount = path.join(__dirname, process.env.FIREBASE_SERVICE_ACCOUNT);
 
 const initializeFirebaseAdmin = () => {
     admin.initializeApp({

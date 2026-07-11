@@ -1,5 +1,3 @@
-import dotenv from "dotenv";
-dotenv.config()
 import catchAsync from '../utils/catchAsync.js';
 import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
