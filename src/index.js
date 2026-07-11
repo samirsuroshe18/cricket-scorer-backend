@@ -1,10 +1,7 @@
 // import './utils/dnsConfig.js'
-import dotenv from "dotenv";
-dotenv.config({
-    path: `.env.${process.env.NODE_ENV || "development"}`
-});
-const { default: app } = await import("./app.js");
-const { default: connectDB } = await import("./database/database.js");
+import "./config/env.js";
+import app from "./app.js";
+import connectDB from "./database/database.js";
 
 connectDB().then(()=>{
     app.listen(process.env.PORT || 8000, process.env.SERVER_HOST, async ()=>{
