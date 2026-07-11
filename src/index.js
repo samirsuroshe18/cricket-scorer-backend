@@ -2,6 +2,7 @@
 import "./config/env.js";
 import app from "./app.js";
 import connectDB from "./database/database.js";
+import "./config/i18n.js";
 
 connectDB().then(()=>{
     app.listen(process.env.PORT || 8000, process.env.SERVER_HOST, async ()=>{

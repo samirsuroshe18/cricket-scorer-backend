@@ -15,7 +15,7 @@ const generateAccessAndRefreshToken = async (userId, isRemember = false) => {
         const user = await User.findById(userId);
 
         if (!user) {
-            throw new ApiError(404, "User not found");
+            throw new ApiError(404, "USER_NOT_FOUND");
         }
 
         const refreshExpiry = isRemember ? "30d" : undefined;
@@ -29,7 +29,8 @@ const generateAccessAndRefreshToken = async (userId, isRemember = false) => {
 
         return { accessToken, refreshToken }
     } catch (error) {
-        throw new ApiError(500, error.message || "Something went wrong while generating tokens");
+        if (error.isApiError) throw error; // re-throw as-is, don't reclassify
+        throw new ApiError(500, "TOKEN_GENERATION_FAILED");
     }
 }
 
@@ -37,18 +38,16 @@ const registerUser = catchAsync(async (req, res) => {
     const { fullName, email, password } = req.body;
 
     if (!fullName?.trim() || !email?.trim() || !password?.trim()) {
-        throw new ApiError(400, "All fields are required");
+        throw new ApiError(400, "ALL_FIELDS_REQUIRED");
     }
 
     const existedUser = await User.findOne({ email });
-
     if (existedUser) {
-        throw new ApiError(409, "User with same email already exists");
+        throw new ApiError(409, "EMAIL_ALREADY_EXISTS");
     }
 
-    // Generate OTP before creating user
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
 
     const user = await User.create({
         email,
@@ -60,38 +59,32 @@ const registerUser = catchAsync(async (req, res) => {
     });
 
     const createdUser = await User.findById(user._id);
-
     if (!createdUser) {
-        throw new ApiError(500, "Something went wrong while registering the user");
+        throw new ApiError(500, "USER_REGISTRATION_FAILED");
     }
 
-    // Pass OTP to mailSender
     const mailResponse = await mailSender(email, OTP_TYPES.EMAIL_VERIFICATION, otp);
 
     if (mailResponse) {
         return res.status(200).json(
-            new ApiResponse(
-                200,
-                {},
-                "An email sent to your account, please verify within 10 minutes"
-            )
+            new ApiResponse(200, {}, req.t("REGISTRATION_OTP_SENT"))
         );
     }
 
-    throw new ApiError(500, "Something went wrong!! An email couldn't be sent to your account");
+    throw new ApiError(500, "EMAIL_SEND_FAILED");
 });
 
 const loginUser = catchAsync(async (req, res) => {
     const { email, password, fcmToken, isRemember } = req.body;
 
     if (!email?.trim() || !password?.trim()) {
-        throw new ApiError(400, "Email and password are required");
+        throw new ApiError(400, "EMAIL_PASSWORD_REQUIRED");
     }
 
     const user = await User.findOne({ email });
 
     if (!user) {
-        throw new ApiError(401, "Invalid credentials");
+        throw new ApiError(401, "INVALID_CREDENTIALS");
     }
 
     if (!user.isEmailVerified) {
@@ -101,17 +94,21 @@ const loginUser = catchAsync(async (req, res) => {
         user.emailOtpExpiry = otpExpiry;
         await user.save({ validateBeforeSave: false });
         await mailSender(email, OTP_TYPES.EMAIL_VERIFICATION, otp);
-        throw new ApiError(403, "Please verify your email before logging in");
+        throw new ApiError(403, "EMAIL_NOT_VERIFIED");
     }
 
     if (user.accountStatus !== "active") {
-        throw new ApiError(403, `Your account has been ${user.accountStatus}`);
+        throw new ApiError(
+            403,
+            "ACCOUNT_STATUS_ISSUE",
+            { params: {status: req.t(`ACCOUNT_STATUS.${user.accountStatus}`)} }
+        );
     }
 
     const isPasswordValid = await user.isPasswordCorrect(password);
 
     if (!isPasswordValid) {
-        throw new ApiError(401, "Invalid credentials");
+        throw new ApiError(401, "INVALID_CREDENTIALS");
     }
 
     const { accessToken, refreshToken } = await generateAccessAndRefreshToken(
@@ -139,7 +136,7 @@ const loginUser = catchAsync(async (req, res) => {
         new ApiResponse(
             200,
             { loggedInUser, accessToken, refreshToken },
-            "User logged in successfully"
+            req.t("LOGIN_SUCCESS")
         )
     );
 });
@@ -148,29 +145,21 @@ const logoutUser = catchAsync(async (req, res) => {
     const refreshToken = req.header("Authorization")?.replace("Bearer ", "");
 
     if (!refreshToken) {
-        throw new ApiError(
-            400,
-            "Refresh token required"
-        );
+        throw new ApiError(400, "REFRESH_TOKEN_REQUIRED");
     }
 
     await User.findOneAndUpdate(
         { refreshToken: refreshToken },
-        {
-            $unset: {
-                refreshToken: 1,
-                fcmToken: 1,
-            },
-        },
+        { $unset: { refreshToken: 1, fcmToken: 1 } },
         { new: true }
     );
 
-    return res.status(200).json(new ApiResponse(200, {}, "User logged out successfully"));
+    return res.status(200).json(new ApiResponse(200, {}, req.t("LOGOUT_SUCCESS")));
 });
 
 const getCurrentUser = catchAsync(async (req, res) => {
     return res.status(200).json(
-        new ApiResponse(200, req.user, "Current user fetched successfully")
+        new ApiResponse(200, req.user, req.t("CURRENT_USER_FETCHED"))
     );
 });
 
@@ -178,7 +167,7 @@ const refreshAccessToken = catchAsync(async (req, res) => {
     const incomingRefreshToken = req.header("x-refresh-token");
 
     if (!incomingRefreshToken || incomingRefreshToken === "null" || incomingRefreshToken === "undefined") {
-        throw new ApiError(401, "Unauthorized request");
+        throw new ApiError(401, "UNAUTHORIZED_REQUEST");
     }
 
     let decodedToken;
@@ -186,38 +175,40 @@ const refreshAccessToken = catchAsync(async (req, res) => {
         decodedToken = jwt.verify(incomingRefreshToken, process.env.REFRESH_TOKEN_SECRET);
     } catch (err) {
         if (err.name === 'TokenExpiredError') {
-            throw new ApiError(401, "Refresh token is expired");
+            throw new ApiError(401, "REFRESH_TOKEN_EXPIRED");
         }
-        throw new ApiError(403, "Invalid refresh token");
+        throw new ApiError(403, "INVALID_REFRESH_TOKEN");
     }
 
     const user = await User.findById(decodedToken?._id);
     if (!user || user.accountStatus !== "active") {
-        throw new ApiError(401, "Invalid refresh token");
+        throw new ApiError(401, "INVALID_REFRESH_TOKEN");
     }
 
     if (incomingRefreshToken !== user.refreshToken) {
-        throw new ApiError(401, "Refresh token is expired or used");
+        throw new ApiError(401, "REFRESH_TOKEN_EXPIRED_OR_USED");
     }
 
     const { accessToken, refreshToken } = await generateAccessAndRefreshToken(user._id);
 
-    return res.status(200).json(new ApiResponse(200, { accessToken, refreshToken }, "Access token refreshed"));
+    return res.status(200).json(
+        new ApiResponse(200, { accessToken, refreshToken }, req.t("ACCESS_TOKEN_REFRESHED"))
+    );
 });
 
 const updateFCMToken = catchAsync(async (req, res) => {
     const { fcmToken } = req.body;
     if (!fcmToken) {
-        throw new ApiError(400, "FCM Token is required");
+        throw new ApiError(400, "FCM_TOKEN_REQUIRED");
     }
     const user = req.user;
     user.fcmToken = fcmToken;
     const isUpdate = await user.save({ validateBeforeSave: false });
     if (!isUpdate) {
-        throw new ApiError(500, "Something went wrong");
+        throw new ApiError(500, "INTERNAL_SERVER_ERROR");
     }
     return res.status(200).json(
-        new ApiResponse(200, {}, "FCM Token updated successfully")
+        new ApiResponse(200, {}, req.t("FCM_TOKEN_UPDATED"))
     );
 });
 
@@ -228,60 +219,57 @@ const changeCurrentPassword = catchAsync(async (req, res) => {
     const isPasswordCorrect = await user.isPasswordCorrect(oldPassword);
 
     if (!isPasswordCorrect) {
-        throw new ApiError(400, "Password is incorrect");
+        throw new ApiError(400, "INCORRECT_PASSWORD");
     }
 
     user.password = newPassword;
     await user.save({ validateBeforeSave: false });
 
-    return res.status(200).json(new ApiResponse(200, {}, "Password changed successfully"));
+    return res.status(200).json(new ApiResponse(200, {}, req.t("PASSWORD_CHANGED")));
 });
 
 const forgotPassword = catchAsync(async (req, res) => {
     const { email } = req.body;
 
     if (!email) {
-        throw new ApiError(400, "Email required");
+        throw new ApiError(400, "EMAIL_REQUIRED");
     }
 
     const user = await User.findOne({ email, isEmailVerified: true });
-
     if (!user) {
-        throw new ApiError(404, "Invalid email or email is not verified");
+        throw new ApiError(404, "INVALID_EMAIL_OR_NOT_VERIFIED");
     }
 
     const otp = crypto.randomInt(100000, 999999).toString();
     user.emailOtp = otp;
-    user.emailOtpExpiry = Date.now() + 5 * 60 * 1000; // 5 minutes
+    user.emailOtpExpiry = Date.now() + 5 * 60 * 1000;
     await user.save();
 
     const mailResponse = await mailSender(email, "FORGOT_PASSWORD", otp);
 
     if (mailResponse) {
         return res.status(200).json(
-            new ApiResponse(200, {}, "An email sent to your account please reset your password in 5 minutes")
+            new ApiResponse(200, {}, req.t("FORGOT_PASSWORD_OTP_SENT"))
         );
     }
 
-    throw new ApiError(500, "Something went wrong!! An email couldn't sent to your account");
+    throw new ApiError(500, "EMAIL_SEND_FAILED");
 });
 
 const verifyOtp = catchAsync(async (req, res) => {
     const { type } = req.body;
 
     if (!Object.values(OTP_TYPES).includes(type)) {
-        throw new ApiError(400, "Invalid OTP type");
+        throw new ApiError(400, "INVALID_OTP_TYPE");
     }
 
     switch (type) {
         case OTP_TYPES.EMAIL_VERIFICATION:
             return await verifyEmail(req, res);
-
         case OTP_TYPES.FORGOT_PASSWORD:
             return await verifyForgotPasswordOtp(req, res);
-
         default:
-            throw new ApiError(400, "Invalid OTP type");
+            throw new ApiError(400, "INVALID_OTP_TYPE");
     }
 });
 
@@ -289,39 +277,36 @@ const verifyEmail = async (req, res) => {
     const { email, emailOtp } = req.body;
 
     if (!email || !emailOtp) {
-        throw new ApiError(400, "Email and OTP are required");
+        throw new ApiError(400, "EMAIL_OTP_REQUIRED");
     }
 
-    // Fixed: was checking isEmailVerified: true — user is NOT verified yet at this point
-    // Fixed: emailOtp/emailOtpExpiry have select:false, must explicitly select them
     const user = await User.findOne({ email, isEmailVerified: false }).select(
         "+emailOtp +emailOtpExpiry"
     );
 
     if (!user) {
-        throw new ApiError(404, "User not found or already verified");
+        throw new ApiError(404, "USER_NOT_FOUND_OR_VERIFIED");
     }
 
-    // Fixed: OTP expiry should be checked before comparing OTP
     if (user.emailOtpExpiry < Date.now()) {
         user.emailOtp = null;
         user.emailOtpExpiry = null;
         await user.save();
-        throw new ApiError(400, "OTP has expired, please request a new one");
+        throw new ApiError(400, "OTP_EXPIRED");
     }
 
     if (user.emailOtp !== emailOtp) {
-        throw new ApiError(400, "Invalid OTP");
+        throw new ApiError(400, "INVALID_OTP");
     }
 
-    user.isEmailVerified = true; // Fixed: was never being set to true
+    user.isEmailVerified = true;
     user.emailOtp = null;
     user.emailOtpExpiry = null;
-    user.expireDocAfterSeconds = undefined; // Remove TTL so doc is not deleted
+    user.expireDocAfterSeconds = undefined;
     await user.save();
 
     return res.status(200).json(
-        new ApiResponse(200, {}, "Email verified successfully")
+        new ApiResponse(200, {}, req.t("EMAIL_VERIFIED"))
     );
 };
 
@@ -329,7 +314,7 @@ const verifyForgotPasswordOtp = async (req, res) => {
     const { email, emailOtp } = req.body;
 
     if (!email || !emailOtp) {
-        throw new ApiError(400, "Email and OTP are required");
+        throw new ApiError(400, "EMAIL_OTP_REQUIRED");
     }
 
     const user = await User.findOne({ email, isEmailVerified: true }).select(
@@ -337,33 +322,31 @@ const verifyForgotPasswordOtp = async (req, res) => {
     );
 
     if (!user) {
-        throw new ApiError(404, "User not found");
+        throw new ApiError(404, "USER_NOT_FOUND");
     }
 
     if (user.emailOtpExpiry < Date.now()) {
         user.emailOtp = null;
         user.emailOtpExpiry = null;
         await user.save();
-        throw new ApiError(400, "OTP has expired, please request a new one");
+        throw new ApiError(400, "OTP_EXPIRED");
     }
 
     if (user.emailOtp !== emailOtp) {
-        throw new ApiError(400, "Invalid OTP");
+        throw new ApiError(400, "INVALID_OTP");
     }
 
-    // Generate a short-lived reset token instead of allowing direct password change
-    // This prevents skipping OTP and hitting the reset endpoint directly
     const { token, hashedToken } = generateSecureToken();
     const otpVerifyTokenExpiry = Date.now() + 5 * 60 * 1000;
 
     user.otpVerifyToken = hashedToken;
-    user.otpVerifyTokenExpiry = otpVerifyTokenExpiry; // 10 minutes
+    user.otpVerifyTokenExpiry = otpVerifyTokenExpiry;
     user.emailOtp = null;
     user.emailOtpExpiry = null;
     await user.save({ validateBeforeSave: false });
 
     return res.status(200).json(
-        new ApiResponse(200, { resetToken: token }, "OTP verified successfully")
+        new ApiResponse(200, { resetToken: token }, req.t("OTP_VERIFIED"))
     );
 };
 
@@ -371,27 +354,23 @@ const setPassword = catchAsync(async (req, res) => {
     const { email, newPassword, confirmPassword, resetToken } = req.body;
 
     if (!email || !newPassword || !confirmPassword) {
-        throw new ApiError(400, "Email, new password and confirm password are required");
+        throw new ApiError(400, "PASSWORD_RESET_FIELDS_REQUIRED");
     }
 
     if (newPassword !== confirmPassword) {
-        throw new ApiError(400, "Passwords do not match");
+        throw new ApiError(400, "PASSWORDS_DO_NOT_MATCH");
     }
 
     const user = await User.findOne({ email, isEmailVerified: true });
-
     if (!user) {
-        throw new ApiError(404, "Invalid email or email is not verified");
+        throw new ApiError(404, "INVALID_EMAIL_OR_NOT_VERIFIED");
     }
 
     if (user.emailOtp || user.emailOtpExpiry) {
-        throw new ApiError(400, "Please verify your OTP first before resetting the password");
+        throw new ApiError(400, "OTP_VERIFICATION_REQUIRED");
     }
 
-    const hashedToken = crypto
-        .createHash("sha256")
-        .update(resetToken)
-        .digest("hex");
+    const hashedToken = crypto.createHash("sha256").update(resetToken).digest("hex");
 
     const user2 = await User.findOne({
         otpVerifyToken: hashedToken,
@@ -399,7 +378,7 @@ const setPassword = catchAsync(async (req, res) => {
     });
 
     if (!user2) {
-        throw new ApiError(400, "Reset token is invalid or has expired");
+        throw new ApiError(400, "RESET_TOKEN_INVALID");
     }
 
     user.password = newPassword;
@@ -408,9 +387,7 @@ const setPassword = catchAsync(async (req, res) => {
     user.passwordChangedAt = new Date();
     await user.save({ validateBeforeSave: false });
 
-    return res.status(200).json(
-        new ApiResponse(200, {}, "Password reset successfully")
-    );
+    return res.status(200).json(new ApiResponse(200, {}, req.t("PASSWORD_RESET_SUCCESS")));
 });
 
 const updateProfile = catchAsync(async (req, res) => {
@@ -419,7 +396,7 @@ const updateProfile = catchAsync(async (req, res) => {
     const imagePath = req.file?.path || null;
 
     if (typeof userName !== "string" || !userName.trim()) {
-        throw new ApiError(400, "Full name is required");
+        throw new ApiError(400, "FULL_NAME_REQUIRED");
     }
 
     if (imagePath) {
@@ -427,35 +404,18 @@ const updateProfile = catchAsync(async (req, res) => {
         imageUrl = uploadResult?.secure_url;
     }
 
-    const updateData = {
-        userName: userName.trim(),
-        profileCompleted: true,
-    };
+    const updateData = { userName: userName.trim(), profileCompleted: true };
+    if (typeof bio === "string" && bio.trim()) updateData.bio = bio.trim();
+    if (imageUrl) updateData.photoUrl = imageUrl;
 
-    if (typeof bio === "string" && bio.trim()) {
-        updateData.bio = bio.trim();
-    }
-
-    if (imageUrl) {
-        updateData.photoUrl = imageUrl;
-    }
-
-    const updatedUser =
-        await User.findByIdAndUpdate(
-            req.user._id,
-            {
-                $set: updateData,
-            },
-            {
-                new: true,
-                runValidators: true,
-            }
-        ).select(
-            "-password -refreshToken -emailOtp -emailOtpExpiry"
-        );
+    const updatedUser = await User.findByIdAndUpdate(
+        req.user._id,
+        { $set: updateData },
+        { new: true, runValidators: true }
+    ).select("-password -refreshToken -emailOtp -emailOtpExpiry");
 
     return res.status(200).json(
-        new ApiResponse(200, updatedUser, "Profile updated successfully")
+        new ApiResponse(200, updatedUser, req.t("PROFILE_UPDATED"))
     );
 });
 
@@ -463,14 +423,13 @@ const resendOtp = catchAsync(async (req, res) => {
     const { email, type } = req.body;
 
     if (!email?.trim()) {
-        throw new ApiError(400, "Email is required");
+        throw new ApiError(400, "EMAIL_REQUIRED");
     }
 
     if (!Object.values(OTP_TYPES).includes(type)) {
-        throw new ApiError(400, "Invalid OTP type");
+        throw new ApiError(400, "INVALID_OTP_TYPE");
     }
 
-    // Build query based on type
     let query;
     switch (type) {
         case OTP_TYPES.EMAIL_VERIFICATION:
@@ -480,33 +439,29 @@ const resendOtp = catchAsync(async (req, res) => {
             query = { email, isEmailVerified: true };
             break;
         default:
-            throw new ApiError(400, "Invalid OTP type");
+            throw new ApiError(400, "INVALID_OTP_TYPE");
     }
 
     const user = await User.findOne(query).select("+emailOtp +emailOtpExpiry");
-
     if (!user) {
-        throw new ApiError(404, "No account found or action not applicable");
+        throw new ApiError(404, "NO_ACCOUNT_FOUND");
     }
 
-    // Rate limit: don't resend if OTP was sent less than 30 seconds ago
     const THIRTY_SECONDS = 30 * 1000;
     const OTP_VALIDITY = 10 * 60 * 1000;
     if (user.emailOtpExpiry) {
         const otpSentAt = user.emailOtpExpiry.getTime() - OTP_VALIDITY;
         if (Date.now() - otpSentAt < THIRTY_SECONDS) {
-            throw new ApiError(429, "Please wait at least 30 seconds before requesting a new OTP");
+            throw new ApiError(429, "OTP_RATE_LIMITED");
         }
     }
 
-    // Cryptographically secure OTP
     const otp = crypto.randomInt(100000, 999999).toString();
     const otpExpiry = new Date(Date.now() + OTP_VALIDITY);
 
     user.emailOtp = otp;
     user.emailOtpExpiry = otpExpiry;
 
-    // Refresh TTL window for unverified users so doc doesn't expire mid-flow
     if (type === OTP_TYPES.EMAIL_VERIFICATION) {
         user.expireDocAfterSeconds = new Date(Date.now() + 24 * 60 * 60 * 1000);
     }
@@ -516,21 +471,15 @@ const resendOtp = catchAsync(async (req, res) => {
     const mailResponse = await mailSender(email, type, otp);
 
     if (mailResponse) {
-        return res.status(200).json(
-            new ApiResponse(200, {}, "OTP resent successfully, please check your email")
-        );
+        return res.status(200).json(new ApiResponse(200, {}, req.t("OTP_RESENT")));
     }
 
-    throw new ApiError(500, "Failed to send OTP email, please try again");
+    throw new ApiError(500, "OTP_SEND_FAILED");
 });
 
 const getUserLanguage = catchAsync(async (req, res) => {
     return res.status(200).json(
-        new ApiResponse(
-            200,
-            { language: req.user.language },
-            "Language fetched successfully"
-        )
+        new ApiResponse(200, { language: req.user.language }, req.t("LANGUAGE_FETCHED"))
     );
 });
 
@@ -538,11 +487,13 @@ const updateUserLanguage = catchAsync(async (req, res) => {
     const { language } = req.body;
 
     if (!language?.trim()) {
-        throw new ApiError(400, "Language is required");
+        throw new ApiError(400, "LANGUAGE_REQUIRED");
     }
 
     if (!Object.values(SUPPORTED_LANGUAGES).includes(language.toLowerCase())) {
-        throw new ApiError(400, `Unsupported language. Supported languages are: ${Object.values(SUPPORTED_LANGUAGES).join(', ')}`);
+        throw new ApiError(400, "UNSUPPORTED_LANGUAGE", null, {
+            languages: Object.values(SUPPORTED_LANGUAGES).join(', ')
+        });
     }
 
     const user = await User.findByIdAndUpdate(
@@ -552,15 +503,11 @@ const updateUserLanguage = catchAsync(async (req, res) => {
     ).select('language');
 
     if (!user) {
-        throw new ApiError(404, "User not found");
+        throw new ApiError(404, "USER_NOT_FOUND");
     }
 
     return res.status(200).json(
-        new ApiResponse(
-            200,
-            { language: user.language },
-            "Language updated successfully"
-        )
+        new ApiResponse(200, { language: user.language }, req.t("LANGUAGE_UPDATED"))
     );
 });
 

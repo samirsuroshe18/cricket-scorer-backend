@@ -6,6 +6,7 @@ import { errorHandler } from "./utils/errorHandler.js";
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import path from 'path';
+import {localeMiddleware} from "./middlewares/locale.middleware.js";
 
 const app = express();
 initializeFirebaseAdmin();
@@ -29,6 +30,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(staticPath));
 // this is used to parse the cookie
 app.use(cookieParser());
+app.use(localeMiddleware);
 
 // routes import
 import userRouter from './routes/user.routes.js';
