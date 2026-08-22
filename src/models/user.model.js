@@ -93,10 +93,12 @@ const userSchema = new Schema(
 
         otpVerifyToken: {
             type: String,
+            select: false
         },
 
         otpVerifyTokenExpiry: {
             type: Date,
+            select: false
         },
 
         language: {

@@ -33,7 +33,7 @@ const bowlingLineSchema = new Schema(
 const scorecardSchema = new Schema(
   {
     matchId:        { type: Schema.Types.ObjectId, ref: 'Match',   required: true, index: true },
-    inningsId:      { type: Schema.Types.ObjectId, ref: 'Innings', required: true },
+    inningsId:      { type: Schema.Types.ObjectId, ref: 'Inning', required: true },
     inningsNumber:  { type: Number, required: true },
     battingTeam:    { type: String, required: true },
     battingScores:  [battingLineSchema],

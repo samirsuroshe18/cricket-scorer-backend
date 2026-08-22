@@ -9,6 +9,7 @@ import { uploadOnCloudinary } from '../utils/cloudinary.js';
 import { generateSecureToken } from "../utils/token.js";
 import { OTP_TYPES } from "../constants/otp.constants.js";
 import { SUPPORTED_LANGUAGES } from "../constants/language.constants.js";
+import { MIN_PASSWORD_LENGTH } from "../constants/password.constants.js";
 
 const generateAccessAndRefreshToken = async (userId, isRemember = false) => {
     try {
@@ -39,6 +40,12 @@ const registerUser = catchAsync(async (req, res) => {
 
     if (!fullName?.trim() || !email?.trim() || !password?.trim()) {
         throw new ApiError(400, "ALL_FIELDS_REQUIRED");
+    }
+
+    if (password.length < MIN_PASSWORD_LENGTH) {
+        throw new ApiError(400, "PASSWORD_TOO_SHORT", {
+            params: { min: MIN_PASSWORD_LENGTH }
+        });
     }
 
     const existedUser = await User.findOne({ email });
@@ -215,6 +222,16 @@ const updateFCMToken = catchAsync(async (req, res) => {
 const changeCurrentPassword = catchAsync(async (req, res) => {
     const { oldPassword, newPassword } = req.body;
 
+    if (!oldPassword?.trim() || !newPassword?.trim()) {
+        throw new ApiError(400, "ALL_FIELDS_REQUIRED");
+    }
+
+    if (newPassword.length < MIN_PASSWORD_LENGTH) {
+        throw new ApiError(400, "PASSWORD_TOO_SHORT", {
+            params: { min: MIN_PASSWORD_LENGTH }
+        });
+    }
+
     const user = await User.findById(req.user._id);
     const isPasswordCorrect = await user.isPasswordCorrect(oldPassword);
 
@@ -223,6 +240,7 @@ const changeCurrentPassword = catchAsync(async (req, res) => {
     }
 
     user.password = newPassword;
+    user.passwordChangedAt = new Date();
     await user.save({ validateBeforeSave: false });
 
     return res.status(200).json(new ApiResponse(200, {}, req.t("PASSWORD_CHANGED")));
@@ -353,7 +371,7 @@ const verifyForgotPasswordOtp = async (req, res) => {
 const setPassword = catchAsync(async (req, res) => {
     const { email, newPassword, confirmPassword, resetToken } = req.body;
 
-    if (!email || !newPassword || !confirmPassword) {
+    if (!email || !newPassword || !confirmPassword || !resetToken?.trim()) {
         throw new ApiError(400, "PASSWORD_RESET_FIELDS_REQUIRED");
     }
 
@@ -361,7 +379,15 @@ const setPassword = catchAsync(async (req, res) => {
         throw new ApiError(400, "PASSWORDS_DO_NOT_MATCH");
     }
 
-    const user = await User.findOne({ email, isEmailVerified: true });
+    if (newPassword.length < MIN_PASSWORD_LENGTH) {
+        throw new ApiError(400, "PASSWORD_TOO_SHORT", {
+            params: { min: MIN_PASSWORD_LENGTH }
+        });
+    }
+
+    const user = await User.findOne({ email, isEmailVerified: true }).select(
+        "+emailOtp +emailOtpExpiry +otpVerifyToken +otpVerifyTokenExpiry"
+    );
     if (!user) {
         throw new ApiError(404, "INVALID_EMAIL_OR_NOT_VERIFIED");
     }
@@ -372,12 +398,14 @@ const setPassword = catchAsync(async (req, res) => {
 
     const hashedToken = crypto.createHash("sha256").update(resetToken).digest("hex");
 
-    const user2 = await User.findOne({
-        otpVerifyToken: hashedToken,
-        otpVerifyTokenExpiry: { $gt: Date.now() },
-    });
-
-    if (!user2) {
+    // The token must belong to THIS user — never validate it against the collection
+    // at large, or any valid token could reset any account's password.
+    if (
+        !user.otpVerifyToken ||
+        user.otpVerifyToken !== hashedToken ||
+        !user.otpVerifyTokenExpiry ||
+        user.otpVerifyTokenExpiry.getTime() <= Date.now()
+    ) {
         throw new ApiError(400, "RESET_TOKEN_INVALID");
     }
 
@@ -385,6 +413,8 @@ const setPassword = catchAsync(async (req, res) => {
     user.otpVerifyToken = undefined;
     user.otpVerifyTokenExpiry = undefined;
     user.passwordChangedAt = new Date();
+    // Reset invalidates any existing session (single-session model).
+    user.refreshToken = undefined;
     await user.save({ validateBeforeSave: false });
 
     return res.status(200).json(new ApiResponse(200, {}, req.t("PASSWORD_RESET_SUCCESS")));
@@ -491,8 +521,8 @@ const updateUserLanguage = catchAsync(async (req, res) => {
     }
 
     if (!Object.values(SUPPORTED_LANGUAGES).includes(language.toLowerCase())) {
-        throw new ApiError(400, "UNSUPPORTED_LANGUAGE", null, {
-            languages: Object.values(SUPPORTED_LANGUAGES).join(', ')
+        throw new ApiError(400, "UNSUPPORTED_LANGUAGE", {
+            params: { languages: Object.values(SUPPORTED_LANGUAGES).join(', ') }
         });
     }
 

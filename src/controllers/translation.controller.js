@@ -9,38 +9,39 @@ const getTranslationByLang = catchAsync(async (req, res) => {
     const { lang } = req.params;
 
     if (!lang?.trim()) {
-        throw new ApiError(400, "Language is required");
+        throw new ApiError(400, "LANGUAGE_REQUIRED");
     }
 
     const translation = await Localization.findOne({
         languageCode: lang.toLowerCase(),
-    });
+    }).lean();
 
     if (!translation) {
-        throw new ApiError(404, "Language not found");
+        throw new ApiError(404, "LANGUAGE_NOT_FOUND");
     }
 
     return res.status(200).json(
         new ApiResponse(
             200,
             translation,
-            "Language fetched successfully"
+            req.t("LANGUAGE_FETCHED")
         )
     );
 });
 
 const getAllTranslations = catchAsync(async (req, res) => {
-    const translations = await Localization.find();
+    // Bounded by the languageCode enum (en/hi/mr) — no pagination needed.
+    const translations = await Localization.find().lean();
 
     if (!translations.length) {
-        throw new ApiError(404, "Translations not found");
+        throw new ApiError(404, "TRANSLATIONS_NOT_FOUND");
     }
 
     return res.status(200).json(
         new ApiResponse(
             200,
             translations,
-            "Translations fetched successfully"
+            req.t("TRANSLATIONS_FETCHED")
         )
     );
 });
@@ -65,7 +66,7 @@ const getTranslationsVersion = catchAsync(async (req, res) => {
                 globalVersion: meta?.version ?? 1,
                 languages: translations,
             },
-            "Translations version fetched successfully"
+            req.t("TRANSLATIONS_VERSION_FETCHED")
         )
     );
 });
@@ -74,10 +75,10 @@ const setTranslationKey = catchAsync(async (req, res) => {
     const { lang } = req.params;
     const { key, value } = req.body;
 
-    if (!lang?.trim()) throw new ApiError(400, "Language is required");
+    if (!lang?.trim()) throw new ApiError(400, "LANGUAGE_REQUIRED");
 
     if (!key?.trim() || !value?.trim()) {
-        throw new ApiError(400, "key and value are required");
+        throw new ApiError(400, "KEY_VALUE_REQUIRED");
     }
 
     const translation = await Localization.findOneAndUpdate(
@@ -92,7 +93,7 @@ const setTranslationKey = catchAsync(async (req, res) => {
         new ApiResponse(
             200,
             translation,
-            "Translation updated"
+            req.t("TRANSLATION_UPDATED")
         )
     );
 });
@@ -101,7 +102,7 @@ const deleteTranslationKey = catchAsync(async (req, res) => {
     const { lang, key } = req.params;
 
     if (!lang?.trim() || !key?.trim()) {
-        throw new ApiError(400, "key and lang are required");
+        throw new ApiError(400, "KEY_LANG_REQUIRED");
     }
 
     const translation = await Localization.findOne({
@@ -109,11 +110,11 @@ const deleteTranslationKey = catchAsync(async (req, res) => {
     });
 
     if (!translation) {
-        throw new ApiError(404, "Language not found");
+        throw new ApiError(404, "LANGUAGE_NOT_FOUND");
     }
 
     if (!translation.strings.has(key)) {
-        throw new ApiError(404, "Key not found");
+        throw new ApiError(404, "TRANSLATION_KEY_NOT_FOUND");
     }
 
     translation.strings.delete(key);
@@ -125,7 +126,7 @@ const deleteTranslationKey = catchAsync(async (req, res) => {
         new ApiResponse(
             200,
             translation,
-            "Key deleted"
+            req.t("TRANSLATION_KEY_DELETED")
         )
     );
 });
@@ -134,10 +135,7 @@ const bulkSetTranslations = catchAsync(async (req, res) => {
     const translationsList = req.body;
 
     if (!Array.isArray(translationsList) || translationsList.length === 0) {
-        throw new ApiError(
-            400,
-            "Request body must be a non-empty array"
-        );
+        throw new ApiError(400, "TRANSLATIONS_ARRAY_REQUIRED");
     }
 
     // Group updates by language
@@ -147,7 +145,7 @@ const bulkSetTranslations = catchAsync(async (req, res) => {
         const { key, translations } = item;
 
         if (!key?.trim()) {
-            throw new ApiError(400, "Key is required");
+            throw new ApiError(400, "TRANSLATION_KEY_REQUIRED");
         }
 
         if (
@@ -155,17 +153,14 @@ const bulkSetTranslations = catchAsync(async (req, res) => {
             typeof translations !== "object" ||
             Object.keys(translations).length === 0
         ) {
-            throw new ApiError(
-                400,
-                `Translations are required for key '${key}'`
-            );
+            throw new ApiError(400, "TRANSLATIONS_REQUIRED_FOR_KEY", { params: { key } });
         }
 
         for (const [lang, value] of Object.entries(translations)) {
             const languageCode = lang.toLowerCase();
 
             if (typeof value !== 'string' || !value.trim()) {
-                throw new ApiError(400, `Invalid value for key '${key}' in lang '${lang}'`);
+                throw new ApiError(400, "INVALID_TRANSLATION_VALUE", { params: { key, lang } });
             }
 
             if (!updatesByLanguage[languageCode]) {
@@ -203,7 +198,7 @@ const bulkSetTranslations = catchAsync(async (req, res) => {
         new ApiResponse(
             200,
             updatedTranslations,
-            "Translations updated successfully"
+            req.t("TRANSLATIONS_UPDATED")
         )
     );
 });

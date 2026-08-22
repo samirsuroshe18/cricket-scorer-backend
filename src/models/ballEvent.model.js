@@ -25,7 +25,7 @@ const preEventStateSchema = new Schema(
 const ballEventSchema = new Schema(
   {
     matchId:          { type: Schema.Types.ObjectId, ref: 'Match',   required: true },
-    inningsId:        { type: Schema.Types.ObjectId, ref: 'Innings', required: true },
+    inningsId:        { type: Schema.Types.ObjectId, ref: 'Inning', required: true },
     overId:           { type: Schema.Types.ObjectId, ref: 'Over',    required: true },
     overNumber:       { type: Number, required: true },   // denormalized
     ballNumber:       { type: Number, required: true },   // within over

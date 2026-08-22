@@ -1,6 +1,4 @@
 import { createTransport } from 'nodemailer';
-import bcrypt from 'bcrypt';
-import { User } from '../models/user.model.js';
 import { OTP_TYPES } from '../constants/otp.constants.js';
 
 async function mailSender(email, emailType, otp) {

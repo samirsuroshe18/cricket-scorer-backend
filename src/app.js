@@ -1,5 +1,6 @@
 import express from "express";
 import cors from 'cors';
+import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import initializeFirebaseAdmin from "./utils/firebaseAdminSdk.js";
 import { errorHandler } from "./utils/errorHandler.js";
@@ -7,6 +8,8 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import path from 'path';
 import {localeMiddleware} from "./middlewares/locale.middleware.js";
+import { sanitizeMiddleware } from "./middlewares/sanitize.middleware.js";
+import { globalLimiter } from "./middlewares/rateLimit.middleware.js";
 
 const app = express();
 initializeFirebaseAdmin();
@@ -15,7 +18,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const staticPath = path.join(__dirname, '../public');
 
-// this use for cross origin sharing 
+app.use(helmet());
+// this use for cross origin sharing
 app.use(
   cors({
       origin: [process.env.CORS_ORIGIN],
@@ -23,14 +27,16 @@ app.use(
   })
 );
 // this middleware use for parsing the json data
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
 // this is used for parsing url data extended is used for nessted object
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 // this is used for accessing public resources from server
 app.use(express.static(staticPath));
 // this is used to parse the cookie
 app.use(cookieParser());
+app.use(sanitizeMiddleware);
 app.use(localeMiddleware);
+app.use(globalLimiter);
 
 // routes import
 import userRouter from './routes/user.routes.js';

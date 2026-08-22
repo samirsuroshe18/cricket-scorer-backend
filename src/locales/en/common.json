@@ -55,5 +55,22 @@
   "LANGUAGE_FETCHED": "Language fetched successfully",
   "LANGUAGE_REQUIRED": "Language is required",
   "UNSUPPORTED_LANGUAGE": "Unsupported language. Supported languages are: {{languages}}",
-  "LANGUAGE_UPDATED": "Language updated successfully"
+  "LANGUAGE_UPDATED": "Language updated successfully",
+  "FILE_PATH_NOT_FOUND": "File path was not found",
+  "LANGUAGE_NOT_FOUND": "Language not found",
+  "TRANSLATIONS_NOT_FOUND": "Translations not found",
+  "TRANSLATIONS_FETCHED": "Translations fetched successfully",
+  "TRANSLATIONS_VERSION_FETCHED": "Translations version fetched successfully",
+  "KEY_VALUE_REQUIRED": "Key and value are required",
+  "TRANSLATION_UPDATED": "Translation updated successfully",
+  "KEY_LANG_REQUIRED": "Key and language are required",
+  "TRANSLATION_KEY_NOT_FOUND": "Key not found",
+  "TRANSLATION_KEY_DELETED": "Key deleted successfully",
+  "TRANSLATIONS_ARRAY_REQUIRED": "Request body must be a non-empty array",
+  "TRANSLATION_KEY_REQUIRED": "Key is required",
+  "TRANSLATIONS_REQUIRED_FOR_KEY": "Translations are required for key '{{key}}'",
+  "INVALID_TRANSLATION_VALUE": "Invalid value for key '{{key}}' in language '{{lang}}'",
+  "TRANSLATIONS_UPDATED": "Translations updated successfully",
+  "TOO_MANY_REQUESTS": "Too many requests, please try again later",
+  "PASSWORD_TOO_SHORT": "Password must be at least {{min}} characters long"
 }

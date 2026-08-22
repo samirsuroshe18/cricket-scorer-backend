@@ -55,5 +55,22 @@
   "LANGUAGE_FETCHED": "भाषा सफलतापूर्वक प्राप्त की गई",
   "LANGUAGE_REQUIRED": "भाषा आवश्यक है",
   "UNSUPPORTED_LANGUAGE": "असमर्थित भाषा। समर्थित भाषाएं हैं: {{languages}}",
-  "LANGUAGE_UPDATED": "भाषा सफलतापूर्वक अपडेट हुई"
+  "LANGUAGE_UPDATED": "भाषा सफलतापूर्वक अपडेट हुई",
+  "FILE_PATH_NOT_FOUND": "फ़ाइल पथ नहीं मिला",
+  "LANGUAGE_NOT_FOUND": "भाषा नहीं मिली",
+  "TRANSLATIONS_NOT_FOUND": "अनुवाद नहीं मिले",
+  "TRANSLATIONS_FETCHED": "अनुवाद सफलतापूर्वक प्राप्त किए गए",
+  "TRANSLATIONS_VERSION_FETCHED": "अनुवाद संस्करण सफलतापूर्वक प्राप्त किया गया",
+  "KEY_VALUE_REQUIRED": "की और वैल्यू आवश्यक हैं",
+  "TRANSLATION_UPDATED": "अनुवाद सफलतापूर्वक अपडेट हुआ",
+  "KEY_LANG_REQUIRED": "की और भाषा आवश्यक हैं",
+  "TRANSLATION_KEY_NOT_FOUND": "की नहीं मिली",
+  "TRANSLATION_KEY_DELETED": "की सफलतापूर्वक हटाई गई",
+  "TRANSLATIONS_ARRAY_REQUIRED": "रिक्वेस्ट बॉडी एक गैर-रिक्त ऐरे होनी चाहिए",
+  "TRANSLATION_KEY_REQUIRED": "की आवश्यक है",
+  "TRANSLATIONS_REQUIRED_FOR_KEY": "की '{{key}}' के लिए अनुवाद आवश्यक हैं",
+  "INVALID_TRANSLATION_VALUE": "की '{{key}}' के लिए भाषा '{{lang}}' में अमान्य वैल्यू",
+  "TRANSLATIONS_UPDATED": "अनुवाद सफलतापूर्वक अपडेट हुए",
+  "TOO_MANY_REQUESTS": "बहुत अधिक अनुरोध, कृपया बाद में पुनः प्रयास करें",
+  "PASSWORD_TOO_SHORT": "पासवर्ड कम से कम {{min}} अक्षरों का होना चाहिए"
 }

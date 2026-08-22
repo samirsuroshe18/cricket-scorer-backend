@@ -1,5 +1,6 @@
 import { v2 as cloud } from "cloudinary";
 import fs from 'fs'
+import ApiError from './ApiError.js';
 
 cloud.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -19,7 +20,7 @@ const uploadOnCloudinary = async (localFilePath) => {
             console.log("file is uploaded on cloudinary sdk : ", response.secure_url);
             fs.unlinkSync(localFilePath)//remove the locally saved temporary files as the upload operation got successfull
         }else{
-            throw new ApiError(400, "File path is not found !!");
+            throw new ApiError(400, "FILE_PATH_NOT_FOUND");
         }
 
         return response;

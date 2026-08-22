@@ -11,7 +11,7 @@ const overExtrasSchema = new Schema(
 const overSchema = new Schema(
   {
     matchId:          { type: Schema.Types.ObjectId, ref: 'Match', required: true },
-    inningsId:        { type: Schema.Types.ObjectId, ref: 'Innings', required: true, index: true },
+    inningsId:        { type: Schema.Types.ObjectId, ref: 'Inning', required: true, index: true },
     overNumber:       { type: Number, required: true, min: 1 },
     bowlerId:         { type: Schema.Types.ObjectId, ref: 'Player', required: true },
     totalRuns:        { type: Number, default: 0, min: 0 },

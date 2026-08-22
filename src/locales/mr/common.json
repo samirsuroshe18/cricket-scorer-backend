@@ -55,5 +55,22 @@
   "LANGUAGE_FETCHED": "भाषा यशस्वीरित्या मिळाली",
   "LANGUAGE_REQUIRED": "भाषा आवश्यक आहे",
   "UNSUPPORTED_LANGUAGE": "असमर्थित भाषा. समर्थित भाषा आहेत: {{languages}}",
-  "LANGUAGE_UPDATED": "भाषा यशस्वीरित्या अपडेट झाली"
+  "LANGUAGE_UPDATED": "भाषा यशस्वीरित्या अपडेट झाली",
+  "FILE_PATH_NOT_FOUND": "फाईल पाथ सापडला नाही",
+  "LANGUAGE_NOT_FOUND": "भाषा सापडली नाही",
+  "TRANSLATIONS_NOT_FOUND": "भाषांतरे सापडली नाहीत",
+  "TRANSLATIONS_FETCHED": "भाषांतरे यशस्वीरित्या मिळाली",
+  "TRANSLATIONS_VERSION_FETCHED": "भाषांतर आवृत्ती यशस्वीरित्या मिळाली",
+  "KEY_VALUE_REQUIRED": "की आणि व्हॅल्यू आवश्यक आहे",
+  "TRANSLATION_UPDATED": "भाषांतर यशस्वीरित्या अपडेट झाले",
+  "KEY_LANG_REQUIRED": "की आणि भाषा आवश्यक आहे",
+  "TRANSLATION_KEY_NOT_FOUND": "की सापडली नाही",
+  "TRANSLATION_KEY_DELETED": "की यशस्वीरित्या हटवली",
+  "TRANSLATIONS_ARRAY_REQUIRED": "रिक्वेस्ट बॉडी ही रिकामी नसलेली ऐरे असणे आवश्यक आहे",
+  "TRANSLATION_KEY_REQUIRED": "की आवश्यक आहे",
+  "TRANSLATIONS_REQUIRED_FOR_KEY": "की '{{key}}' साठी भाषांतरे आवश्यक आहेत",
+  "INVALID_TRANSLATION_VALUE": "की '{{key}}' साठी भाषा '{{lang}}' मध्ये अवैध व्हॅल्यू",
+  "TRANSLATIONS_UPDATED": "भाषांतरे यशस्वीरित्या अपडेट झाली",
+  "TOO_MANY_REQUESTS": "खूप जास्त विनंत्या, कृपया नंतर पुन्हा प्रयत्न करा",
+  "PASSWORD_TOO_SHORT": "पासवर्ड किमान {{min}} अक्षरांचा असणे आवश्यक आहे"
 }
