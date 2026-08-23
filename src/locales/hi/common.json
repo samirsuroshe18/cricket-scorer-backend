@@ -72,5 +72,18 @@
   "INVALID_TRANSLATION_VALUE": "की '{{key}}' के लिए भाषा '{{lang}}' में अमान्य वैल्यू",
   "TRANSLATIONS_UPDATED": "अनुवाद सफलतापूर्वक अपडेट हुए",
   "TOO_MANY_REQUESTS": "बहुत अधिक अनुरोध, कृपया बाद में पुनः प्रयास करें",
-  "PASSWORD_TOO_SHORT": "पासवर्ड कम से कम {{min}} अक्षरों का होना चाहिए"
+  "PASSWORD_TOO_SHORT": "पासवर्ड कम से कम {{min}} अक्षरों का होना चाहिए",
+  "MATCH_CREATED": "मैच बनाया गया",
+  "TEAM_NAMES_REQUIRED": "दोनों टीमों के नाम आवश्यक हैं",
+  "TEAM_NAMES_MUST_DIFFER": "टीमों के नाम अलग-अलग होने चाहिए",
+  "INVALID_OVERS_FORMAT": "ओवर 1 से 50 के बीच एक पूर्ण संख्या होनी चाहिए",
+  "BALL_SCORED": "गेंद दर्ज की गई",
+  "RUNS_OUT_OF_RANGE": "रन 0 से 6 के बीच एक पूर्ण संख्या होनी चाहिए",
+  "IDEMPOTENCY_KEY_REQUIRED": "आइडेंपोटेंसी की आवश्यक है",
+  "MATCH_NOT_FOUND": "मैच नहीं मिला",
+  "MATCH_NOT_OWNED": "इस मैच को स्कोर करने की आपको अनुमति नहीं है",
+  "MATCH_ALREADY_COMPLETED": "यह मैच पहले ही समाप्त हो चुका है",
+  "INVALID_EXTRA_TYPE": "एक्स्ट्रा प्रकार वाइड या नो-बॉल ही हो सकता है",
+  "INVALID_RUNS_FROM": "रन बल्ले, बाई या लेग-बाई में से किसी एक को दिए जाने चाहिए",
+  "RUNS_FROM_NOT_ALLOWED_FOR_WIDE": "वाइड पर बने सभी रन वाइड के रूप में दर्ज होते हैं"
 }

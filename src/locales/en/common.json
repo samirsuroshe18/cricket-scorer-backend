@@ -72,5 +72,18 @@
   "INVALID_TRANSLATION_VALUE": "Invalid value for key '{{key}}' in language '{{lang}}'",
   "TRANSLATIONS_UPDATED": "Translations updated successfully",
   "TOO_MANY_REQUESTS": "Too many requests, please try again later",
-  "PASSWORD_TOO_SHORT": "Password must be at least {{min}} characters long"
+  "PASSWORD_TOO_SHORT": "Password must be at least {{min}} characters long",
+  "MATCH_CREATED": "Match created",
+  "TEAM_NAMES_REQUIRED": "Both team names are required",
+  "TEAM_NAMES_MUST_DIFFER": "Team names must be different",
+  "INVALID_OVERS_FORMAT": "Overs must be a whole number between 1 and 50",
+  "BALL_SCORED": "Ball scored",
+  "RUNS_OUT_OF_RANGE": "Runs must be a whole number between 0 and 6",
+  "IDEMPOTENCY_KEY_REQUIRED": "Idempotency key is required",
+  "MATCH_NOT_FOUND": "Match not found",
+  "MATCH_NOT_OWNED": "You do not have permission to score this match",
+  "MATCH_ALREADY_COMPLETED": "This match has already ended",
+  "INVALID_EXTRA_TYPE": "Extra type must be either a wide or a no-ball",
+  "INVALID_RUNS_FROM": "Runs must be credited to the bat, byes, or leg-byes",
+  "RUNS_FROM_NOT_ALLOWED_FOR_WIDE": "All runs off a wide are recorded as wides"
 }
