@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 REST API backend for a cricket scoring mobile app. Node.js + Express 5 + MongoDB (Mongoose 9), ESM throughout (`"type": "module"` — always use `import`, and include the `.js` extension in relative imports).
 
-Two feature areas are live: **user auth/profile** and a **translation/localization CMS**. A third — **live cricket scoring** — has its Mongoose models defined (Match, Inning, Over, BallEvent, Team, Player, Scorecard) but no controllers or routes yet. Most new work will be building that out.
+Three feature areas are live: **user auth/profile**, a **translation/localization CMS**, and **live cricket scoring** — `match.controller.js` + `match.routes.js` serve `create`, `start-innings`, `select-bowler` and `score-ball`, with `match.socket.js` broadcasting to spectators. Scoring covers runs, extras, wickets, server-computed strike rotation, over completion and per-over bowler assignment (including the Law 17.6 refusal of a bowler two overs running); bowler *figures*, undo, innings 2 and the scorecard are not built. `Scorecard` is the one scoring model still entirely unused. The contract lives in `../cricket-scorer-workspace/docs/api.md` — keep it in step with the controller.
 
 ```bash
 npm run dev         # nodemon, NODE_ENV=development → loads .env.development
@@ -114,7 +114,9 @@ Don't conflate them. **`src/locales/*/common.json`** are static backend response
 
 Jest + supertest, ESM-native (`NODE_OPTIONS=--experimental-vm-modules`, `transform: {}` — no Babel). Tests live in `tests/` matching `**/tests/**/*.test.js`.
 
-Two suites exist today:
+Four suites exist today. Beyond the two described below, `tests/resolveDelivery.test.js` and `tests/resolveStrike.test.js` cover the pure scoring rules — the runs/extras split and rotate-then-substitute. **This is the pattern to follow for scoring logic:** keep the rule in a pure `src/utils/` function so it is testable without a database, and leave only the state handling in the controller.
+
+The two originals:
 - [tests/sanitize.middleware.test.js](tests/sanitize.middleware.test.js) — the pattern for middleware/controller tests: mount the single unit on a minimal Express instance and drive it with supertest. Do **not** import `src/app.js` in a test — it initializes Firebase Admin at import time and needs a service-account file.
 - [tests/locales.test.js](tests/locales.test.js) — enforces key parity across `en`/`hi`/`mr` (nested keys included) and rejects empty **top-level** values; the empty-value check uses `Object.entries` and does not recurse, so nested groups like `ACCOUNT_STATUS` are exempt from it.
 

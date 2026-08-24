@@ -14,6 +14,10 @@ const playerSchema = new Schema(
   { timestamps: true }
 );
 
-playerSchema.index({ teamId: 1, name: 1 });
+// Unique so the find-or-create upsert in match.controller.js is race-safe —
+// without it, two concurrent start-innings calls naming the same new opener can
+// each miss the "existing" check and insert a duplicate Player. Mirrors the
+// {createdBy, name} unique index on Team.
+playerSchema.index({ teamId: 1, name: 1 }, { unique: true });
 
 export const Player = mongoose.model('Player', playerSchema)

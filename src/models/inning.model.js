@@ -24,9 +24,14 @@ const inningSchema = new Schema(
     target:           { type: Number },  // only set for innings 2
     extras:           { type: extrasSchema, default: () => ({}) },
 
-    // Live state pointers — updated on every ball
-    currentBatterId:  { type: Schema.Types.ObjectId, ref: 'Player' },
+    // Live state pointers — updated on every ball. The names are denormalized
+    // alongside the ids so the scoring hot path can report who is on strike
+    // without a Player lookup per delivery, the same way Scorecard's batting
+    // lines carry playerName. Rotation swaps both pairs together.
+    strikerId:        { type: Schema.Types.ObjectId, ref: 'Player' },
+    strikerName:      { type: String, trim: true, maxlength: 50 },
     nonStrikerId:     { type: Schema.Types.ObjectId, ref: 'Player' },
+    nonStrikerName:   { type: String, trim: true, maxlength: 50 },
     currentBowlerId:  { type: Schema.Types.ObjectId, ref: 'Player' },
 
     status:           { type: String, default: 'in_progress', enum: ['in_progress', 'completed'] },

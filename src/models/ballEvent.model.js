@@ -1,4 +1,5 @@
 import mongoose, {Schema} from "mongoose";
+import { WICKET_TYPES } from "../utils/resolveStrike.js";
 
 // The delivery *fault* only. `bye`/`leg_bye` are NOT faults — they describe who
 // the runs belong to, which is `runsFrom` below. Keeping the two orthogonal is
@@ -6,7 +7,6 @@ import mongoose, {Schema} from "mongoose";
 const EXTRA_TYPES   = ['wide', 'no_ball'];
 // Who the runs on this delivery are credited to.
 const RUNS_FROM     = ['bat', 'bye', 'leg_bye'];
-const WICKET_TYPES  = ['bowled', 'caught', 'lbw', 'run_out', 'stumped', 'hit_wicket', 'obstructing', 'timed_out'];
 
 // Mirrors Inning.extras — typed instead of Mixed so this snapshot (duplicated
 // on every ball, the highest-volume collection in the app) stays validated
@@ -30,9 +30,15 @@ const preEventStateSchema = new Schema(
     legalBalls:         { type: Number, required: true },
     totalBalls:         { type: Number, required: true },
     oversCompleted:     { type: Number, required: true },
-    currentBatterId:    { type: Schema.Types.ObjectId },
+    strikerId:          { type: Schema.Types.ObjectId },
     nonStrikerId:       { type: Schema.Types.ObjectId },
     currentBowlerId:    { type: Schema.Types.ObjectId },
+    // Names are snapshotted, not re-derived by "swap back if strikeRotated" —
+    // that shortcut holds only while rotation is a pure swap of the pair, and
+    // breaks as soon as a dismissal *replaces* a batsman. Also lets an
+    // idempotent replay rebuild this ball's strike with no Player lookup.
+    strikerName:        { type: String },
+    nonStrikerName:     { type: String },
     overTotalRuns:      { type: Number, required: true },
     overLegalDeliveries:{ type: Number, required: true },
     extrasSnapshot:     { type: extrasSnapshotSchema, default: () => ({}) },
@@ -52,7 +58,7 @@ const ballEventSchema = new Schema(
     ballNumber:       { type: Number, required: true },   // within over
     absoluteBallSeq:  { type: Number, required: true },   // global seq in innings for undo
 
-    batsmanId:        { type: Schema.Types.ObjectId, ref: 'Player' },
+    strikerId:        { type: Schema.Types.ObjectId, ref: 'Player' },
     bowlerId:         { type: Schema.Types.ObjectId, ref: 'Player' },
     nonStrikerId:     { type: Schema.Types.ObjectId, ref: 'Player' },
 
@@ -69,8 +75,19 @@ const ballEventSchema = new Schema(
     isWicket:         { type: Boolean, default: false },
     wicketType:       { type: String, enum: WICKET_TYPES, default: null },
     dismissedPlayerId:{ type: Schema.Types.ObjectId, ref: 'Player' },
+    dismissedPlayerName: { type: String },
+    // The replacement, stored on the ball itself. preEventState holds only the
+    // pair from *before* the delivery, so without these a wicket ball's strike
+    // could not be rebuilt on undo or on an idempotent replay — the post-ball
+    // pair contains someone who was not at the crease when it was bowled.
+    // Both null on the final wicket.
+    incomingBatsmanId:   { type: Schema.Types.ObjectId, ref: 'Player' },
+    incomingBatsmanName: { type: String },
 
     isLegal:          { type: Boolean, required: true },  // extraType == null
+    // True iff the striker AFTER this ball is the non-striker from before it.
+    // Odd runs run and the end of an over each flip strike; both on the same
+    // ball cancel out. See resolveDelivery.rotatesOnRuns.
     strikeRotated:    { type: Boolean, default: false },
 
     // State snapshot for O(1) undo
@@ -89,7 +106,7 @@ ballEventSchema.index({ matchId: 1, idempotencyKey: 1 }, { unique: true });
 ballEventSchema.index({ inningsId: 1, absoluteBallSeq: -1 });
 // Over breakdown
 ballEventSchema.index({ inningsId: 1, overNumber: 1, ballNumber: 1 });
-// `batsmanId`/`bowlerId` indexes deliberately omitted for now — nothing
+// `strikerId`/`bowlerId` indexes deliberately omitted for now — nothing
 // queries by them yet, and this is the highest-write-volume collection in the
 // app. Add them back in the same change that ships the player-stats feature.
 

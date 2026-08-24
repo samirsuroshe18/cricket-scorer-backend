@@ -1,0 +1,177 @@
+import {
+    LEGAL_DELIVERIES_PER_OVER,
+    completesOver,
+    isSameBowler,
+    resolveBallOutcome,
+} from '../src/utils/resolveOver.js';
+
+// Only the fields resolveBallOutcome reads; the real snapshot carries more.
+const pre = ({ overLegalDeliveries = 0, wickets = 0, oversCompleted = 0 }) => ({
+    overLegalDeliveries,
+    wickets,
+    oversCompleted,
+});
+
+describe('completesOver', () => {
+    it('fires on the transition from 5 legal deliveries to 6', () => {
+        expect(completesOver({ isLegal: true, overLegalDeliveries: 5 })).toBe(true);
+    });
+
+    it.each([0, 1, 2, 3, 4])('does not fire at %i legal deliveries', (n) => {
+        expect(completesOver({ isLegal: true, overLegalDeliveries: n })).toBe(false);
+    });
+
+    // The guard against double-counting oversCompleted: an over already at 6
+    // must not complete again.
+    it('does not fire again on an already-complete over', () => {
+        expect(completesOver({ isLegal: true, overLegalDeliveries: 6 })).toBe(false);
+    });
+
+    // A wide off what would have been the last ball does not end the over.
+    it('never fires on an illegal delivery, even at 5', () => {
+        expect(completesOver({ isLegal: false, overLegalDeliveries: 5 })).toBe(false);
+    });
+});
+
+describe('isSameBowler', () => {
+    it('matches ObjectId-like values across string/object forms', () => {
+        const id = '665f3b1c2d3e4f5a6b7c8d94';
+        expect(isSameBowler(id, { toString: () => id })).toBe(true);
+    });
+
+    it('does not match different ids', () => {
+        expect(isSameBowler('665f3b1c2d3e4f5a6b7c8d94', '665f3b1c2d3e4f5a6b7c8d95')).toBe(false);
+    });
+
+    // No previous over — over 1 of an innings restricts nobody.
+    it.each([
+        [null, '665f3b1c2d3e4f5a6b7c8d94'],
+        ['665f3b1c2d3e4f5a6b7c8d94', null],
+        [null, null],
+        [undefined, undefined],
+    ])('is false when either side is missing (%s, %s)', (a, b) => {
+        expect(isSameBowler(a, b)).toBe(false);
+    });
+});
+
+describe('resolveBallOutcome', () => {
+    const outcome = (overrides = {}) => resolveBallOutcome({
+        isLegal: true,
+        isWicket: false,
+        totalOvers: 20,
+        preEventState: pre({}),
+        ...overrides,
+    });
+
+    it('mid-over ball ends nothing and prompts for nobody', () => {
+        expect(outcome({ preEventState: pre({ overLegalDeliveries: 3 }) })).toMatchObject({
+            overComplete: false,
+            inningsComplete: false,
+            newBowlerRequired: false,
+            completionReason: null,
+        });
+    });
+
+    it('6th legal ball completes the over and requires a new bowler', () => {
+        expect(outcome({ preEventState: pre({ overLegalDeliveries: 5 }) })).toMatchObject({
+            overComplete: true,
+            oversCompletedAfter: 1,
+            inningsComplete: false,
+            newBowlerRequired: true,
+        });
+    });
+
+    it('a wide on the 6th legal ball leaves the over open', () => {
+        expect(outcome({
+            isLegal: false,
+            preEventState: pre({ overLegalDeliveries: 5 }),
+        })).toMatchObject({ overComplete: false, newBowlerRequired: false });
+    });
+
+    // The last over of the innings: the over ends, but there is no next over,
+    // so no bowler is prompted for.
+    it('completes the innings when the overs run out', () => {
+        expect(outcome({
+            totalOvers: 20,
+            preEventState: pre({ overLegalDeliveries: 5, oversCompleted: 19 }),
+        })).toMatchObject({
+            overComplete: true,
+            oversCompletedAfter: 20,
+            oversDone: true,
+            allOut: false,
+            inningsComplete: true,
+            newBowlerRequired: false,
+            completionReason: 'overs_complete',
+        });
+    });
+
+    it('does not end the innings one over short', () => {
+        expect(outcome({
+            totalOvers: 20,
+            preEventState: pre({ overLegalDeliveries: 5, oversCompleted: 18 }),
+        })).toMatchObject({
+            oversCompletedAfter: 19,
+            oversDone: false,
+            newBowlerRequired: true,
+        });
+    });
+
+    it('the 10th wicket ends the innings mid-over, with no over completion', () => {
+        expect(outcome({
+            isWicket: true,
+            preEventState: pre({ overLegalDeliveries: 2, wickets: 9 }),
+        })).toMatchObject({
+            overComplete: false,
+            wicketsAfter: 10,
+            allOut: true,
+            inningsComplete: true,
+            newBowlerRequired: false,
+            completionReason: 'all_out',
+        });
+    });
+
+    it('the 10th wicket off the last ball of an over ends it without a bowler prompt', () => {
+        expect(outcome({
+            isWicket: true,
+            preEventState: pre({ overLegalDeliveries: 5, wickets: 9 }),
+        })).toMatchObject({
+            overComplete: true,
+            allOut: true,
+            inningsComplete: true,
+            newBowlerRequired: false,
+            completionReason: 'all_out',
+        });
+    });
+
+    // Both causes at once; being bowled out is what a scorecard reports.
+    it('reports all_out when the innings is bowled out on the final ball of the final over', () => {
+        expect(outcome({
+            isWicket: true,
+            totalOvers: 20,
+            preEventState: pre({ overLegalDeliveries: 5, wickets: 9, oversCompleted: 19 }),
+        })).toMatchObject({
+            allOut: true,
+            oversDone: true,
+            completionReason: 'all_out',
+        });
+    });
+
+    it('a wicket that is not the tenth ends nothing', () => {
+        expect(outcome({
+            isWicket: true,
+            preEventState: pre({ overLegalDeliveries: 1, wickets: 4 }),
+        })).toMatchObject({ wicketsAfter: 5, allOut: false, inningsComplete: false });
+    });
+
+    // Guards the replay path: derivation must not blow up without an over limit.
+    it('never reports oversDone when totalOvers is missing', () => {
+        expect(outcome({
+            totalOvers: undefined,
+            preEventState: pre({ overLegalDeliveries: 5, oversCompleted: 19 }),
+        })).toMatchObject({ oversDone: false, newBowlerRequired: true });
+    });
+
+    it('LEGAL_DELIVERIES_PER_OVER is 6', () => {
+        expect(LEGAL_DELIVERIES_PER_OVER).toBe(6);
+    });
+});
