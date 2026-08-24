@@ -108,5 +108,7 @@
   "BALL_UNDONE": "चेंडू मागे घेतला",
   "BALL_EVENT_ID_REQUIRED": "मागे घ्यायचा चेंडू नमूद करणे आवश्यक आहे",
   "INVALID_BALL_EVENT_ID": "अवैध चेंडू संदर्भ",
-  "BALL_NOT_LATEST": "फक्त सर्वात अलीकडचा चेंडू मागे घेता येतो"
+  "BALL_NOT_LATEST": "फक्त सर्वात अलीकडचा चेंडू मागे घेता येतो",
+  "MATCH_FETCHED": "सामना मिळाला",
+  "MATCH_CODE_REQUIRED": "सामना कोड आवश्यक आहे"
 }

@@ -108,5 +108,7 @@
   "BALL_UNDONE": "गेंद वापस ली गई",
   "BALL_EVENT_ID_REQUIRED": "वापस लेने वाली गेंद बतानी आवश्यक है",
   "INVALID_BALL_EVENT_ID": "अमान्य गेंद संदर्भ",
-  "BALL_NOT_LATEST": "केवल सबसे हाल की गेंद ही वापस ली जा सकती है"
+  "BALL_NOT_LATEST": "केवल सबसे हाल की गेंद ही वापस ली जा सकती है",
+  "MATCH_FETCHED": "मैच प्राप्त हुआ",
+  "MATCH_CODE_REQUIRED": "मैच कोड आवश्यक है"
 }

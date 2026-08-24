@@ -1,8 +1,8 @@
-import { Match } from '../models/match.model.js';
 import { Inning } from '../models/inning.model.js';
 import { Over } from '../models/over.model.js';
 import { Player } from '../models/player.model.js';
 import { formatOvers } from '../utils/formatOvers.js';
+import { findMatchByIdOrCode } from '../utils/matchLookup.js';
 
 // Who is bowling, and who bowled the over before — the pair that tells a scorer
 // resuming on a fresh app launch whether a bowler is still owed:
@@ -34,53 +34,83 @@ export const buildBowlerState = async (inning) => {
     };
 };
 
+/**
+ * The live half of a match: the score, who is at the crease, who is bowling.
+ *
+ * Shared by the `match:state` join ack and by the public REST endpoint, so a
+ * spectator painting from REST and then applying socket events is applying them
+ * to exactly the shape it already has. Two builders for one thing would mean two
+ * chances to disagree about the score.
+ *
+ * Null when the innings has not started; each caller decides what to show for
+ * that, because they genuinely differ — REST reports `innings: null` so a
+ * spectator sees a fixture, while the socket sends a zeroed board.
+ */
+export const buildInningsState = async (matchId, inning) => {
+    if (!inning) return null;
+
+    return {
+        matchId,
+        inningsNumber: inning.inningsNumber,
+        totalRuns: inning.totalRuns,
+        wickets: inning.wickets,
+        overs: formatOvers(inning.oversCompleted, inning.legalBalls),
+        extras: {
+            wides: inning.extras?.wides ?? 0,
+            noBalls: inning.extras?.noBalls ?? 0,
+            byes: inning.extras?.byes ?? 0,
+            legByes: inning.extras?.legByes ?? 0,
+        },
+        strike: {
+            strikerId: inning.strikerId ?? null,
+            strikerName: inning.strikerName ?? null,
+            nonStrikerId: inning.nonStrikerId ?? null,
+            nonStrikerName: inning.nonStrikerName ?? null,
+        },
+        bowler: await buildBowlerState(inning),
+    };
+};
+
 export const registerMatchSocket = (io) => {
     io.on('connection', (socket) => {
-        socket.on('match:join', async ({ matchId } = {}) => {
+        // The ONLY inbound socket event in the application, and it only reads.
+        //
+        // That is load-bearing, not incidental: there is no io.use() middleware
+        // and no per-event authentication, so any second handler added here
+        // would be world-writable the moment it is written. Scoring actions
+        // travel over REST, where verifyJwt and the createdBy ownership check
+        // both apply. See "What a spectator connection cannot do" in
+        // docs/api.md before adding anything to this socket.
+        socket.on('match:join', async ({ matchId, code } = {}) => {
             try {
-                if (!matchId) return;
-
-                socket.join(`match:${matchId}`);
-
-                const match = await Match.findById(matchId);
+                // `code` accepts either form — the 24-hex id or the six-character
+                // share code — so a spectator holding only the code never needs
+                // to resolve it first. `matchId` stays supported unchanged: the
+                // scorer's console has always sent it.
+                const match = await findMatchByIdOrCode(code ?? matchId);
                 if (!match) return;
 
-                const inning = await Inning.findOne({ matchId, inningsNumber: match.currentInnings });
+                // Always named by matchId, even when joined by code, so every
+                // emit call site stays untouched and a scorer and a spectator
+                // provably land in the same room.
+                socket.join(`match:${match._id}`);
 
-                const bowler = await buildBowlerState(inning);
+                const inning = await Inning.findOne({
+                    matchId: match._id,
+                    inningsNumber: match.currentInnings,
+                });
 
-                const state = inning
-                    ? {
-                        matchId,
-                        inningsNumber: inning.inningsNumber,
-                        totalRuns: inning.totalRuns,
-                        wickets: inning.wickets,
-                        overs: formatOvers(inning.oversCompleted, inning.legalBalls),
-                        extras: {
-                            wides: inning.extras?.wides ?? 0,
-                            noBalls: inning.extras?.noBalls ?? 0,
-                            byes: inning.extras?.byes ?? 0,
-                            legByes: inning.extras?.legByes ?? 0,
-                        },
-                        strike: {
-                            strikerId: inning.strikerId ?? null,
-                            strikerName: inning.strikerName ?? null,
-                            nonStrikerId: inning.nonStrikerId ?? null,
-                            nonStrikerName: inning.nonStrikerName ?? null,
-                        },
-                        bowler,
-                    }
-                    : {
-                        matchId,
-                        inningsNumber: match.currentInnings,
-                        totalRuns: 0,
-                        wickets: 0,
-                        overs: '0.0',
-                        extras: { wides: 0, noBalls: 0, byes: 0, legByes: 0 },
-                        // No innings yet means no openers and no bowler chosen yet.
-                        strike: null,
-                        bowler: null,
-                    };
+                const state = (await buildInningsState(match._id, inning)) ?? {
+                    matchId: match._id,
+                    inningsNumber: match.currentInnings,
+                    totalRuns: 0,
+                    wickets: 0,
+                    overs: '0.0',
+                    extras: { wides: 0, noBalls: 0, byes: 0, legByes: 0 },
+                    // No innings yet means no openers and no bowler chosen yet.
+                    strike: null,
+                    bowler: null,
+                };
 
                 socket.emit('match:state', state);
             } catch (err) {

@@ -9,9 +9,11 @@ import { Inning } from '../models/inning.model.js';
 import { Over } from '../models/over.model.js';
 import { BallEvent } from '../models/ballEvent.model.js';
 import { formatOvers } from '../utils/formatOvers.js';
-import { emitScoreUpdate, emitOverComplete, emitScoreUndo, buildBowlerState } from '../sockets/match.socket.js';
+import { emitScoreUpdate, emitOverComplete, emitScoreUndo, buildBowlerState, buildInningsState } from '../sockets/match.socket.js';
 import { resolveDelivery, EXTRA_TYPES, RUNS_FROM } from '../utils/resolveDelivery.js';
 import { resolveUndo } from '../utils/resolveUndo.js';
+import { generateJoinCode } from '../utils/joinCode.js';
+import { findMatchByIdOrCode } from '../utils/matchLookup.js';
 import { resolveBallOutcome, isSameBowler, LEGAL_DELIVERIES_PER_OVER } from '../utils/resolveOver.js';
 import {
     resolveStrike,
@@ -68,6 +70,29 @@ const findOrCreatePlayer = async (name, teamId, createdBy) => {
     }
 };
 
+// Six characters over a 30-character alphabet is ~729 million codes, so a
+// collision is vanishingly rare — but "vanishingly rare" is not "impossible",
+// and the unique index on Match.joinCode is what makes retrying correct rather
+// than hopeful. Same shape as findOrCreateTeam's E11000 handling: let the
+// database be the authority on uniqueness and react to what it says.
+const JOIN_CODE_ATTEMPTS = 5;
+
+const createMatchWithJoinCode = async (fields) => {
+    for (let attempt = 1; attempt <= JOIN_CODE_ATTEMPTS; attempt += 1) {
+        try {
+            return await Match.create({ ...fields, joinCode: generateJoinCode() });
+        } catch (err) {
+            // Only a joinCode collision is worth retrying. Any other duplicate
+            // key is a different problem and must not be swallowed by a loop
+            // that silently tries again with a new code.
+            const isJoinCodeCollision =
+                err.code === 11000 && Object.hasOwn(err.keyPattern ?? {}, 'joinCode');
+
+            if (!isJoinCodeCollision || attempt === JOIN_CODE_ATTEMPTS) throw err;
+        }
+    }
+};
+
 const createMatch = catchAsync(async (req, res) => {
     const { teamAName, teamBName, totalOvers } = req.body;
 
@@ -91,7 +116,7 @@ const createMatch = catchAsync(async (req, res) => {
         findOrCreateTeam(trimmedB, req.user._id),
     ]);
 
-    const match = await Match.create({
+    const match = await createMatchWithJoinCode({
         teamA: teamA._id,
         teamB: teamB._id,
         totalOvers,
@@ -100,6 +125,9 @@ const createMatch = catchAsync(async (req, res) => {
 
     return res.status(200).json(new ApiResponse(200, {
         matchId: match._id,
+        // The share code, returned here because this is the only moment the
+        // scorer's client learns it — nothing else it calls reports one.
+        joinCode: match.joinCode,
         teamA: { id: teamA._id, name: teamA.name },
         teamB: { id: teamB._id, name: teamB.name },
         totalOvers: match.totalOvers,
@@ -1130,4 +1158,63 @@ const undoBall = catchAsync(async (req, res) => {
     }
 });
 
-export { createMatch, startInnings, selectBowler, scoreBall, undoBall };
+// The entire surface an unauthenticated viewer can reach, and the only match
+// route with no verifyJwt. That is deliberate, and the /public/ segment in the
+// path is there so it is visible in the URL rather than only in the router.
+//
+// Read-only in the strongest available sense: it takes no body, writes nothing,
+// and there is no sibling public route that does. Every scoring endpoint carries
+// verifyJwt AND an independent createdBy ownership check — see the route table
+// in docs/api.md, and tests/routes.auth.test.js, which fails the build if a
+// route ever loses its middleware.
+const getPublicMatch = catchAsync(async (req, res) => {
+    const { code } = req.params;
+
+    if (!code?.trim()) {
+        throw new ApiError(400, "MATCH_CODE_REQUIRED");
+    }
+
+    const match = await findMatchByIdOrCode(code);
+
+    // An unknown code and a soft-deleted match answer identically, on purpose.
+    // Telling them apart would make this endpoint an oracle: an enumerator could
+    // learn which codes have ever existed, which is most of the work of guessing
+    // one. `findMatchByIdOrCode` already collapses both to null.
+    if (!match) {
+        throw new ApiError(404, "MATCH_NOT_FOUND");
+    }
+
+    const [teamA, teamB, inning] = await Promise.all([
+        Team.findById(match.teamA),
+        Team.findById(match.teamB),
+        Inning.findOne({ matchId: match._id, inningsNumber: match.currentInnings }),
+    ]);
+
+    return res.status(200).json(new ApiResponse(200, {
+        // An explicit pick, not a spread of the Mongoose document. `createdBy`
+        // is the one field on Match that identifies a person with an account and
+        // it must never leave the server here; `syncStatus`, `isDeleted` and the
+        // timestamps are internal bookkeeping a spectator has no use for.
+        // Spreading would leak all of it the moment anyone adds a field.
+        match: {
+            matchId: match._id,
+            joinCode: match.joinCode ?? null,
+            title: match.title ?? null,
+            teamA: { name: teamA?.name ?? null },
+            teamB: { name: teamB?.name ?? null },
+            totalOvers: match.totalOvers,
+            status: match.status,
+            matchType: match.matchType,
+            venue: match.venue ?? null,
+            currentInnings: match.currentInnings,
+            result: match.result ?? null,
+        },
+        // Exactly the object `match:state` emits, so a spectator paints from
+        // here once and then applies socket events to the same shape. Null
+        // before start-innings: an early viewer gets the fixture and an empty
+        // scoreboard, which is the truth, rather than an error.
+        innings: await buildInningsState(match._id, inning),
+    }, req.t("MATCH_FETCHED")));
+});
+
+export { createMatch, startInnings, selectBowler, scoreBall, undoBall, getPublicMatch };
