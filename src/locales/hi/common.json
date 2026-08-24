@@ -104,5 +104,9 @@
   "BOWLER_NAME_REQUIRED": "गेंदबाज का नाम आवश्यक है",
   "BOWLER_NOT_SELECTED": "गेंद दर्ज करने से पहले इस ओवर का गेंदबाज चुनें",
   "BOWLER_CANNOT_BOWL_CONSECUTIVE_OVERS": "कोई गेंदबाज लगातार दो ओवर नहीं डाल सकता",
-  "OVER_ALREADY_STARTED": "यह ओवर पहले ही शुरू हो चुका है"
+  "OVER_ALREADY_STARTED": "यह ओवर पहले ही शुरू हो चुका है",
+  "BALL_UNDONE": "गेंद वापस ली गई",
+  "BALL_EVENT_ID_REQUIRED": "वापस लेने वाली गेंद बतानी आवश्यक है",
+  "INVALID_BALL_EVENT_ID": "अमान्य गेंद संदर्भ",
+  "BALL_NOT_LATEST": "केवल सबसे हाल की गेंद ही वापस ली जा सकती है"
 }

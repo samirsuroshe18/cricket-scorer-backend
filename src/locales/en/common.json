@@ -104,5 +104,9 @@
   "BOWLER_NAME_REQUIRED": "The bowler's name is required",
   "BOWLER_NOT_SELECTED": "Choose the bowler for this over before scoring",
   "BOWLER_CANNOT_BOWL_CONSECUTIVE_OVERS": "A bowler cannot bowl two overs in a row",
-  "OVER_ALREADY_STARTED": "This over has already begun"
+  "OVER_ALREADY_STARTED": "This over has already begun",
+  "BALL_UNDONE": "Ball undone",
+  "BALL_EVENT_ID_REQUIRED": "The ball to undo must be specified",
+  "INVALID_BALL_EVENT_ID": "Invalid ball reference",
+  "BALL_NOT_LATEST": "Only the most recent ball can be undone"
 }

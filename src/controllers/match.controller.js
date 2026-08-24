@@ -9,8 +9,9 @@ import { Inning } from '../models/inning.model.js';
 import { Over } from '../models/over.model.js';
 import { BallEvent } from '../models/ballEvent.model.js';
 import { formatOvers } from '../utils/formatOvers.js';
-import { emitScoreUpdate, emitOverComplete } from '../sockets/match.socket.js';
+import { emitScoreUpdate, emitOverComplete, emitScoreUndo, buildBowlerState } from '../sockets/match.socket.js';
 import { resolveDelivery, EXTRA_TYPES, RUNS_FROM } from '../utils/resolveDelivery.js';
+import { resolveUndo } from '../utils/resolveUndo.js';
 import { resolveBallOutcome, isSameBowler, LEGAL_DELIVERIES_PER_OVER } from '../utils/resolveOver.js';
 import {
     resolveStrike,
@@ -906,4 +907,227 @@ const scoreBall = catchAsync(async (req, res) => {
     }
 });
 
-export { createMatch, startInnings, selectBowler, scoreBall };
+// The mirror of scoreBall. Everything it restores comes from the preEventState
+// the ball has carried since it was written — nothing is recomputed, and nothing
+// is read from live state, because live state is exactly what is wrong.
+//
+// Deliberately targeted by ballEventId rather than popping whatever is last:
+// undo is the button a scorer double-taps on a bad connection, and a blind pop
+// would eat a second delivery. Naming the ball makes the retry a no-op instead.
+// See the undo section of docs/api.md for why only the latest ball is undoable.
+const undoBall = catchAsync(async (req, res) => {
+    const { matchId } = req.params;
+    const { ballEventId } = req.body;
+
+    if (typeof ballEventId !== 'string' || !ballEventId.trim()) {
+        throw new ApiError(400, "BALL_EVENT_ID_REQUIRED");
+    }
+
+    const targetId = ballEventId.trim();
+
+    if (!mongoose.Types.ObjectId.isValid(targetId)) {
+        throw new ApiError(400, "INVALID_BALL_EVENT_ID");
+    }
+
+    const match = await Match.findOne({ _id: matchId, isDeleted: false });
+    if (!match) {
+        throw new ApiError(404, "MATCH_NOT_FOUND");
+    }
+
+    if (!match.createdBy?.equals(req.user._id)) {
+        throw new ApiError(403, "MATCH_NOT_OWNED");
+    }
+
+    if (match.status === 'completed' || match.status === 'abandoned') {
+        throw new ApiError(400, "MATCH_ALREADY_COMPLETED");
+    }
+
+    const session = await mongoose.startSession();
+    try {
+        let result;
+
+        await session.withTransaction(async () => {
+            const inning = await Inning.findOne({
+                matchId: match._id,
+                inningsNumber: match.currentInnings,
+            }).session(session);
+
+            // No innings means nothing was ever scored, so there is nothing this
+            // ball id could refer to either.
+            if (!inning) {
+                throw new ApiError(400, "INNINGS_NOT_STARTED");
+            }
+
+            const ball = await BallEvent.findOne({
+                _id: targetId,
+                matchId: match._id,
+            }).session(session);
+
+            // Gone means a previous attempt already removed it. Answering 200
+            // rather than 404 is what makes undo idempotent, and it is safe
+            // because a ball scored SINCE has a different id — a retried undo
+            // matches nothing and correctly does nothing.
+            if (!ball) {
+                result = { inning, alreadyUndone: true };
+                return;
+            }
+
+            const latest = await BallEvent.findOne({ inningsId: inning._id })
+                .sort({ absoluteBallSeq: -1 })
+                .session(session);
+
+            // Covers both "a later ball exists" and "this ball belongs to an
+            // innings that is no longer current" — neither is the latest
+            // delivery of the innings being scored.
+            if (!latest || !latest._id.equals(ball._id)) {
+                throw new ApiError(400, "BALL_NOT_LATEST");
+            }
+
+            const over = await Over.findById(ball.overId).session(session);
+            const overWasComplete = Boolean(over?.isComplete);
+            const inningsWasComplete = inning.status === 'completed';
+
+            await BallEvent.deleteOne({ _id: ball._id }, { session });
+
+            const restored = resolveUndo({
+                preEventState: ball.preEventState,
+                isWicket: ball.isWicket,
+                overWickets: over?.wickets ?? 0,
+            });
+
+            let overRemoved = false;
+
+            if (over) {
+                // An over with no deliveries left has to GO, not sit at zero.
+                // select-bowler gates on BallEvent.exists for the over, so it
+                // becomes callable again — but scoreBall does Over.findOne
+                // before creating, would find this document, and would keep its
+                // original bowlerId. The over would be credited to the wrong
+                // bowler, and the consecutive-over check for the next over would
+                // read that wrong id. Deleting it also keeps Over.bowlerId
+                // stamped exactly once, at creation.
+                const remaining = await BallEvent.findOne({ overId: over._id })
+                    .select('_id')
+                    .session(session);
+
+                if (remaining) {
+                    Object.assign(over, restored.over);
+                    await over.save({ session });
+                } else {
+                    await Over.deleteOne({ _id: over._id }, { session });
+                    overRemoved = true;
+                }
+            }
+
+            Object.assign(inning, restored.inning);
+            await inning.save({ session });
+
+            result = {
+                inning,
+                ball,
+                alreadyUndone: false,
+                // A single-delivery over can never have been complete, so this
+                // and overRemoved are mutually exclusive in practice; the guard
+                // is here so the flag never claims an over that no longer exists.
+                overReopened: overWasComplete && !overRemoved,
+                overRemoved,
+                inningsReopened: inningsWasComplete,
+            };
+        });
+
+        const { inning } = result;
+
+        const [bowler, remainingBall] = await Promise.all([
+            buildBowlerState(inning),
+            BallEvent.findOne({ inningsId: inning._id }).select('_id'),
+        ]);
+
+        const state = {
+            matchId: match._id,
+            inningsId: inning._id,
+            inningsNumber: inning.inningsNumber,
+            strike: buildStrike(inning),
+            bowler,
+            inningsTotals: {
+                totalRuns: inning.totalRuns,
+                wickets: inning.wickets,
+                legalBalls: inning.legalBalls,
+                totalBalls: inning.totalBalls,
+                oversCompleted: inning.oversCompleted,
+                extras: serializeExtras(inning.extras),
+            },
+            overs: formatOvers(inning.oversCompleted, inning.legalBalls),
+            // Always false after a successful undo — the innings was open before
+            // the ball, so it is open again now. Reported anyway so the client
+            // renders this response without consulting what it had before.
+            inningsComplete: inning.status === 'completed',
+            canUndo: Boolean(remainingBall),
+        };
+
+        if (result.alreadyUndone) {
+            // Nothing changed, so the room is told nothing. The caller still
+            // gets the current state, which is the point of answering 200.
+            return res.status(200).json(new ApiResponse(200, {
+                ...state,
+                alreadyUndone: true,
+                undone: null,
+                overReopened: false,
+                overRemoved: false,
+                inningsReopened: false,
+            }, req.t("BALL_UNDONE")));
+        }
+
+        const { ball } = result;
+
+        const undone = {
+            ballEventId: ball._id,
+            overNumber: ball.overNumber,
+            ballNumber: ball.ballNumber,
+            absoluteBallSeq: ball.absoluteBallSeq,
+            runs: ball.runs,
+            extras: ball.extras,
+            extraType: ball.extraType,
+            runsFrom: ball.runsFrom,
+            isLegal: ball.isLegal,
+            wicket: buildWicket(ball),
+        };
+
+        const io = req.app.get('io');
+        if (io) {
+            emitScoreUndo(io, {
+                matchId: match._id,
+                inningsId: inning._id,
+                inningsNumber: inning.inningsNumber,
+                totalRuns: inning.totalRuns,
+                wickets: inning.wickets,
+                overs: state.overs,
+                extras: state.inningsTotals.extras,
+                strike: state.strike,
+                bowler,
+                // Named differently from score:update's `lastBall` on purpose:
+                // this identifies a delivery to REMOVE, not one to append.
+                undoneBall: {
+                    ballEventId: ball._id,
+                    overNumber: ball.overNumber,
+                    ballNumber: ball.ballNumber,
+                    absoluteBallSeq: ball.absoluteBallSeq,
+                },
+                overReopened: result.overReopened,
+                inningsReopened: result.inningsReopened,
+            });
+        }
+
+        return res.status(200).json(new ApiResponse(200, {
+            ...state,
+            alreadyUndone: false,
+            undone,
+            overReopened: result.overReopened,
+            overRemoved: result.overRemoved,
+            inningsReopened: result.inningsReopened,
+        }, req.t("BALL_UNDONE")));
+    } finally {
+        await session.endSession();
+    }
+});
+
+export { createMatch, startInnings, selectBowler, scoreBall, undoBall };

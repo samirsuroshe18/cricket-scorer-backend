@@ -104,5 +104,9 @@
   "BOWLER_NAME_REQUIRED": "गोलंदाजाचे नाव आवश्यक आहे",
   "BOWLER_NOT_SELECTED": "चेंडू नोंदवण्यापूर्वी या षटकाचा गोलंदाज निवडा",
   "BOWLER_CANNOT_BOWL_CONSECUTIVE_OVERS": "गोलंदाज सलग दोन षटके टाकू शकत नाही",
-  "OVER_ALREADY_STARTED": "हे षटक आधीच सुरू झाले आहे"
+  "OVER_ALREADY_STARTED": "हे षटक आधीच सुरू झाले आहे",
+  "BALL_UNDONE": "चेंडू मागे घेतला",
+  "BALL_EVENT_ID_REQUIRED": "मागे घ्यायचा चेंडू नमूद करणे आवश्यक आहे",
+  "INVALID_BALL_EVENT_ID": "अवैध चेंडू संदर्भ",
+  "BALL_NOT_LATEST": "फक्त सर्वात अलीकडचा चेंडू मागे घेता येतो"
 }

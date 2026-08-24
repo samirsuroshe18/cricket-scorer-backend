@@ -12,7 +12,7 @@ import { formatOvers } from '../utils/formatOvers.js';
 //
 // Names are looked up rather than denormalized: unlike the batsmen, a bowler's
 // name is only needed on join and at over end, never per delivery.
-const buildBowlerState = async (inning) => {
+export const buildBowlerState = async (inning) => {
     if (!inning) return null;
 
     const previousOver = inning.oversCompleted > 0
@@ -98,4 +98,13 @@ export const emitScoreUpdate = (io, payload) => {
 // delivery before being handed the end-of-over card for it.
 export const emitOverComplete = (io, payload) => {
     io.to(`match:${payload.matchId}`).emit('over:complete', payload);
+};
+
+// A separate event rather than a score:update with the totals rolled back: a
+// spectator keeping a ball-by-ball strip has to REMOVE a delivery here, and
+// reusing score:update would have `lastBall` mean the opposite of what it means
+// everywhere else. The totals block is the same shape, so a view that only
+// tracks the score can still handle both through one path.
+export const emitScoreUndo = (io, payload) => {
+    io.to(`match:${payload.matchId}`).emit('score:undo', payload);
 };
