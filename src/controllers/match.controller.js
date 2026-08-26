@@ -1345,8 +1345,21 @@ const getMatchScorecard = catchAsync(async (req, res) => {
         ]);
     }
 
+    // Scorecard.battingTeam is a side label ('teamA'/'teamB'), the same
+    // convention as everywhere else in this API — so this is the one place a
+    // result screen can resolve what they actually mean, the same lookup
+    // getPublicMatch already does for the same reason. Without it, a result
+    // screen reached by direct navigation (no live session to have cached a
+    // name from) would have no team name to show at all.
+    const [teamA, teamB] = await Promise.all([
+        Team.findById(match.teamA),
+        Team.findById(match.teamB),
+    ]);
+
     return res.status(200).json(new ApiResponse(200, {
         matchId: match._id,
+        teamA: { name: teamA?.name ?? null },
+        teamB: { name: teamB?.name ?? null },
         result: match.result ?? null,
         innings: [scorecard1, scorecard2],
     }, req.t("SCORECARD_FETCHED")));
