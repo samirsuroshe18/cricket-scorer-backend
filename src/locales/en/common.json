@@ -77,6 +77,7 @@
   "TEAM_NAMES_REQUIRED": "Both team names are required",
   "TEAM_NAMES_MUST_DIFFER": "Team names must be different",
   "INVALID_OVERS_FORMAT": "Overs must be a whole number between 1 and 50",
+  "INVALID_TOSS_RESULT": "Toss winner and decision must both be provided, or both left out",
   "BALL_SCORED": "Ball scored",
   "RUNS_OUT_OF_RANGE": "Runs must be a whole number between 0 and 6",
   "IDEMPOTENCY_KEY_REQUIRED": "Idempotency key is required",

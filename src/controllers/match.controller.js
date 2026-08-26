@@ -14,6 +14,7 @@ import { emitScoreUpdate, emitOverComplete, emitScoreUndo, emitMatchComplete, bu
 import { resolveDelivery, EXTRA_TYPES, RUNS_FROM } from '../utils/resolveDelivery.js';
 import { resolveUndo } from '../utils/resolveUndo.js';
 import { resolveMatchResult } from '../utils/resolveMatchResult.js';
+import { resolveToss } from '../utils/resolveToss.js';
 import { generateScorecard } from '../utils/scorecard.js';
 import { generateJoinCode } from '../utils/joinCode.js';
 import { findMatchByIdOrCode } from '../utils/matchLookup.js';
@@ -97,7 +98,7 @@ const createMatchWithJoinCode = async (fields) => {
 };
 
 const createMatch = catchAsync(async (req, res) => {
-    const { teamAName, teamBName, totalOvers } = req.body;
+    const { teamAName, teamBName, totalOvers, tossWinner, tossDecision } = req.body;
 
     if (!teamAName?.trim() || !teamBName?.trim()) {
         throw new ApiError(400, "TEAM_NAMES_REQUIRED");
@@ -114,6 +115,11 @@ const createMatch = catchAsync(async (req, res) => {
         throw new ApiError(400, "INVALID_OVERS_FORMAT");
     }
 
+    const toss = resolveToss({ tossWinner, tossDecision });
+    if (!toss.valid) {
+        throw new ApiError(400, "INVALID_TOSS_RESULT");
+    }
+
     const [teamA, teamB] = await Promise.all([
         findOrCreateTeam(trimmedA, req.user._id),
         findOrCreateTeam(trimmedB, req.user._id),
@@ -123,6 +129,9 @@ const createMatch = catchAsync(async (req, res) => {
         teamA: teamA._id,
         teamB: teamB._id,
         totalOvers,
+        tossWinner: toss.tossWinner ?? undefined,
+        tossDecision: toss.tossDecision ?? undefined,
+        battingFirst: toss.battingFirst,
         createdBy: req.user._id,
     });
 
@@ -134,6 +143,8 @@ const createMatch = catchAsync(async (req, res) => {
         teamA: { id: teamA._id, name: teamA.name },
         teamB: { id: teamB._id, name: teamB.name },
         totalOvers: match.totalOvers,
+        tossWinner: match.tossWinner ?? null,
+        tossDecision: match.tossDecision ?? null,
         status: match.status,
         syncStatus: match.syncStatus,
         createdAt: match.createdAt,
@@ -1411,6 +1422,8 @@ const getPublicMatch = catchAsync(async (req, res) => {
             teamA: { name: teamA?.name ?? null },
             teamB: { name: teamB?.name ?? null },
             totalOvers: match.totalOvers,
+            tossWinner: match.tossWinner ?? null,
+            tossDecision: match.tossDecision ?? null,
             status: match.status,
             matchType: match.matchType,
             venue: match.venue ?? null,
