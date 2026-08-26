@@ -110,5 +110,7 @@
   "INVALID_BALL_EVENT_ID": "Invalid ball reference",
   "BALL_NOT_LATEST": "Only the most recent ball can be undone",
   "MATCH_FETCHED": "Match fetched",
-  "MATCH_CODE_REQUIRED": "A match code is required"
+  "MATCH_CODE_REQUIRED": "A match code is required",
+  "SCORECARD_FETCHED": "Scorecard fetched",
+  "SCORECARD_NOT_READY": "The scorecard is available once the match has finished"
 }

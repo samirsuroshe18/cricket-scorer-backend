@@ -110,5 +110,7 @@
   "INVALID_BALL_EVENT_ID": "अमान्य गेंद संदर्भ",
   "BALL_NOT_LATEST": "केवल सबसे हाल की गेंद ही वापस ली जा सकती है",
   "MATCH_FETCHED": "मैच प्राप्त हुआ",
-  "MATCH_CODE_REQUIRED": "मैच कोड आवश्यक है"
+  "MATCH_CODE_REQUIRED": "मैच कोड आवश्यक है",
+  "SCORECARD_FETCHED": "स्कोरकार्ड प्राप्त हुआ",
+  "SCORECARD_NOT_READY": "मैच समाप्त होने के बाद स्कोरकार्ड उपलब्ध होगा"
 }

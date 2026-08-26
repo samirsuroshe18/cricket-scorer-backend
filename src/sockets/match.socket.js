@@ -138,3 +138,12 @@ export const emitOverComplete = (io, payload) => {
 export const emitScoreUndo = (io, payload) => {
     io.to(`match:${payload.matchId}`).emit('score:undo', payload);
 };
+
+// Same room as everything else — a spectator who joined mid-match needs no
+// separate subscription to learn the match ended. Always the last event on
+// the ball that ends it: score:update, then over:complete if that ball also
+// closed an over, then this — so a client applies the delivery and the over
+// card before being told there is nothing further to apply.
+export const emitMatchComplete = (io, payload) => {
+    io.to(`match:${payload.matchId}`).emit('match:complete', payload);
+};

@@ -8,10 +8,13 @@ import { Player } from '../models/player.model.js';
 import { Inning } from '../models/inning.model.js';
 import { Over } from '../models/over.model.js';
 import { BallEvent } from '../models/ballEvent.model.js';
+import { Scorecard } from '../models/scorecard.model.js';
 import { formatOvers } from '../utils/formatOvers.js';
-import { emitScoreUpdate, emitOverComplete, emitScoreUndo, buildBowlerState, buildInningsState } from '../sockets/match.socket.js';
+import { emitScoreUpdate, emitOverComplete, emitScoreUndo, emitMatchComplete, buildBowlerState, buildInningsState } from '../sockets/match.socket.js';
 import { resolveDelivery, EXTRA_TYPES, RUNS_FROM } from '../utils/resolveDelivery.js';
 import { resolveUndo } from '../utils/resolveUndo.js';
+import { resolveMatchResult } from '../utils/resolveMatchResult.js';
+import { generateScorecard } from '../utils/scorecard.js';
 import { generateJoinCode } from '../utils/joinCode.js';
 import { findMatchByIdOrCode } from '../utils/matchLookup.js';
 import { resolveBallOutcome, isSameBowler, LEGAL_DELIVERIES_PER_OVER } from '../utils/resolveOver.js';
@@ -172,12 +175,25 @@ const playerNameById = async (id) => {
 // code and cannot drift. Both halves of the rotation rule are recovered exactly
 // — the over ended iff this legal ball took it from 5 legal deliveries to 6, and
 // the runs half is then the XOR complement of the stored strikeRotated.
-const buildBallView = async (ballEvent, postPair, totalOvers, overDoc = null) => {
+const buildBallView = async (
+    ballEvent,
+    postPair,
+    totalOvers,
+    overDoc = null,
+    inningsNumber = 1,
+    target = null
+) => {
     const outcome = resolveBallOutcome({
         isLegal: ballEvent.isLegal,
         isWicket: ballEvent.isWicket,
+        // The ball's own stored split, not a re-derivation — teamRuns is what
+        // resolveDelivery called it at scoring time (ballRuns + ballExtras),
+        // and BallEvent.runs/.extras are exactly that pair already applied.
+        teamRuns: ballEvent.runs + ballEvent.extras,
         preEventState: ballEvent.preEventState,
         totalOvers,
+        inningsNumber,
+        target,
     });
 
     const rotatedOnRuns = ballEvent.strikeRotated !== outcome.overComplete;
@@ -283,6 +299,11 @@ const buildBallResponse = (ballEvent, inning, view) => ({
     // key reports whether THAT delivery ended the innings — not whether the
     // innings has ended by now.
     inningsComplete: view.outcome.inningsComplete,
+    // Innings 2 ending IS match completion — there is no separate detector.
+    // `inning` here is always the innings this ball belongs to, in both the
+    // fresh-score and idempotent-replay paths, so this reports what THAT ball
+    // did, same as inningsComplete above.
+    matchComplete: view.outcome.inningsComplete && inning.inningsNumber === 2,
     wicket: buildWicket(ballEvent),
     strike: view.strike,
     inningsTotals: {
@@ -356,7 +377,14 @@ const respondWithExistingBall = async (match, idempotencyKey, res, req) => {
     if (!existing) return null;
     const inning = await Inning.findById(existing.inningsId);
 
-    const view = await buildBallView(existing, strikeAfterBall(existing), match.totalOvers);
+    const view = await buildBallView(
+        existing,
+        strikeAfterBall(existing),
+        match.totalOvers,
+        null,
+        inning.inningsNumber,
+        inning.target
+    );
 
     emitBallEvents(req, existing, inning, view);
 
@@ -419,7 +447,15 @@ const startInnings = catchAsync(async (req, res) => {
         throw new ApiError(400, "INNINGS_ALREADY_STARTED");
     }
 
-    const battingTeam = match.battingFirst || 'teamA';
+    // Innings 2 bats the side that bowled in innings 1 — the opposite of
+    // battingFirst, not a re-derivation of it. This was unreachable before the
+    // innings transition existed (currentInnings could only ever be 1), so the
+    // bug of always resolving battingFirst regardless of which innings this is
+    // had nothing to expose it until now.
+    const firstBattingTeam = match.battingFirst || 'teamA';
+    const battingTeam = match.currentInnings === 2
+        ? (firstBattingTeam === 'teamA' ? 'teamB' : 'teamA')
+        : firstBattingTeam;
     const bowlingTeam = battingTeam === 'teamA' ? 'teamB' : 'teamA';
     const battingTeamId = battingTeam === 'teamA' ? match.teamA : match.teamB;
     const bowlingTeamId = bowlingTeam === 'teamA' ? match.teamA : match.teamB;
@@ -451,16 +487,32 @@ const startInnings = catchAsync(async (req, res) => {
                 Object.assign(inning, openers);
                 await inning.save({ session });
             } else {
-                [inning] = await Inning.create([{
+                const fields = {
                     matchId: match._id,
                     inningsNumber: match.currentInnings,
                     battingTeam,
                     bowlingTeam,
                     ...openers,
-                }], { session });
+                };
+
+                // Only innings 2 chases a target, and only once innings 1 has
+                // actually finished — which, by the time currentInnings can
+                // be 2 at all, it always has (see the innings transition in
+                // score-ball). One more than what was defended, not what was
+                // scored: conceding exactly the target ties, so the batting
+                // side must pass it, not just match it.
+                if (match.currentInnings === 2) {
+                    const inning1 = await Inning.findOne({
+                        matchId: match._id,
+                        inningsNumber: 1,
+                    }).session(session);
+                    fields.target = inning1.totalRuns + 1;
+                }
+
+                [inning] = await Inning.create([fields], { session });
             }
 
-            if (match.status === 'upcoming') {
+            if (match.status === 'upcoming' || match.status === 'innings_break') {
                 match.status = 'live';
                 await match.save({ session });
             }
@@ -472,6 +524,9 @@ const startInnings = catchAsync(async (req, res) => {
             inningsNumber: inning.inningsNumber,
             battingTeam: inning.battingTeam,
             bowlingTeam: inning.bowlingTeam,
+            // Null for innings 1 — nothing to chase yet. Set once, at
+            // creation, from innings 1's completed total; never innings 2.
+            target: inning.target ?? null,
             strike: buildStrike(inning),
             bowler: {
                 bowlerId: bowlerDoc._id,
@@ -809,8 +864,11 @@ const scoreBall = catchAsync(async (req, res) => {
             const outcome = resolveBallOutcome({
                 isLegal: delivery.isLegal,
                 isWicket: Boolean(wicketType),
+                teamRuns: delivery.teamRuns,
                 preEventState,
                 totalOvers: match.totalOvers,
+                inningsNumber: inning.inningsNumber,
+                target: inning.target,
             });
 
             // Odd runs run rotate strike mid-over — byes, leg-byes and runs off a
@@ -895,19 +953,55 @@ const scoreBall = catchAsync(async (req, res) => {
                 incomingName: incomingPlayer?.name ?? null,
             }));
 
-            // All out, or the overs have run out. The second is new here
-            // because over completion is the only place that can detect it —
-            // without it a 20-over match would keep taking deliveries and keep
-            // asking for an over-21 bowler. Neither case advances
-            // match.currentInnings: the innings *transition* is still unbuilt.
+            // All out, the overs have run out, or — innings 2 only — the
+            // target has been chased. Over completion is the only place that
+            // can detect overs_complete at all (without it a 20-over match
+            // would keep taking deliveries and keep asking for an over-21
+            // bowler), and target_achieved has to be checked here too, since
+            // it can land mid-over.
+            let matchJustCompleted = false;
+            let inning1ForResult = null;
+
             if (outcome.inningsComplete) {
                 inning.status = 'completed';
                 inning.completionReason = outcome.completionReason;
+
+                if (inning.inningsNumber === 1) {
+                    // The innings transition. start-innings has no way to be
+                    // told "open innings 2 specifically" — it always resolves
+                    // against match.currentInnings — so this is the only
+                    // place that pointer can move. Target itself is set later,
+                    // by start-innings, once innings 2's Inning document
+                    // actually exists to carry it.
+                    match.currentInnings = 2;
+                    match.status = 'innings_break';
+                } else {
+                    // Innings 2 ending IS match completion — there is no
+                    // separate detector for it.
+                    inning1ForResult = await Inning.findOne({
+                        matchId: match._id,
+                        inningsNumber: 1,
+                    }).session(session);
+
+                    match.status = 'completed';
+                    match.completedAt = new Date();
+                    match.result = resolveMatchResult({
+                        completionReason: outcome.completionReason,
+                        battingTeam1: inning1ForResult.battingTeam,
+                        battingTeam2: inning.battingTeam,
+                        runs1: inning1ForResult.totalRuns,
+                        runs2: inning.totalRuns,
+                        wickets2: inning.wickets,
+                    });
+                    matchJustCompleted = true;
+                }
+
+                await match.save({ session });
             }
 
             await inning.save({ session });
 
-            result = { ballEvent, inning, over };
+            result = { ballEvent, inning, over, matchJustCompleted, inning1ForResult };
         });
 
         // The pair comes from the innings rather than the ball: the innings is
@@ -918,10 +1012,53 @@ const scoreBall = catchAsync(async (req, res) => {
             result.ballEvent,
             result.inning,
             match.totalOvers,
-            result.over
+            result.over,
+            result.inning.inningsNumber,
+            result.inning.target
         );
 
+        if (result.matchJustCompleted) {
+            try {
+                await Promise.all([
+                    generateScorecard(match._id, result.inning1ForResult),
+                    generateScorecard(match._id, result.inning),
+                ]);
+            } catch (err) {
+                // The ball, and the match completion itself, are already
+                // safely committed — a scorecard that fails to generate here
+                // is not that. GET .../scorecard regenerates on demand, since
+                // generateScorecard is an upsert and therefore idempotent.
+                console.error('scorecard generation failed', err);
+            }
+        }
+
         emitBallEvents(req, result.ballEvent, result.inning, view);
+
+        if (result.matchJustCompleted) {
+            const io = req.app.get('io');
+            if (io) {
+                emitMatchComplete(io, {
+                    matchId: match._id,
+                    result: match.result,
+                    innings: [
+                        {
+                            inningsNumber: 1,
+                            battingTeam: result.inning1ForResult.battingTeam,
+                            totalRuns: result.inning1ForResult.totalRuns,
+                            wickets: result.inning1ForResult.wickets,
+                            overs: formatOvers(result.inning1ForResult.oversCompleted, result.inning1ForResult.legalBalls),
+                        },
+                        {
+                            inningsNumber: 2,
+                            battingTeam: result.inning.battingTeam,
+                            totalRuns: result.inning.totalRuns,
+                            wickets: result.inning.wickets,
+                            overs: formatOvers(result.inning.oversCompleted, result.inning.legalBalls),
+                        },
+                    ],
+                });
+            }
+        }
 
         return res.status(200).json(new ApiResponse(200, buildBallResponse(result.ballEvent, result.inning, view), req.t("BALL_SCORED")));
     } catch (err) {
@@ -1167,6 +1304,54 @@ const undoBall = catchAsync(async (req, res) => {
 // verifyJwt AND an independent createdBy ownership check — see the route table
 // in docs/api.md, and tests/routes.auth.test.js, which fails the build if a
 // route ever loses its middleware.
+// Both innings' finalized figures plus the match result. Gated on
+// match.status === 'completed' rather than on the Scorecard documents
+// existing — by the time a client can even reach this route with a completed
+// match, generateScorecard has already run at completion time (see the
+// try/catch around it in scoreBall). The regeneration below covers the one
+// case that guarantee doesn't: that call failing after the match itself had
+// already committed. generateScorecard is an upsert, so calling it again here
+// is always safe, never a duplicate.
+const getMatchScorecard = catchAsync(async (req, res) => {
+    const { matchId } = req.params;
+
+    const match = await Match.findOne({ _id: matchId, isDeleted: false });
+    if (!match) {
+        throw new ApiError(404, "MATCH_NOT_FOUND");
+    }
+
+    if (!match.createdBy?.equals(req.user._id)) {
+        throw new ApiError(403, "MATCH_NOT_OWNED");
+    }
+
+    if (match.status !== 'completed') {
+        throw new ApiError(400, "SCORECARD_NOT_READY");
+    }
+
+    let [scorecard1, scorecard2] = await Promise.all([
+        Scorecard.findOne({ matchId: match._id, inningsNumber: 1 }),
+        Scorecard.findOne({ matchId: match._id, inningsNumber: 2 }),
+    ]);
+
+    if (!scorecard1 || !scorecard2) {
+        const [inning1, inning2] = await Promise.all([
+            Inning.findOne({ matchId: match._id, inningsNumber: 1 }),
+            Inning.findOne({ matchId: match._id, inningsNumber: 2 }),
+        ]);
+
+        [scorecard1, scorecard2] = await Promise.all([
+            scorecard1 ?? generateScorecard(match._id, inning1),
+            scorecard2 ?? generateScorecard(match._id, inning2),
+        ]);
+    }
+
+    return res.status(200).json(new ApiResponse(200, {
+        matchId: match._id,
+        result: match.result ?? null,
+        innings: [scorecard1, scorecard2],
+    }, req.t("SCORECARD_FETCHED")));
+});
+
 const getPublicMatch = catchAsync(async (req, res) => {
     const { code } = req.params;
 
@@ -1217,4 +1402,4 @@ const getPublicMatch = catchAsync(async (req, res) => {
     }, req.t("MATCH_FETCHED")));
 });
 
-export { createMatch, startInnings, selectBowler, scoreBall, undoBall, getPublicMatch };
+export { createMatch, startInnings, selectBowler, scoreBall, undoBall, getMatchScorecard, getPublicMatch };

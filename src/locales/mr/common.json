@@ -110,5 +110,7 @@
   "INVALID_BALL_EVENT_ID": "अवैध चेंडू संदर्भ",
   "BALL_NOT_LATEST": "फक्त सर्वात अलीकडचा चेंडू मागे घेता येतो",
   "MATCH_FETCHED": "सामना मिळाला",
-  "MATCH_CODE_REQUIRED": "सामना कोड आवश्यक आहे"
+  "MATCH_CODE_REQUIRED": "सामना कोड आवश्यक आहे",
+  "SCORECARD_FETCHED": "स्कोअरकार्ड मिळाले",
+  "SCORECARD_NOT_READY": "सामना संपल्यानंतर स्कोअरकार्ड उपलब्ध होईल"
 }

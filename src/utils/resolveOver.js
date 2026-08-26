@@ -35,9 +35,23 @@ export const isSameBowler = (a, b) => a != null && b != null && String(a) === St
  * bowl the next one — unless there is no next one, because the innings ended on
  * this very ball.
  *
+ * `teamRuns`/`inningsNumber`/`target` exist for exactly one thing: detecting a
+ * chase. Only innings 2 ever carries a target, and reaching it can end the
+ * innings mid-over — the instant the total passes it, unlike `allOut`/
+ * `oversDone`, which fall out of a wicket or an over boundary. Checked every
+ * ball, the same as `allOut`, for the same reason.
+ *
  * Covered by tests/resolveOver.test.js.
  */
-export const resolveBallOutcome = ({ isLegal, isWicket, preEventState, totalOvers }) => {
+export const resolveBallOutcome = ({
+    isLegal,
+    isWicket,
+    teamRuns = 0,
+    preEventState,
+    totalOvers,
+    inningsNumber = 1,
+    target = null,
+}) => {
     const overComplete = completesOver({
         isLegal,
         overLegalDeliveries: preEventState.overLegalDeliveries,
@@ -45,6 +59,7 @@ export const resolveBallOutcome = ({ isLegal, isWicket, preEventState, totalOver
 
     const wicketsAfter = preEventState.wickets + (isWicket ? 1 : 0);
     const oversCompletedAfter = preEventState.oversCompleted + (overComplete ? 1 : 0);
+    const totalRunsAfter = preEventState.totalRuns + teamRuns;
 
     const allOut = wicketsAfter >= MAX_WICKETS;
     // Only an over boundary can exhaust the overs, so this is gated on it —
@@ -53,19 +68,29 @@ export const resolveBallOutcome = ({ isLegal, isWicket, preEventState, totalOver
         && Number.isInteger(totalOvers)
         && oversCompletedAfter >= totalOvers;
 
-    const inningsComplete = allOut || oversDone;
+    const targetAchieved = inningsNumber === 2
+        && Number.isInteger(target)
+        && totalRunsAfter >= target;
+
+    const inningsComplete = targetAchieved || allOut || oversDone;
 
     return {
         overComplete,
         wicketsAfter,
         oversCompletedAfter,
+        totalRunsAfter,
         allOut,
         oversDone,
+        targetAchieved,
         inningsComplete,
         newBowlerRequired: overComplete && !inningsComplete,
-        // all_out wins when the tenth wicket falls on the last ball of the last
-        // over: being bowled out is the more specific cause, and it is the one
-        // a scorecard reports.
-        completionReason: allOut ? 'all_out' : (oversDone ? 'overs_complete' : null),
+        // target_achieved wins even over a simultaneous all_out/oversDone: the
+        // chase ends the instant the total passes the target, whatever else
+        // this same ball also did. Below that, all_out still wins over
+        // oversDone when the tenth wicket falls on the last ball of the last
+        // over — being bowled out is the more specific cause.
+        completionReason: targetAchieved
+            ? 'target_achieved'
+            : (allOut ? 'all_out' : (oversDone ? 'overs_complete' : null)),
     };
 };
