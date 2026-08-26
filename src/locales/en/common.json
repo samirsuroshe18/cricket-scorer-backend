@@ -77,6 +77,7 @@
   "TEAM_NAMES_REQUIRED": "Both team names are required",
   "TEAM_NAMES_MUST_DIFFER": "Team names must be different",
   "INVALID_OVERS_FORMAT": "Overs must be a whole number between 1 and 50",
+  "INVALID_TOSS_RESULT": "Toss winner and decision must both be provided, or both left out",
   "BALL_SCORED": "Ball scored",
   "RUNS_OUT_OF_RANGE": "Runs must be a whole number between 0 and 6",
   "IDEMPOTENCY_KEY_REQUIRED": "Idempotency key is required",
@@ -104,5 +105,13 @@
   "BOWLER_NAME_REQUIRED": "The bowler's name is required",
   "BOWLER_NOT_SELECTED": "Choose the bowler for this over before scoring",
   "BOWLER_CANNOT_BOWL_CONSECUTIVE_OVERS": "A bowler cannot bowl two overs in a row",
-  "OVER_ALREADY_STARTED": "This over has already begun"
+  "OVER_ALREADY_STARTED": "This over has already begun",
+  "BALL_UNDONE": "Ball undone",
+  "BALL_EVENT_ID_REQUIRED": "The ball to undo must be specified",
+  "INVALID_BALL_EVENT_ID": "Invalid ball reference",
+  "BALL_NOT_LATEST": "Only the most recent ball can be undone",
+  "MATCH_FETCHED": "Match fetched",
+  "MATCH_CODE_REQUIRED": "A match code is required",
+  "SCORECARD_FETCHED": "Scorecard fetched",
+  "SCORECARD_NOT_READY": "The scorecard is available once the match has finished"
 }

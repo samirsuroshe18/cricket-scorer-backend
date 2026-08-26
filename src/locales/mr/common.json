@@ -77,6 +77,7 @@
   "TEAM_NAMES_REQUIRED": "दोन्ही संघांची नावे आवश्यक आहेत",
   "TEAM_NAMES_MUST_DIFFER": "संघांची नावे वेगवेगळी असणे आवश्यक आहे",
   "INVALID_OVERS_FORMAT": "षटके 1 ते 50 दरम्यान पूर्ण संख्या असणे आवश्यक आहे",
+  "INVALID_TOSS_RESULT": "टॉस जिंकणारा संघ आणि निर्णय दोन्ही द्यावे लागतील, किंवा दोन्ही वगळावे लागतील",
   "BALL_SCORED": "चेंडू नोंदवला गेला",
   "RUNS_OUT_OF_RANGE": "धावा 0 ते 6 दरम्यान पूर्ण संख्या असणे आवश्यक आहे",
   "IDEMPOTENCY_KEY_REQUIRED": "आयडेंपोटन्सी की आवश्यक आहे",
@@ -104,5 +105,13 @@
   "BOWLER_NAME_REQUIRED": "गोलंदाजाचे नाव आवश्यक आहे",
   "BOWLER_NOT_SELECTED": "चेंडू नोंदवण्यापूर्वी या षटकाचा गोलंदाज निवडा",
   "BOWLER_CANNOT_BOWL_CONSECUTIVE_OVERS": "गोलंदाज सलग दोन षटके टाकू शकत नाही",
-  "OVER_ALREADY_STARTED": "हे षटक आधीच सुरू झाले आहे"
+  "OVER_ALREADY_STARTED": "हे षटक आधीच सुरू झाले आहे",
+  "BALL_UNDONE": "चेंडू मागे घेतला",
+  "BALL_EVENT_ID_REQUIRED": "मागे घ्यायचा चेंडू नमूद करणे आवश्यक आहे",
+  "INVALID_BALL_EVENT_ID": "अवैध चेंडू संदर्भ",
+  "BALL_NOT_LATEST": "फक्त सर्वात अलीकडचा चेंडू मागे घेता येतो",
+  "MATCH_FETCHED": "सामना मिळाला",
+  "MATCH_CODE_REQUIRED": "सामना कोड आवश्यक आहे",
+  "SCORECARD_FETCHED": "स्कोअरकार्ड मिळाले",
+  "SCORECARD_NOT_READY": "सामना संपल्यानंतर स्कोअरकार्ड उपलब्ध होईल"
 }

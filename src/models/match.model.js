@@ -29,6 +29,10 @@ const matchSchema = new Schema(
     venue:           { type: String, trim: true, maxlength: 100 },
     matchType:       { type: String, default: 'friendly', enum: MATCH_TYPES },
     createdBy:       { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    // The share code a spectator types. Uppercase on write so lookups can
+    // uppercase the input and compare directly — a code read out across a
+    // ground comes back in whatever case the typist felt like.
+    joinCode:        { type: String, uppercase: true, trim: true, minlength: 6, maxlength: 6 },
     result:          { type: matchResultSchema },
     syncStatus:      { type: String, default: 'local', enum: SYNC_STATUS },
     isDeleted:       { type: Boolean, default: false },
@@ -45,6 +49,11 @@ matchSchema.index({ status: 1, createdAt: -1 });
 // Cloud sync queue: find all unsynced matches. Also serves equality queries
 // on `syncStatus` alone — same reasoning as above, don't duplicate it.
 matchSchema.index({ syncStatus: 1, updatedAt: 1 });
+// The spectator lookup, and the constraint that makes createMatch's
+// retry-on-E11000 correct rather than hopeful. SPARSE because every match
+// written before share codes existed has no joinCode, and a plain unique index
+// would treat all those nulls as duplicates of each other and reject them.
+matchSchema.index({ joinCode: 1 }, { unique: true, sparse: true });
 
 // Virtual: cannot have same team on both sides
 matchSchema.pre('validate', function () {

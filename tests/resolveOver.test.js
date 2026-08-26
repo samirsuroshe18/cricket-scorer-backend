@@ -6,10 +6,11 @@ import {
 } from '../src/utils/resolveOver.js';
 
 // Only the fields resolveBallOutcome reads; the real snapshot carries more.
-const pre = ({ overLegalDeliveries = 0, wickets = 0, oversCompleted = 0 }) => ({
+const pre = ({ overLegalDeliveries = 0, wickets = 0, oversCompleted = 0, totalRuns = 0 }) => ({
     overLegalDeliveries,
     wickets,
     oversCompleted,
+    totalRuns,
 });
 
 describe('completesOver', () => {
@@ -173,5 +174,91 @@ describe('resolveBallOutcome', () => {
 
     it('LEGAL_DELIVERIES_PER_OVER is 6', () => {
         expect(LEGAL_DELIVERIES_PER_OVER).toBe(6);
+    });
+});
+
+describe('resolveBallOutcome — target_achieved (innings 2 only)', () => {
+    const chase = (overrides = {}) => resolveBallOutcome({
+        isLegal: true,
+        isWicket: false,
+        teamRuns: 0,
+        totalOvers: 20,
+        inningsNumber: 2,
+        target: 150,
+        preEventState: pre({}),
+        ...overrides,
+    });
+
+    it('ends the innings mid-over, the instant the total passes the target', () => {
+        expect(chase({
+            teamRuns: 4,
+            preEventState: pre({ overLegalDeliveries: 2, totalRuns: 147 }),
+        })).toMatchObject({
+            overComplete: false,
+            totalRunsAfter: 151,
+            targetAchieved: true,
+            inningsComplete: true,
+            completionReason: 'target_achieved',
+        });
+    });
+
+    it('does not fire one run short of the target', () => {
+        expect(chase({
+            teamRuns: 2,
+            preEventState: pre({ overLegalDeliveries: 2, totalRuns: 147 }),
+        })).toMatchObject({ targetAchieved: false, inningsComplete: false });
+    });
+
+    it('fires on exactly reaching the target — conceding it ties, passing it wins', () => {
+        expect(chase({
+            teamRuns: 3,
+            preEventState: pre({ overLegalDeliveries: 2, totalRuns: 147 }),
+        })).toMatchObject({ totalRunsAfter: 150, targetAchieved: true, inningsComplete: true });
+    });
+
+    it('never fires in innings 1, even with a target value present', () => {
+        expect(chase({
+            inningsNumber: 1,
+            teamRuns: 10,
+            preEventState: pre({ overLegalDeliveries: 2, totalRuns: 147 }),
+        })).toMatchObject({ targetAchieved: false, inningsComplete: false });
+    });
+
+    it('never fires with no target set', () => {
+        expect(chase({
+            target: null,
+            teamRuns: 10,
+            preEventState: pre({ overLegalDeliveries: 2, totalRuns: 147 }),
+        })).toMatchObject({ targetAchieved: false, inningsComplete: false });
+    });
+
+    // The winning run and the tenth wicket falling on the same ball — target
+    // wins, because the chase ends the instant the total passes the target,
+    // whatever the rest of that ball also did.
+    it('takes precedence over all_out when both fire on the same ball', () => {
+        expect(chase({
+            isWicket: true,
+            teamRuns: 4,
+            preEventState: pre({ overLegalDeliveries: 2, totalRuns: 147, wickets: 9 }),
+        })).toMatchObject({
+            targetAchieved: true,
+            allOut: true,
+            inningsComplete: true,
+            completionReason: 'target_achieved',
+        });
+    });
+
+    // The winning boundary landing on what would also be the last ball of the
+    // last over — target wins over oversDone for the same reason.
+    it('takes precedence over overs_complete when both fire on the same ball', () => {
+        expect(chase({
+            teamRuns: 4,
+            preEventState: pre({ overLegalDeliveries: 5, totalRuns: 147, oversCompleted: 19 }),
+        })).toMatchObject({
+            targetAchieved: true,
+            oversDone: true,
+            inningsComplete: true,
+            completionReason: 'target_achieved',
+        });
     });
 });
