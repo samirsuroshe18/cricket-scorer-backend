@@ -144,6 +144,41 @@ export const buildBowlingScores = (overs, ballEvents, playerNames) => {
 };
 
 /**
+ * The two batsmen currently at the crease, as far as their own runs and
+ * legal balls faced go — the "Rohit Sharma 24 (18)" a real broadcast shows
+ * next to the striker's name. Reuses [buildBattingScores] rather than a
+ * separate live counter: there is nothing incrementally tracked per batsman
+ * anywhere else in this codebase, by design (see that function's own doc
+ * comment), so a delivery just scored or just undone is correct here for the
+ * same reason it is correct in the post-match Scorecard — both read the same
+ * append-only history, just at different times.
+ *
+ * Player names are not needed here — the caller already has them from the
+ * live strike pair — so `buildBattingScores` is given an empty map rather
+ * than paying for a `Player.find` this call has no use for.
+ */
+export const liveStrikeFigures = async (inningsId, strikerId, nonStrikerId) => {
+    const ballEvents = await BallEvent.find({ inningsId }).sort({ absoluteBallSeq: 1 });
+    const scores = buildBattingScores(ballEvents, new Map());
+
+    const figuresFor = (playerId) => {
+        if (!playerId) return { runs: 0, balls: 0 };
+        const line = scores.find((score) => String(score.playerId) === String(playerId));
+        return line ? { runs: line.runs, balls: line.balls } : { runs: 0, balls: 0 };
+    };
+
+    const striker = figuresFor(strikerId);
+    const nonStriker = figuresFor(nonStrikerId);
+
+    return {
+        strikerRuns: striker.runs,
+        strikerBalls: striker.balls,
+        nonStrikerRuns: nonStriker.runs,
+        nonStrikerBalls: nonStriker.balls,
+    };
+};
+
+/**
  * Fetches one innings' full history, resolves the player names BallEvent
  * doesn't carry, and upserts its Scorecard — safe to call more than once for
  * the same innings, since `{matchId, inningsNumber}` is unique and this always

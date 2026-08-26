@@ -15,7 +15,7 @@ import { resolveDelivery, EXTRA_TYPES, RUNS_FROM } from '../utils/resolveDeliver
 import { resolveUndo } from '../utils/resolveUndo.js';
 import { resolveMatchResult } from '../utils/resolveMatchResult.js';
 import { resolveToss } from '../utils/resolveToss.js';
-import { generateScorecard } from '../utils/scorecard.js';
+import { generateScorecard, liveStrikeFigures } from '../utils/scorecard.js';
 import { generateJoinCode } from '../utils/joinCode.js';
 import { findMatchByIdOrCode } from '../utils/matchLookup.js';
 import { resolveBallOutcome, isSameBowler, LEGAL_DELIVERIES_PER_OVER } from '../utils/resolveOver.js';
@@ -159,12 +159,36 @@ const serializeExtras = (extras) => ({
     legByes: extras?.legByes ?? 0,
 });
 
-// Explicit pick, same reasoning as serializeExtras.
-const buildStrike = (pair) => ({
-    strikerId: pair?.strikerId ?? null,
-    strikerName: pair?.strikerName ?? null,
-    nonStrikerId: pair?.nonStrikerId ?? null,
-    nonStrikerName: pair?.nonStrikerName ?? null,
+// Explicit pick, same reasoning as serializeExtras. Async because it queries
+// the innings' ball history for each batsman's own runs/balls faced — see
+// liveStrikeFigures. `inningsId` is separate from `pair` because `pair` is
+// sometimes an Inning document and sometimes a plain strike-shaped object
+// from resolveStrike, and only the former happens to carry its own _id under
+// the same name a caller could rely on.
+const buildStrike = async (pair, inningsId) => {
+    const base = {
+        strikerId: pair?.strikerId ?? null,
+        strikerName: pair?.strikerName ?? null,
+        nonStrikerId: pair?.nonStrikerId ?? null,
+        nonStrikerName: pair?.nonStrikerName ?? null,
+    };
+    const figures = await liveStrikeFigures(inningsId, base.strikerId, base.nonStrikerId);
+    return { ...base, ...figures };
+};
+
+// A re-pick from an already-[buildStrike]-enriched object, never a new query
+// — for a payload that wants the same 8 fields without `rotated`/
+// `rotationReason` riding along. Kept separate from `buildStrike` itself so
+// that distinction can never be blurred into an accidental second query.
+const pickStrikeFields = (strike) => ({
+    strikerId: strike?.strikerId ?? null,
+    strikerName: strike?.strikerName ?? null,
+    strikerRuns: strike?.strikerRuns ?? 0,
+    strikerBalls: strike?.strikerBalls ?? 0,
+    nonStrikerId: strike?.nonStrikerId ?? null,
+    nonStrikerName: strike?.nonStrikerName ?? null,
+    nonStrikerRuns: strike?.nonStrikerRuns ?? 0,
+    nonStrikerBalls: strike?.nonStrikerBalls ?? 0,
 });
 
 // No bowler name is denormalized onto Over or Inning, unlike the batsmen: the
@@ -212,7 +236,7 @@ const buildBallView = async (
     const view = {
         outcome,
         strike: {
-            ...buildStrike(postPair),
+            ...(await buildStrike(postPair, ballEvent.inningsId)),
             rotated: ballEvent.strikeRotated,
             // Null both when nothing rotated and when both halves fired and
             // cancelled — `rotated` alone says whether the strike changed.
@@ -372,8 +396,9 @@ const buildOverCompletePayload = (ballEvent, inning, view) => ({
     },
     // The pair for the first ball of the next over. Deliberately without
     // rotated/rotationReason: rotation is a property of a delivery and belongs
-    // to score:update; this event reports a state.
-    strike: buildStrike(view.strike),
+    // to score:update; this event reports a state. `view.strike` is already
+    // buildStrike-enriched — this re-picks rather than re-querying.
+    strike: pickStrikeFields(view.strike),
     inningsComplete: view.outcome.inningsComplete,
     newBowlerRequired: view.outcome.newBowlerRequired,
 });
@@ -546,7 +571,7 @@ const startInnings = catchAsync(async (req, res) => {
             // Null for innings 1 — nothing to chase yet. Set once, at
             // creation, from innings 1's completed total; never innings 2.
             target: inning.target ?? null,
-            strike: buildStrike(inning),
+            strike: await buildStrike(inning, inning._id),
             bowler: {
                 bowlerId: bowlerDoc._id,
                 bowlerName: bowlerDoc.name,
@@ -1230,7 +1255,7 @@ const undoBall = catchAsync(async (req, res) => {
             matchId: match._id,
             inningsId: inning._id,
             inningsNumber: inning.inningsNumber,
-            strike: buildStrike(inning),
+            strike: await buildStrike(inning, inning._id),
             bowler,
             target: inning.target ?? null,
             inningsTotals: {

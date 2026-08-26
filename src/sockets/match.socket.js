@@ -3,6 +3,7 @@ import { Over } from '../models/over.model.js';
 import { Player } from '../models/player.model.js';
 import { formatOvers } from '../utils/formatOvers.js';
 import { findMatchByIdOrCode } from '../utils/matchLookup.js';
+import { liveStrikeFigures } from '../utils/scorecard.js';
 
 // Who is bowling, and who bowled the over before — the pair that tells a scorer
 // resuming on a fresh app launch whether a bowler is still owed:
@@ -49,6 +50,8 @@ export const buildBowlerState = async (inning) => {
 export const buildInningsState = async (matchId, inning) => {
     if (!inning) return null;
 
+    const strikeFigures = await liveStrikeFigures(inning._id, inning.strikerId, inning.nonStrikerId);
+
     return {
         matchId,
         inningsNumber: inning.inningsNumber,
@@ -70,6 +73,7 @@ export const buildInningsState = async (matchId, inning) => {
             strikerName: inning.strikerName ?? null,
             nonStrikerId: inning.nonStrikerId ?? null,
             nonStrikerName: inning.nonStrikerName ?? null,
+            ...strikeFigures,
         },
         bowler: await buildBowlerState(inning),
     };
