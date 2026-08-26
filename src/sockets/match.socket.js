@@ -55,6 +55,10 @@ export const buildInningsState = async (matchId, inning) => {
         totalRuns: inning.totalRuns,
         wickets: inning.wickets,
         overs: formatOvers(inning.oversCompleted, inning.legalBalls),
+        // Null on innings 1 — nothing to chase yet. Lets a join/resume or a
+        // spectator's initial fetch know the target without having been
+        // present for start-innings, where it is otherwise only ever sent.
+        target: inning.target ?? null,
         extras: {
             wides: inning.extras?.wides ?? 0,
             noBalls: inning.extras?.noBalls ?? 0,
@@ -106,6 +110,7 @@ export const registerMatchSocket = (io) => {
                     totalRuns: 0,
                     wickets: 0,
                     overs: '0.0',
+                    target: null,
                     extras: { wides: 0, noBalls: 0, byes: 0, legByes: 0 },
                     // No innings yet means no openers and no bowler chosen yet.
                     strike: null,

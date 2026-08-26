@@ -306,6 +306,10 @@ const buildBallResponse = (ballEvent, inning, view) => ({
     matchComplete: view.outcome.inningsComplete && inning.inningsNumber === 2,
     wicket: buildWicket(ballEvent),
     strike: view.strike,
+    // Null on innings 1. Same field startInnings already sends once; repeated
+    // here so the console's own required-run-rate stays correct without
+    // having cached that first response.
+    target: inning.target ?? null,
     inningsTotals: {
         totalRuns: inning.totalRuns,
         wickets: inning.wickets,
@@ -323,6 +327,10 @@ const buildLiveScorePayload = (ballEvent, inning, view) => ({
     totalRuns: inning.totalRuns,
     wickets: inning.wickets,
     overs: formatOvers(inning.oversCompleted, inning.legalBalls),
+    // Null on innings 1. Carried on every delivery, not just at join, so a
+    // connection open through the innings-2 transition learns it without
+    // reconnecting.
+    target: inning.target ?? null,
     extras: serializeExtras(inning.extras),
     strike: view.strike,
     lastBall: {
@@ -1213,6 +1221,7 @@ const undoBall = catchAsync(async (req, res) => {
             inningsNumber: inning.inningsNumber,
             strike: buildStrike(inning),
             bowler,
+            target: inning.target ?? null,
             inningsTotals: {
                 totalRuns: inning.totalRuns,
                 wickets: inning.wickets,
@@ -1266,6 +1275,7 @@ const undoBall = catchAsync(async (req, res) => {
                 totalRuns: inning.totalRuns,
                 wickets: inning.wickets,
                 overs: state.overs,
+                target: state.target,
                 extras: state.inningsTotals.extras,
                 strike: state.strike,
                 bowler,
