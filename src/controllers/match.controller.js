@@ -1710,6 +1710,14 @@ const syncMatch = catchAsync(async (req, res) => {
             skippedCount,
             failedAt,
             failedCode,
+            // The id of the last successfully-applied ball in this batch —
+            // null on an undo batch, or on one that applied zero ball events
+            // (bowler-only, or fully skipped as someone else's retry). Undo
+            // only ever targets the single most recent ball, so this is
+            // exactly what a client needs to undo a delivery that was
+            // originally scored via a batch rather than score-ball directly,
+            // where it would otherwise have no id to target at all.
+            lastBallEventId: lastBallResult?.ballEvent._id ?? null,
             state,
         }, req.t("SYNC_APPLIED")));
     } catch (err) {
