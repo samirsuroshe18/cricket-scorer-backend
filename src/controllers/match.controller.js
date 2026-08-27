@@ -15,6 +15,7 @@ import { resolveDelivery, EXTRA_TYPES, RUNS_FROM } from '../utils/resolveDeliver
 import { resolveUndo } from '../utils/resolveUndo.js';
 import { resolveMatchResult } from '../utils/resolveMatchResult.js';
 import { resolveToss } from '../utils/resolveToss.js';
+import { resolveSyncDecision } from '../utils/resolveSync.js';
 import { generateScorecard, liveStrikeFigures } from '../utils/scorecard.js';
 import { generateJoinCode } from '../utils/joinCode.js';
 import { findMatchByIdOrCode } from '../utils/matchLookup.js';
@@ -55,10 +56,11 @@ const findOrCreateTeam = async (name, createdBy) => {
 
 // Same shape as findOrCreateTeam, and race-safe for the same reason: the unique
 // {teamId, name} index on Player rejects the loser of two concurrent upserts with
-// E11000, and the winner's document is already there to fetch. Called before the
-// transaction, not inside it — a duplicate-key error aborts a transaction outright,
-// so the retry could not run in-session. An orphan Player from a later failure is
-// harmless, exactly as an orphan Team is in createMatch.
+// E11000, and the winner's document is already there to fetch. Called outside any
+// transaction — a duplicate-key error aborts a transaction outright, so the retry
+// could not run in-session. An orphan Player from a later failure is harmless,
+// exactly as an orphan Team is in createMatch. Safe to call more than once for the
+// same name for the same reason: it always resolves to a find after the first call.
 const findOrCreatePlayer = async (name, teamId, createdBy) => {
     try {
         return await Player.findOneAndUpdate(
@@ -206,10 +208,10 @@ const playerNameById = async (id) => {
 // whether a bowler is now owed.
 //
 // Derived from the ball's own record rather than from live state, so a freshly
-// scored ball and an idempotent replay of an older key run through identical
-// code and cannot drift. Both halves of the rotation rule are recovered exactly
-// — the over ended iff this legal ball took it from 5 legal deliveries to 6, and
-// the runs half is then the XOR complement of the stored strikeRotated.
+// scored ball and an idempotent replay run through identical code and cannot
+// drift. Both halves of the rotation rule are recovered exactly — the over
+// ended iff this legal ball took it from 5 legal deliveries to 6, and the runs
+// half is then the XOR complement of the stored strikeRotated.
 const buildBallView = async (
     ballEvent,
     postPair,
@@ -590,22 +592,75 @@ const startInnings = catchAsync(async (req, res) => {
     }
 });
 
-// Names the bowler for the over that has not started yet. Over completion
-// clears Inning.currentBowlerId; this is what sets it again, and it is the only
-// place the consecutive-over rule is enforced.
-//
-// A single-document write, so no transaction: the check and the set both touch
-// Inning, and the OVER_ALREADY_STARTED guard below is what makes a concurrent
-// ball unable to invalidate the decision after the fact.
-const selectBowler = catchAsync(async (req, res) => {
-    const { matchId } = req.params;
-    const { bowlerName } = req.body;
-
-    const name = bowlerName?.trim();
+// Pure, stateless shape checks for a bowler selection — shared by selectBowler
+// (called before the match/inning load, so its error precedence is unchanged)
+// and by a sync batch's per-event validation (see applySyncBallOrBowlerEvent).
+const validateBowlerInput = (body) => {
+    const name = body.bowlerName?.trim();
 
     if (!name || name.length > MAX_PLAYER_NAME_LENGTH) {
         throw new ApiError(400, "BOWLER_NAME_REQUIRED");
     }
+
+    return { bowlerName: name };
+};
+
+// Names the bowler for the over that has not started yet, against an
+// already-loaded `inning`. Shared by selectBowler (session: null — a single-
+// document write needs no transaction) and by a sync batch, where it runs
+// session-scoped alongside whatever deliveries surround it in the same
+// transaction. Mutates and saves `inning` in place; the caller decides what
+// else, if anything, needs saving in the same round trip.
+const applyBowlerSelection = async ({ match, inning, session, req, bowlerName }) => {
+    if (inning.status === 'completed') {
+        throw new ApiError(400, "INNINGS_COMPLETED");
+    }
+
+    const overNumber = inning.oversCompleted + 1;
+
+    // Asking BallEvent rather than reading Over.legalDeliveries is deliberate:
+    // a wide as the first ball of the over leaves that counter at 0, but the
+    // over has certainly begun.
+    const started = await BallEvent.exists({ inningsId: inning._id, overNumber }).session(session);
+
+    if (started) {
+        throw new ApiError(400, "OVER_ALREADY_STARTED");
+    }
+
+    // Law 17.6, enforced here rather than left to the picker: an offline queue
+    // replaying out of order, a second scorer, or a curl call all reach this
+    // function without passing through any UI. The previous over's bowler is
+    // read off Over.bowlerId — the permanent record — rather than tracked as a
+    // second field on Inning that could drift from it.
+    const previousOver = inning.oversCompleted > 0
+        ? await Over.findOne({ inningsId: inning._id, overNumber: inning.oversCompleted }).session(session)
+        : null;
+
+    const previousBowlerId = previousOver?.bowlerId ?? null;
+    const bowlingTeamId = inning.bowlingTeam === 'teamA' ? match.teamA : match.teamB;
+
+    // Find-or-create runs outside the transaction's atomicity (no `{session}`
+    // passed to it), same as everywhere else it is called — safe to repeat if
+    // `session.withTransaction` retries this callback, since it always
+    // resolves to the same document after the first call.
+    const bowler = await findOrCreatePlayer(bowlerName, bowlingTeamId, req.user._id);
+
+    if (isSameBowler(previousBowlerId, bowler._id)) {
+        throw new ApiError(400, "BOWLER_CANNOT_BOWL_CONSECUTIVE_OVERS");
+    }
+
+    inning.currentBowlerId = bowler._id;
+    await inning.save({ session });
+
+    return { bowler, previousBowlerId, overNumber };
+};
+
+// A single-document write, so no transaction: the check and the set both touch
+// Inning, and the OVER_ALREADY_STARTED guard inside applyBowlerSelection is
+// what makes a concurrent ball unable to invalidate the decision after the fact.
+const selectBowler = catchAsync(async (req, res) => {
+    const { matchId } = req.params;
+    const { bowlerName } = validateBowlerInput(req.body);
 
     const match = await Match.findOne({ _id: matchId, isDeleted: false });
     if (!match) {
@@ -626,47 +681,13 @@ const selectBowler = catchAsync(async (req, res) => {
         throw new ApiError(400, "INNINGS_NOT_STARTED");
     }
 
-    if (inning.status === 'completed') {
-        throw new ApiError(400, "INNINGS_COMPLETED");
-    }
-
-    const overNumber = inning.oversCompleted + 1;
-
-    // Re-callable until the over's first delivery lands, exactly as
-    // start-innings is until ball 1 — a mis-tapped name is a mis-tap, not a
-    // state change. Asking BallEvent rather than reading Over.legalDeliveries
-    // is deliberate: a wide as the first ball of the over leaves that counter
-    // at 0, but the over has certainly begun.
-    const started = await BallEvent.exists({ inningsId: inning._id, overNumber });
-
-    if (started) {
-        throw new ApiError(400, "OVER_ALREADY_STARTED");
-    }
-
-    // Law 17.6, enforced here rather than left to the picker: an offline queue
-    // replaying out of order, a second scorer, or a curl call all reach this
-    // controller without passing through any UI. The previous over's bowler is
-    // read off Over.bowlerId — the permanent record — rather than tracked as a
-    // second field on Inning that could drift from it.
-    const previousOver = inning.oversCompleted > 0
-        ? await Over.findOne({ inningsId: inning._id, overNumber: inning.oversCompleted })
-        : null;
-
-    const previousBowlerId = previousOver?.bowlerId ?? null;
-
-    const bowlingTeamId = inning.bowlingTeam === 'teamA' ? match.teamA : match.teamB;
-
-    // Find-or-create runs before the check, which cannot orphan a Player: the
-    // only name that can be rejected is the previous bowler's, and he already
-    // exists, so this resolves to a find rather than an insert.
-    const bowler = await findOrCreatePlayer(name, bowlingTeamId, req.user._id);
-
-    if (isSameBowler(previousBowlerId, bowler._id)) {
-        throw new ApiError(400, "BOWLER_CANNOT_BOWL_CONSECUTIVE_OVERS");
-    }
-
-    inning.currentBowlerId = bowler._id;
-    await inning.save();
+    const { bowler, previousBowlerId, overNumber } = await applyBowlerSelection({
+        match,
+        inning,
+        session: null,
+        req,
+        bowlerName,
+    });
 
     return res.status(200).json(new ApiResponse(200, {
         matchId: match._id,
@@ -687,9 +708,14 @@ const selectBowler = catchAsync(async (req, res) => {
     }, req.t("BOWLER_SELECTED")));
 });
 
-const scoreBall = catchAsync(async (req, res) => {
-    const { matchId } = req.params;
-    const { runs, idempotencyKey } = req.body;
+// Pure, stateless shape checks for one delivery — every rule here is a fact
+// about the request body alone, independent of match/innings state. Shared by
+// scoreBall (called before the match load, so its error precedence is
+// unchanged) and by a sync batch's per-event validation, where a failure here
+// stops the batch at that event rather than rejecting the whole request — see
+// syncMatch.
+const validateBallInput = (body) => {
+    const { runs, idempotencyKey } = body;
 
     if (!Number.isInteger(runs) || runs < 0 || runs > MAX_RUNS_PER_BALL) {
         throw new ApiError(400, "RUNS_OUT_OF_RANGE");
@@ -701,8 +727,8 @@ const scoreBall = catchAsync(async (req, res) => {
 
     // `extraType` is the delivery fault (wide/no_ball); `runsFrom` is who the runs
     // belong to (bat/bye/leg_bye). Independent — a no-ball can also go for byes.
-    const extraType = req.body.extraType ?? null;
-    const runsFrom = req.body.runsFrom ?? 'bat';
+    const extraType = body.extraType ?? null;
+    const runsFrom = body.runsFrom ?? 'bat';
 
     if (extraType !== null && !EXTRA_TYPES.includes(extraType)) {
         throw new ApiError(400, "INVALID_EXTRA_TYPE");
@@ -720,9 +746,9 @@ const scoreBall = catchAsync(async (req, res) => {
 
     // `wicketType` mirrors `extraType` — presence, not a separate boolean, is
     // what marks the delivery a dismissal.
-    const wicketType = req.body.wicketType ?? null;
-    const dismissedBatsman = req.body.dismissedBatsman ?? 'striker';
-    const incomingBatsmanName = req.body.incomingBatsmanName;
+    const wicketType = body.wicketType ?? null;
+    const dismissedBatsman = body.dismissedBatsman ?? 'striker';
+    const incomingBatsmanName = body.incomingBatsmanName;
 
     if (wicketType !== null && !WICKET_TYPES.includes(wicketType)) {
         throw new ApiError(400, "INVALID_WICKET_TYPE");
@@ -754,6 +780,266 @@ const scoreBall = catchAsync(async (req, res) => {
         }
     }
 
+    // idempotencyKey is deliberately NOT trimmed before being returned — it is
+    // stored verbatim, exactly as it always has been, so a key that differs
+    // only by whitespace is a different key rather than silently normalized.
+    return { runs, idempotencyKey, extraType, runsFrom, wicketType, dismissedBatsman, incomingBatsmanName };
+};
+
+// Applies one already-validated delivery against an already-loaded, session-
+// bound `inning` — the entire per-ball write scoreBall used to do inline,
+// factored out so a sync batch can call it once per queued ball inside one
+// shared transaction. Mutates and saves `inning` (and `match`, if this ball
+// completes an innings) in place; returns the new BallEvent/Over alongside it
+// so the caller can build a view or a socket payload without a re-read.
+//
+// Every state check here (INNINGS_COMPLETED, BOWLER_NOT_SELECTED, the
+// incoming-batsman rules) reads `inning` as it stands AT THIS CALL — which,
+// inside a sync batch, is however the previous events in the same batch left
+// it. That is what lets a `bowler` event earlier in the batch satisfy
+// BOWLER_NOT_SELECTED for a `ball` event later in it, and what makes an
+// innings that completes mid-batch correctly refuse everything queued after.
+const applyDelivery = async ({ match, inning, session, req, delivery }) => {
+    const { runs, extraType, runsFrom, wicketType, dismissedBatsman, incomingBatsmanName, idempotencyKey } = delivery;
+
+    // Re-checked here rather than trusted from an earlier read: for scoreBall
+    // this IS the in-session re-check the old inline code did; for a sync
+    // batch, this is the only check there is.
+    if (inning.status === 'completed') {
+        throw new ApiError(400, "INNINGS_COMPLETED");
+    }
+
+    // Nothing can be attributed to a null bowler, so the delivery is refused
+    // rather than stored without one — which is what makes "a new bowler must
+    // be selected" a rule and not a suggestion.
+    if (!inning.currentBowlerId) {
+        throw new ApiError(400, "BOWLER_NOT_SELECTED");
+    }
+
+    let incomingPlayer = null;
+
+    if (wicketType) {
+        const isFinalWicket = inning.wickets + 1 >= MAX_WICKETS;
+        const trimmedIncoming = incomingBatsmanName?.trim();
+
+        if (!isFinalWicket && !trimmedIncoming) {
+            throw new ApiError(400, "INCOMING_BATSMAN_REQUIRED");
+        }
+
+        // On the final wicket nobody is left to come in, so a name sent anyway
+        // is ignored rather than rejected — the caller has nothing useful to
+        // do with an error there.
+        if (!isFinalWicket) {
+            const atCrease = [inning.strikerName, inning.nonStrikerName]
+                .filter(Boolean)
+                .map((name) => name.toLowerCase());
+
+            if (atCrease.includes(trimmedIncoming.toLowerCase())) {
+                throw new ApiError(400, "INCOMING_BATSMAN_AT_CREASE");
+            }
+
+            const battingTeamId = inning.battingTeam === 'teamA' ? match.teamA : match.teamB;
+
+            // Outside the transaction's atomicity on purpose, same as
+            // applyBowlerSelection's find-or-create — see that function's
+            // comment. An orphan Player from a delivery that fails later in
+            // this same call is harmless, exactly as elsewhere in this file.
+            incomingPlayer = await findOrCreatePlayer(trimmedIncoming, battingTeamId, req.user._id);
+        }
+    }
+
+    const overNumber = inning.oversCompleted + 1;
+    let over = await Over.findOne({ inningsId: inning._id, overNumber }).session(session);
+    if (!over) {
+        [over] = await Over.create([{
+            matchId: match._id,
+            inningsId: inning._id,
+            overNumber,
+            // Stamped once, at creation, from the pointer start-innings or
+            // select-bowler set (or, inside a sync batch, from whatever the
+            // preceding `bowler` event just set). This is what makes
+            // Over.bowlerId the permanent record of who bowled the over.
+            bowlerId: inning.currentBowlerId,
+        }], { session });
+    }
+
+    const delivery1 = resolveDelivery({ runs, extraType, runsFrom });
+
+    // Named against the pre-ball pair; resolveStrike substitutes by player
+    // rather than by end, because the rotation below may move them first.
+    const dismissedIsStriker = dismissedBatsman === 'striker';
+    const dismissedId = wicketType
+        ? (dismissedIsStriker ? inning.strikerId : inning.nonStrikerId)
+        : null;
+    const dismissedName = wicketType
+        ? (dismissedIsStriker ? inning.strikerName : inning.nonStrikerName)
+        : null;
+
+    const preEventState = {
+        totalRuns: inning.totalRuns,
+        wickets: inning.wickets,
+        legalBalls: inning.legalBalls,
+        totalBalls: inning.totalBalls,
+        oversCompleted: inning.oversCompleted,
+        strikerId: inning.strikerId,
+        nonStrikerId: inning.nonStrikerId,
+        strikerName: inning.strikerName,
+        nonStrikerName: inning.nonStrikerName,
+        currentBowlerId: inning.currentBowlerId,
+        overTotalRuns: over.totalRuns,
+        overLegalDeliveries: over.legalDeliveries,
+        extrasSnapshot: serializeExtras(inning.extras),
+        overExtrasSnapshot: serializeExtras(over.extras),
+    };
+
+    // Over completion, innings completion and "somebody has to bowl the next
+    // over" all fall out of one call, off the snapshot above rather than off
+    // live state — so the response built after commit and an idempotent
+    // replay a week later derive them identically.
+    const outcome = resolveBallOutcome({
+        isLegal: delivery1.isLegal,
+        isWicket: Boolean(wicketType),
+        teamRuns: delivery1.teamRuns,
+        preEventState,
+        totalOvers: match.totalOvers,
+        inningsNumber: inning.inningsNumber,
+        target: inning.target,
+    });
+
+    // Odd runs run rotate strike mid-over — byes, leg-byes and runs off a wide
+    // included, since the batsmen crossed for those too; only the automatic
+    // penalty never counts. The end of an over always rotates. A single off
+    // the last ball of an over does both, and they cancel: same batsman keeps
+    // strike.
+    const strikeRotated = delivery1.rotatesOnRuns !== outcome.overComplete;
+
+    const [ballEvent] = await BallEvent.create([{
+        matchId: match._id,
+        inningsId: inning._id,
+        overId: over._id,
+        overNumber: over.overNumber,
+        // On an illegal delivery this is the legal ball it was an attempt at,
+        // so consecutive wides repeat it. absoluteBallSeq (below) is the
+        // unique per-innings ordering key.
+        ballNumber: over.legalDeliveries + 1,
+        absoluteBallSeq: inning.totalBalls + 1,
+        strikerId: inning.strikerId,
+        nonStrikerId: inning.nonStrikerId,
+        bowlerId: inning.currentBowlerId,
+        strikeRotated,
+        isWicket: Boolean(wicketType),
+        wicketType,
+        dismissedPlayerId: dismissedId,
+        dismissedPlayerName: dismissedName,
+        incomingBatsmanId: incomingPlayer?._id ?? null,
+        incomingBatsmanName: incomingPlayer?.name ?? null,
+        runs: delivery1.ballRuns,
+        extras: delivery1.ballExtras,
+        extraType,
+        runsFrom,
+        isLegal: delivery1.isLegal,
+        idempotencyKey,
+        preEventState,
+    }], { session });
+
+    over.totalRuns += delivery1.teamRuns;
+    applyExtrasBuckets(over.extras, delivery1.buckets);
+    if (delivery1.isLegal) {
+        over.legalDeliveries += 1;
+    }
+    if (outcome.overComplete) {
+        over.isComplete = true;
+    }
+    if (wicketType) {
+        // Counts wickets in the over including run-outs, which are not the
+        // bowler's. The bowler is known now, but crediting him is part of
+        // bowler figures, which are still unbuilt.
+        over.wickets += 1;
+    }
+    await over.save({ session });
+
+    inning.totalRuns += delivery1.teamRuns;
+    applyExtrasBuckets(inning.extras, delivery1.buckets);
+    if (delivery1.isLegal) {
+        inning.legalBalls += 1;
+    }
+    inning.totalBalls += 1;
+    if (outcome.overComplete) {
+        inning.oversCompleted += 1;
+        // Cleared so the next delivery cannot silently inherit this over's
+        // bowler. Over.bowlerId above keeps the record; this pointer is what
+        // a delivery refuses to run without.
+        inning.currentBowlerId = null;
+    }
+    if (wicketType) {
+        inning.wickets += 1;
+    }
+
+    // Rotate, then substitute — one call, so an ordinary ball and a wicket
+    // ball cannot drift apart.
+    Object.assign(inning, resolveStrike({
+        strikerId: inning.strikerId,
+        strikerName: inning.strikerName,
+        nonStrikerId: inning.nonStrikerId,
+        nonStrikerName: inning.nonStrikerName,
+        rotated: strikeRotated,
+        dismissedId,
+        incomingId: incomingPlayer?._id ?? null,
+        incomingName: incomingPlayer?.name ?? null,
+    }));
+
+    // All out, the overs have run out, or — innings 2 only — the target has
+    // been chased. Over completion is the only place that can detect
+    // overs_complete at all, and target_achieved has to be checked here too,
+    // since it can land mid-over.
+    let matchJustCompleted = false;
+    let inning1ForResult = null;
+
+    if (outcome.inningsComplete) {
+        inning.status = 'completed';
+        inning.completionReason = outcome.completionReason;
+
+        if (inning.inningsNumber === 1) {
+            // The innings transition. start-innings has no way to be told
+            // "open innings 2 specifically" — it always resolves against
+            // match.currentInnings — so this is the only place that pointer
+            // can move. Target itself is set later, by start-innings, once
+            // innings 2's Inning document actually exists to carry it.
+            match.currentInnings = 2;
+            match.status = 'innings_break';
+        } else {
+            // Innings 2 ending IS match completion — there is no separate
+            // detector for it.
+            inning1ForResult = await Inning.findOne({
+                matchId: match._id,
+                inningsNumber: 1,
+            }).session(session);
+
+            match.status = 'completed';
+            match.completedAt = new Date();
+            match.result = resolveMatchResult({
+                completionReason: outcome.completionReason,
+                battingTeam1: inning1ForResult.battingTeam,
+                battingTeam2: inning.battingTeam,
+                runs1: inning1ForResult.totalRuns,
+                runs2: inning.totalRuns,
+                wickets2: inning.wickets,
+            });
+            matchJustCompleted = true;
+        }
+
+        await match.save({ session });
+    }
+
+    await inning.save({ session });
+
+    return { ballEvent, over, inning, matchJustCompleted, inning1ForResult };
+};
+
+const scoreBall = catchAsync(async (req, res) => {
+    const { matchId } = req.params;
+    const input = validateBallInput(req.body);
+
     const match = await Match.findOne({ _id: matchId, isDeleted: false });
     if (!match) {
         throw new ApiError(404, "MATCH_NOT_FOUND");
@@ -769,12 +1055,12 @@ const scoreBall = catchAsync(async (req, res) => {
 
     // Before the bowler check below: after an over ends there IS no current
     // bowler, and replaying the very ball that ended it must still succeed.
-    const replayed = await respondWithExistingBall(match, idempotencyKey, res, req);
+    const replayed = await respondWithExistingBall(match, input.idempotencyKey, res, req);
     if (replayed) return replayed;
 
-    // Read once outside the transaction to validate and, for a wicket, to
-    // find-or-create the incoming batsman — a duplicate-key retry cannot run
-    // in-session, exactly as in startInnings. The authoritative read is inside.
+    // Read once outside the transaction purely to fail fast, before opening a
+    // session, on the common rejections. The authoritative checks are inside
+    // applyDelivery, against the session-loaded inning below.
     const currentInning = await Inning.findOne({
         matchId: match._id,
         inningsNumber: match.currentInnings,
@@ -788,46 +1074,8 @@ const scoreBall = catchAsync(async (req, res) => {
         throw new ApiError(400, "INNINGS_COMPLETED");
     }
 
-    // The over that just ended cleared the pointer. Nothing can be attributed to
-    // a null bowler, so the delivery is refused rather than stored without one —
-    // which is what makes "a new bowler must be selected" a rule and not a
-    // suggestion. Re-checked in-session below, since this read is outside the
-    // transaction and a concurrent ball may have ended the over since.
     if (!currentInning.currentBowlerId) {
         throw new ApiError(400, "BOWLER_NOT_SELECTED");
-    }
-
-    let incomingPlayer = null;
-
-    if (wicketType) {
-        const isFinalWicket = currentInning.wickets + 1 >= MAX_WICKETS;
-        const trimmedIncoming = incomingBatsmanName?.trim();
-
-        if (!isFinalWicket && !trimmedIncoming) {
-            throw new ApiError(400, "INCOMING_BATSMAN_REQUIRED");
-        }
-
-        // On the final wicket nobody is left to come in, so a name sent anyway
-        // is ignored rather than rejected — the client has nothing useful to do
-        // with an error there.
-        if (!isFinalWicket) {
-            const atCrease = [currentInning.strikerName, currentInning.nonStrikerName]
-                .filter(Boolean)
-                .map((name) => name.toLowerCase());
-
-            if (atCrease.includes(trimmedIncoming.toLowerCase())) {
-                throw new ApiError(400, "INCOMING_BATSMAN_AT_CREASE");
-            }
-
-            const battingTeam = currentInning.battingTeam;
-            const battingTeamId = battingTeam === 'teamA' ? match.teamA : match.teamB;
-
-            incomingPlayer = await findOrCreatePlayer(
-                trimmedIncoming,
-                battingTeamId,
-                req.user._id
-            );
-        }
     }
 
     const session = await mongoose.startSession();
@@ -844,208 +1092,7 @@ const scoreBall = catchAsync(async (req, res) => {
                 throw new ApiError(400, "INNINGS_NOT_STARTED");
             }
 
-            // Re-checked in-session: the validation read above is outside the
-            // transaction, so a concurrent ball could have ended the innings.
-            if (inning.status === 'completed') {
-                throw new ApiError(400, "INNINGS_COMPLETED");
-            }
-
-            if (!inning.currentBowlerId) {
-                throw new ApiError(400, "BOWLER_NOT_SELECTED");
-            }
-
-            const overNumber = inning.oversCompleted + 1;
-            let over = await Over.findOne({ inningsId: inning._id, overNumber }).session(session);
-            if (!over) {
-                [over] = await Over.create([{
-                    matchId: match._id,
-                    inningsId: inning._id,
-                    overNumber,
-                    // Stamped once, at creation, from the pointer start-innings
-                    // or select-bowler set. This is what makes Over.bowlerId the
-                    // permanent record of who bowled the over — and therefore
-                    // what the consecutive-over check reads for the next one.
-                    bowlerId: inning.currentBowlerId,
-                }], { session });
-            }
-
-            const delivery = resolveDelivery({ runs, extraType, runsFrom });
-
-            // Named against the pre-ball pair; resolveStrike substitutes by
-            // player rather than by end, because the rotation below may move
-            // them first.
-            const dismissedIsStriker = dismissedBatsman === 'striker';
-            const dismissedId = wicketType
-                ? (dismissedIsStriker ? inning.strikerId : inning.nonStrikerId)
-                : null;
-            const dismissedName = wicketType
-                ? (dismissedIsStriker ? inning.strikerName : inning.nonStrikerName)
-                : null;
-
-            const preEventState = {
-                totalRuns: inning.totalRuns,
-                wickets: inning.wickets,
-                legalBalls: inning.legalBalls,
-                totalBalls: inning.totalBalls,
-                oversCompleted: inning.oversCompleted,
-                strikerId: inning.strikerId,
-                nonStrikerId: inning.nonStrikerId,
-                strikerName: inning.strikerName,
-                nonStrikerName: inning.nonStrikerName,
-                currentBowlerId: inning.currentBowlerId,
-                overTotalRuns: over.totalRuns,
-                overLegalDeliveries: over.legalDeliveries,
-                extrasSnapshot: serializeExtras(inning.extras),
-                overExtrasSnapshot: serializeExtras(over.extras),
-            };
-
-            // Over completion, innings completion and "somebody has to bowl the
-            // next over" all fall out of one call, off the snapshot above rather
-            // than off live state — so the response built after the transaction
-            // and an idempotent replay a week later derive them identically.
-            // `overComplete` is the *transition* to 6 legal deliveries, not the
-            // state, which is what stops oversCompleted being advanced twice.
-            const outcome = resolveBallOutcome({
-                isLegal: delivery.isLegal,
-                isWicket: Boolean(wicketType),
-                teamRuns: delivery.teamRuns,
-                preEventState,
-                totalOvers: match.totalOvers,
-                inningsNumber: inning.inningsNumber,
-                target: inning.target,
-            });
-
-            // Odd runs run rotate strike mid-over — byes, leg-byes and runs off a
-            // wide included, since the batsmen crossed for those too; only the
-            // automatic penalty never counts (see resolveDelivery). The end of an
-            // over always rotates. A single off the last ball of an over does both,
-            // and they cancel: same batsman keeps strike.
-            const strikeRotated = delivery.rotatesOnRuns !== outcome.overComplete;
-
-            const [ballEvent] = await BallEvent.create([{
-                matchId: match._id,
-                inningsId: inning._id,
-                overId: over._id,
-                overNumber: over.overNumber,
-                // On an illegal delivery this is the legal ball it was an attempt
-                // at, so consecutive wides repeat it. absoluteBallSeq (below) is
-                // the unique per-innings ordering key.
-                ballNumber: over.legalDeliveries + 1,
-                absoluteBallSeq: inning.totalBalls + 1,
-                strikerId: inning.strikerId,
-                nonStrikerId: inning.nonStrikerId,
-                bowlerId: inning.currentBowlerId,
-                strikeRotated,
-                isWicket: Boolean(wicketType),
-                wicketType,
-                dismissedPlayerId: dismissedId,
-                dismissedPlayerName: dismissedName,
-                incomingBatsmanId: incomingPlayer?._id ?? null,
-                incomingBatsmanName: incomingPlayer?.name ?? null,
-                runs: delivery.ballRuns,
-                extras: delivery.ballExtras,
-                extraType,
-                runsFrom,
-                isLegal: delivery.isLegal,
-                idempotencyKey,
-                preEventState,
-            }], { session });
-
-            over.totalRuns += delivery.teamRuns;
-            applyExtrasBuckets(over.extras, delivery.buckets);
-            if (delivery.isLegal) {
-                over.legalDeliveries += 1;
-            }
-            if (outcome.overComplete) {
-                over.isComplete = true;
-            }
-            if (wicketType) {
-                // Counts wickets in the over including run-outs, which are not
-                // the bowler's. The bowler is known now, but crediting him is
-                // part of bowler figures, which are still unbuilt.
-                over.wickets += 1;
-            }
-            await over.save({ session });
-
-            inning.totalRuns += delivery.teamRuns;
-            applyExtrasBuckets(inning.extras, delivery.buckets);
-            if (delivery.isLegal) {
-                inning.legalBalls += 1;
-            }
-            inning.totalBalls += 1;
-            if (outcome.overComplete) {
-                inning.oversCompleted += 1;
-                // Cleared so the next delivery cannot silently inherit this
-                // over's bowler. Over.bowlerId above keeps the record; this
-                // pointer is what score-ball refuses to run without.
-                inning.currentBowlerId = null;
-            }
-            if (wicketType) {
-                inning.wickets += 1;
-            }
-
-            // Rotate, then substitute — one call, so an ordinary ball and a
-            // wicket ball cannot drift apart.
-            Object.assign(inning, resolveStrike({
-                strikerId: inning.strikerId,
-                strikerName: inning.strikerName,
-                nonStrikerId: inning.nonStrikerId,
-                nonStrikerName: inning.nonStrikerName,
-                rotated: strikeRotated,
-                dismissedId,
-                incomingId: incomingPlayer?._id ?? null,
-                incomingName: incomingPlayer?.name ?? null,
-            }));
-
-            // All out, the overs have run out, or — innings 2 only — the
-            // target has been chased. Over completion is the only place that
-            // can detect overs_complete at all (without it a 20-over match
-            // would keep taking deliveries and keep asking for an over-21
-            // bowler), and target_achieved has to be checked here too, since
-            // it can land mid-over.
-            let matchJustCompleted = false;
-            let inning1ForResult = null;
-
-            if (outcome.inningsComplete) {
-                inning.status = 'completed';
-                inning.completionReason = outcome.completionReason;
-
-                if (inning.inningsNumber === 1) {
-                    // The innings transition. start-innings has no way to be
-                    // told "open innings 2 specifically" — it always resolves
-                    // against match.currentInnings — so this is the only
-                    // place that pointer can move. Target itself is set later,
-                    // by start-innings, once innings 2's Inning document
-                    // actually exists to carry it.
-                    match.currentInnings = 2;
-                    match.status = 'innings_break';
-                } else {
-                    // Innings 2 ending IS match completion — there is no
-                    // separate detector for it.
-                    inning1ForResult = await Inning.findOne({
-                        matchId: match._id,
-                        inningsNumber: 1,
-                    }).session(session);
-
-                    match.status = 'completed';
-                    match.completedAt = new Date();
-                    match.result = resolveMatchResult({
-                        completionReason: outcome.completionReason,
-                        battingTeam1: inning1ForResult.battingTeam,
-                        battingTeam2: inning.battingTeam,
-                        runs1: inning1ForResult.totalRuns,
-                        runs2: inning.totalRuns,
-                        wickets2: inning.wickets,
-                    });
-                    matchJustCompleted = true;
-                }
-
-                await match.save({ session });
-            }
-
-            await inning.save({ session });
-
-            result = { ballEvent, inning, over, matchJustCompleted, inning1ForResult };
+            result = await applyDelivery({ match, inning, session, req, delivery: input });
         });
 
         // The pair comes from the innings rather than the ball: the innings is
@@ -1107,7 +1154,7 @@ const scoreBall = catchAsync(async (req, res) => {
         return res.status(200).json(new ApiResponse(200, buildBallResponse(result.ballEvent, result.inning, view), req.t("BALL_SCORED")));
     } catch (err) {
         if (err.code === 11000) {
-            const replayedAfterRace = await respondWithExistingBall(match, idempotencyKey, res, req);
+            const replayedAfterRace = await respondWithExistingBall(match, input.idempotencyKey, res, req);
             if (replayedAfterRace) return replayedAfterRace;
         }
         throw err;
@@ -1116,17 +1163,10 @@ const scoreBall = catchAsync(async (req, res) => {
     }
 });
 
-// The mirror of scoreBall. Everything it restores comes from the preEventState
-// the ball has carried since it was written — nothing is recomputed, and nothing
-// is read from live state, because live state is exactly what is wrong.
-//
-// Deliberately targeted by ballEventId rather than popping whatever is last:
-// undo is the button a scorer double-taps on a bad connection, and a blind pop
-// would eat a second delivery. Naming the ball makes the retry a no-op instead.
-// See the undo section of docs/api.md for why only the latest ball is undoable.
-const undoBall = catchAsync(async (req, res) => {
-    const { matchId } = req.params;
-    const { ballEventId } = req.body;
+// Pure shape check for an undo request — shared by undoBall and by a sync
+// batch's per-event validation.
+const validateUndoInput = (body) => {
+    const { ballEventId } = body;
 
     if (typeof ballEventId !== 'string' || !ballEventId.trim()) {
         throw new ApiError(400, "BALL_EVENT_ID_REQUIRED");
@@ -1137,6 +1177,122 @@ const undoBall = catchAsync(async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(targetId)) {
         throw new ApiError(400, "INVALID_BALL_EVENT_ID");
     }
+
+    return { ballEventId: targetId };
+};
+
+// The mirror of applyDelivery. Everything it restores comes from the
+// preEventState the ball has carried since it was written — nothing is
+// recomputed, and nothing is read from live state, because live state is
+// exactly what is wrong.
+//
+// Deliberately targeted by ballEventId rather than popping whatever is last:
+// undo is the button a scorer double-taps on a bad connection, and a blind pop
+// would eat a second delivery. Naming the ball makes the retry a no-op instead.
+// See the undo section of docs/api.md for why only the latest ball is undoable.
+const applyUndo = async ({ match, inning, session, ballEventId }) => {
+    const ball = await BallEvent.findOne({
+        _id: ballEventId,
+        matchId: match._id,
+    }).session(session);
+
+    // Gone means a previous attempt already removed it. Answering with
+    // alreadyUndone rather than an error is what makes undo idempotent, and it
+    // is safe because a ball scored SINCE has a different id — a retried undo
+    // matches nothing and correctly does nothing.
+    if (!ball) {
+        return { inning, alreadyUndone: true };
+    }
+
+    const latest = await BallEvent.findOne({ inningsId: inning._id })
+        .sort({ absoluteBallSeq: -1 })
+        .session(session);
+
+    // Covers both "a later ball exists" and "this ball belongs to an innings
+    // that is no longer current" — neither is the latest delivery of the
+    // innings being scored.
+    if (!latest || !latest._id.equals(ball._id)) {
+        throw new ApiError(400, "BALL_NOT_LATEST");
+    }
+
+    const over = await Over.findById(ball.overId).session(session);
+    const overWasComplete = Boolean(over?.isComplete);
+    const inningsWasComplete = inning.status === 'completed';
+
+    await BallEvent.deleteOne({ _id: ball._id }, { session });
+
+    const restored = resolveUndo({
+        preEventState: ball.preEventState,
+        isWicket: ball.isWicket,
+        overWickets: over?.wickets ?? 0,
+    });
+
+    let overRemoved = false;
+
+    if (over) {
+        // An over with no deliveries left has to GO, not sit at zero — see
+        // undoBall's original comment on why a zeroed-out Over would credit
+        // the wrong bowler and corrupt the consecutive-over check.
+        const remaining = await BallEvent.findOne({ overId: over._id })
+            .select('_id')
+            .session(session);
+
+        if (remaining) {
+            Object.assign(over, restored.over);
+            await over.save({ session });
+        } else {
+            await Over.deleteOne({ _id: over._id }, { session });
+            overRemoved = true;
+        }
+    }
+
+    Object.assign(inning, restored.inning);
+    await inning.save({ session });
+
+    return {
+        inning,
+        ball,
+        alreadyUndone: false,
+        // A single-delivery over can never have been complete, so this and
+        // overRemoved are mutually exclusive in practice; the guard is here
+        // so the flag never claims an over that no longer exists.
+        overReopened: overWasComplete && !overRemoved,
+        overRemoved,
+        inningsReopened: inningsWasComplete,
+    };
+};
+
+// Builds the same complete-state snapshot both undo-ball and sync return after
+// a write — never a diff. See undoBall's own comment on why: the console
+// re-renders from these fields and must never compute a reversal or a replay
+// itself.
+const buildStateSnapshot = async (inning) => {
+    const [bowler, remainingBall] = await Promise.all([
+        buildBowlerState(inning),
+        BallEvent.findOne({ inningsId: inning._id }).select('_id'),
+    ]);
+
+    return {
+        strike: await buildStrike(inning, inning._id),
+        bowler,
+        target: inning.target ?? null,
+        inningsTotals: {
+            totalRuns: inning.totalRuns,
+            wickets: inning.wickets,
+            legalBalls: inning.legalBalls,
+            totalBalls: inning.totalBalls,
+            oversCompleted: inning.oversCompleted,
+            extras: serializeExtras(inning.extras),
+        },
+        overs: formatOvers(inning.oversCompleted, inning.legalBalls),
+        inningsComplete: inning.status === 'completed',
+        canUndo: Boolean(remainingBall),
+    };
+};
+
+const undoBall = catchAsync(async (req, res) => {
+    const { matchId } = req.params;
+    const { ballEventId } = validateUndoInput(req.body);
 
     const match = await Match.findOne({ _id: matchId, isDeleted: false });
     if (!match) {
@@ -1167,117 +1323,19 @@ const undoBall = catchAsync(async (req, res) => {
                 throw new ApiError(400, "INNINGS_NOT_STARTED");
             }
 
-            const ball = await BallEvent.findOne({
-                _id: targetId,
-                matchId: match._id,
-            }).session(session);
-
-            // Gone means a previous attempt already removed it. Answering 200
-            // rather than 404 is what makes undo idempotent, and it is safe
-            // because a ball scored SINCE has a different id — a retried undo
-            // matches nothing and correctly does nothing.
-            if (!ball) {
-                result = { inning, alreadyUndone: true };
-                return;
-            }
-
-            const latest = await BallEvent.findOne({ inningsId: inning._id })
-                .sort({ absoluteBallSeq: -1 })
-                .session(session);
-
-            // Covers both "a later ball exists" and "this ball belongs to an
-            // innings that is no longer current" — neither is the latest
-            // delivery of the innings being scored.
-            if (!latest || !latest._id.equals(ball._id)) {
-                throw new ApiError(400, "BALL_NOT_LATEST");
-            }
-
-            const over = await Over.findById(ball.overId).session(session);
-            const overWasComplete = Boolean(over?.isComplete);
-            const inningsWasComplete = inning.status === 'completed';
-
-            await BallEvent.deleteOne({ _id: ball._id }, { session });
-
-            const restored = resolveUndo({
-                preEventState: ball.preEventState,
-                isWicket: ball.isWicket,
-                overWickets: over?.wickets ?? 0,
-            });
-
-            let overRemoved = false;
-
-            if (over) {
-                // An over with no deliveries left has to GO, not sit at zero.
-                // select-bowler gates on BallEvent.exists for the over, so it
-                // becomes callable again — but scoreBall does Over.findOne
-                // before creating, would find this document, and would keep its
-                // original bowlerId. The over would be credited to the wrong
-                // bowler, and the consecutive-over check for the next over would
-                // read that wrong id. Deleting it also keeps Over.bowlerId
-                // stamped exactly once, at creation.
-                const remaining = await BallEvent.findOne({ overId: over._id })
-                    .select('_id')
-                    .session(session);
-
-                if (remaining) {
-                    Object.assign(over, restored.over);
-                    await over.save({ session });
-                } else {
-                    await Over.deleteOne({ _id: over._id }, { session });
-                    overRemoved = true;
-                }
-            }
-
-            Object.assign(inning, restored.inning);
-            await inning.save({ session });
-
-            result = {
-                inning,
-                ball,
-                alreadyUndone: false,
-                // A single-delivery over can never have been complete, so this
-                // and overRemoved are mutually exclusive in practice; the guard
-                // is here so the flag never claims an over that no longer exists.
-                overReopened: overWasComplete && !overRemoved,
-                overRemoved,
-                inningsReopened: inningsWasComplete,
-            };
+            result = await applyUndo({ match, inning, session, ballEventId });
         });
 
         const { inning } = result;
-
-        const [bowler, remainingBall] = await Promise.all([
-            buildBowlerState(inning),
-            BallEvent.findOne({ inningsId: inning._id }).select('_id'),
-        ]);
-
-        const state = {
-            matchId: match._id,
-            inningsId: inning._id,
-            inningsNumber: inning.inningsNumber,
-            strike: await buildStrike(inning, inning._id),
-            bowler,
-            target: inning.target ?? null,
-            inningsTotals: {
-                totalRuns: inning.totalRuns,
-                wickets: inning.wickets,
-                legalBalls: inning.legalBalls,
-                totalBalls: inning.totalBalls,
-                oversCompleted: inning.oversCompleted,
-                extras: serializeExtras(inning.extras),
-            },
-            overs: formatOvers(inning.oversCompleted, inning.legalBalls),
-            // Always false after a successful undo — the innings was open before
-            // the ball, so it is open again now. Reported anyway so the client
-            // renders this response without consulting what it had before.
-            inningsComplete: inning.status === 'completed',
-            canUndo: Boolean(remainingBall),
-        };
+        const state = await buildStateSnapshot(inning);
 
         if (result.alreadyUndone) {
             // Nothing changed, so the room is told nothing. The caller still
             // gets the current state, which is the point of answering 200.
             return res.status(200).json(new ApiResponse(200, {
+                matchId: match._id,
+                inningsId: inning._id,
+                inningsNumber: inning.inningsNumber,
                 ...state,
                 alreadyUndone: true,
                 undone: null,
@@ -1314,7 +1372,7 @@ const undoBall = catchAsync(async (req, res) => {
                 target: state.target,
                 extras: state.inningsTotals.extras,
                 strike: state.strike,
-                bowler,
+                bowler: state.bowler,
                 // Named differently from score:update's `lastBall` on purpose:
                 // this identifies a delivery to REMOVE, not one to append.
                 undoneBall: {
@@ -1329,6 +1387,9 @@ const undoBall = catchAsync(async (req, res) => {
         }
 
         return res.status(200).json(new ApiResponse(200, {
+            matchId: match._id,
+            inningsId: inning._id,
+            inningsNumber: inning.inningsNumber,
             ...state,
             alreadyUndone: false,
             undone,
@@ -1336,6 +1397,326 @@ const undoBall = catchAsync(async (req, res) => {
             overRemoved: result.overRemoved,
             inningsReopened: result.inningsReopened,
         }, req.t("BALL_UNDONE")));
+    } finally {
+        await session.endSession();
+    }
+});
+
+const SYNC_EVENT_TYPES = ['ball', 'bowler', 'undo'];
+// Well inside express.json's 100kb body limit; see docs/api.md.
+const SYNC_BATCH_MAX_EVENTS = 120;
+
+// Whole-batch structural checks — everything a client could get wrong before
+// any event's own content is even looked at. These reject the request outright,
+// unlike a per-event failure below, which stops the batch where it is and keeps
+// whatever already applied. See "The conflict check" in docs/api.md.
+const validateSyncRequest = (body) => {
+    const { inningsNumber, baseAbsoluteBallSeq, events } = body;
+
+    if (!Number.isInteger(baseAbsoluteBallSeq) || baseAbsoluteBallSeq < 0) {
+        throw new ApiError(400, "SYNC_BASE_SEQ_REQUIRED");
+    }
+
+    if (!Array.isArray(events) || events.length === 0) {
+        throw new ApiError(400, "SYNC_EVENTS_REQUIRED");
+    }
+
+    if (events.length > SYNC_BATCH_MAX_EVENTS) {
+        throw new ApiError(400, "SYNC_BATCH_TOO_LARGE");
+    }
+
+    let sawUndo = false;
+    let sawOther = false;
+
+    for (const event of events) {
+        if (!SYNC_EVENT_TYPES.includes(event?.type)) {
+            throw new ApiError(400, "SYNC_INVALID_EVENT_TYPE");
+        }
+        if (event.type === 'undo') sawUndo = true;
+        else sawOther = true;
+    }
+
+    if (sawUndo && sawOther) {
+        throw new ApiError(400, "SYNC_MIXED_BATCH");
+    }
+
+    // A malformed inningsNumber can never equal match.currentInnings either
+    // (checked once the match is loaded, below), so it surfaces as the same
+    // code as a genuine mismatch rather than inventing a second one for it.
+    if (inningsNumber !== 1 && inningsNumber !== 2) {
+        throw new ApiError(400, "SYNC_INNINGS_MISMATCH");
+    }
+
+    return { inningsNumber, baseAbsoluteBallSeq, events, isUndoBatch: sawUndo };
+};
+
+// Applies an ordered batch of events a client scored while it had no signal.
+// See docs/api.md's sync section for the full contract this implements; the
+// short version is: a lost response is not a conflict (a retry's own writes
+// are recognised and skipped), an individually-bad event stops the batch where
+// it is rather than rejecting the whole thing, and a genuine conflict — the
+// server holding deliveries this client never queued, or an undo landing on a
+// ball someone else has already scored past — refuses the batch whole and
+// leaves Match.syncStatus at "conflict" for the client to surface.
+const syncMatch = catchAsync(async (req, res) => {
+    const { matchId } = req.params;
+    const { inningsNumber, baseAbsoluteBallSeq, events, isUndoBatch } = validateSyncRequest(req.body);
+
+    const match = await Match.findOne({ _id: matchId, isDeleted: false });
+    if (!match) {
+        throw new ApiError(404, "MATCH_NOT_FOUND");
+    }
+
+    if (!match.createdBy?.equals(req.user._id)) {
+        throw new ApiError(403, "MATCH_NOT_OWNED");
+    }
+
+    if (match.status === 'completed' || match.status === 'abandoned') {
+        throw new ApiError(400, "MATCH_ALREADY_COMPLETED");
+    }
+
+    if (inningsNumber !== match.currentInnings) {
+        throw new ApiError(400, "SYNC_INNINGS_MISMATCH");
+    }
+
+    // Fail fast, before opening a session, on the common case of a batch
+    // arriving before start-innings has ever been called for this innings.
+    const precheckInning = await Inning.findOne({ matchId: match._id, inningsNumber });
+    if (!precheckInning) {
+        throw new ApiError(400, "INNINGS_NOT_STARTED");
+    }
+
+    const session = await mongoose.startSession();
+    try {
+        let finalInning = null;
+        let appliedCount = 0;
+        let skippedCount = 0;
+        let failedAt = null;
+        let failedCode = null;
+        let lastBallResult = null;
+        let lastUndoResult = null;
+
+        await session.withTransaction(async () => {
+            // Reset on every attempt: withTransaction retries this callback on
+            // a transient error, and a retry must start from a clean count
+            // against a freshly re-read inning, not accumulate across attempts.
+            finalInning = null;
+            appliedCount = 0;
+            skippedCount = 0;
+            failedAt = null;
+            failedCode = null;
+            lastBallResult = null;
+            lastUndoResult = null;
+
+            const inning = await Inning.findOne({ matchId: match._id, inningsNumber }).session(session);
+            if (!inning) {
+                throw new ApiError(400, "INNINGS_NOT_STARTED");
+            }
+
+            if (isUndoBatch) {
+                for (let i = 0; i < events.length; i += 1) {
+                    const event = events[i];
+                    try {
+                        const { ballEventId } = validateUndoInput(event);
+                        const result = await applyUndo({ match, inning, session, ballEventId });
+
+                        if (result.alreadyUndone) {
+                            skippedCount += 1;
+                        } else {
+                            appliedCount += 1;
+                            lastUndoResult = result;
+                        }
+                    } catch (err) {
+                        if (!(err instanceof ApiError)) throw err;
+
+                        // Someone scored past the ball this client meant to
+                        // remove — a conflict, not a transient/per-event
+                        // failure to skip past. See docs/api.md.
+                        if (err.message === 'BALL_NOT_LATEST') {
+                            throw new ApiError(409, "SYNC_CONFLICT");
+                        }
+
+                        failedAt = i;
+                        failedCode = err.message;
+                        break;
+                    }
+                }
+            } else {
+                const serverSeq = inning.totalBalls;
+                let ballsToSkip = 0;
+
+                if (serverSeq !== baseAbsoluteBallSeq) {
+                    const ahead = serverSeq - baseAbsoluteBallSeq;
+                    const batchBallKeys = events
+                        .filter((event) => event.type === 'ball')
+                        .map((event) => event.idempotencyKey);
+
+                    const serverKeysAhead = ahead > 0
+                        ? (await BallEvent.find({
+                            inningsId: inning._id,
+                            absoluteBallSeq: { $gt: baseAbsoluteBallSeq },
+                        })
+                            .sort({ absoluteBallSeq: 1 })
+                            .limit(ahead)
+                            .select('idempotencyKey')
+                            .session(session)
+                        ).map((b) => b.idempotencyKey)
+                        : [];
+
+                    const decision = resolveSyncDecision({
+                        baseSeq: baseAbsoluteBallSeq,
+                        serverSeq,
+                        batchBallKeys,
+                        serverKeysAhead,
+                    });
+
+                    if (decision.decision === 'conflict') {
+                        throw new ApiError(409, "SYNC_CONFLICT");
+                    }
+
+                    ballsToSkip = decision.resumeAfterBallCount;
+                }
+
+                for (let i = 0; i < events.length; i += 1) {
+                    const event = events[i];
+
+                    // Still inside the server-confirmed prefix from an earlier,
+                    // interrupted sync attempt. A `bowler` event in this span is
+                    // a no-op if re-applied (the pointer it would set is already
+                    // set), so it is simply skipped rather than risk anything.
+                    if (ballsToSkip > 0 && (event.type === 'ball' || event.type === 'bowler')) {
+                        if (event.type === 'ball') ballsToSkip -= 1;
+                        skippedCount += 1;
+                        continue;
+                    }
+
+                    try {
+                        if (event.type === 'ball') {
+                            const result = await applyDelivery({
+                                match,
+                                inning,
+                                session,
+                                req,
+                                delivery: validateBallInput(event),
+                            });
+                            lastBallResult = result;
+                        } else {
+                            const { bowlerName } = validateBowlerInput(event);
+                            await applyBowlerSelection({ match, inning, session, req, bowlerName });
+                        }
+
+                        appliedCount += 1;
+                    } catch (err) {
+                        if (!(err instanceof ApiError)) throw err;
+
+                        failedAt = i;
+                        failedCode = err.message;
+                        break;
+                    }
+                }
+            }
+
+            match.syncStatus = failedAt === null ? 'synced' : 'syncing';
+            await match.save({ session });
+
+            finalInning = inning;
+        });
+
+        const state = await buildStateSnapshot(finalInning);
+
+        if (!isUndoBatch && lastBallResult) {
+            const view = await buildBallView(
+                lastBallResult.ballEvent,
+                lastBallResult.inning,
+                match.totalOvers,
+                lastBallResult.over,
+                lastBallResult.inning.inningsNumber,
+                lastBallResult.inning.target
+            );
+
+            if (lastBallResult.matchJustCompleted) {
+                try {
+                    await Promise.all([
+                        generateScorecard(match._id, lastBallResult.inning1ForResult),
+                        generateScorecard(match._id, lastBallResult.inning),
+                    ]);
+                } catch (err) {
+                    console.error('scorecard generation failed', err);
+                }
+            }
+
+            emitBallEvents(req, lastBallResult.ballEvent, lastBallResult.inning, view);
+
+            if (lastBallResult.matchJustCompleted) {
+                const io = req.app.get('io');
+                if (io) {
+                    emitMatchComplete(io, {
+                        matchId: match._id,
+                        result: match.result,
+                        innings: [
+                            {
+                                inningsNumber: 1,
+                                battingTeam: lastBallResult.inning1ForResult.battingTeam,
+                                totalRuns: lastBallResult.inning1ForResult.totalRuns,
+                                wickets: lastBallResult.inning1ForResult.wickets,
+                                overs: formatOvers(lastBallResult.inning1ForResult.oversCompleted, lastBallResult.inning1ForResult.legalBalls),
+                            },
+                            {
+                                inningsNumber: 2,
+                                battingTeam: lastBallResult.inning.battingTeam,
+                                totalRuns: lastBallResult.inning.totalRuns,
+                                wickets: lastBallResult.inning.wickets,
+                                overs: formatOvers(lastBallResult.inning.oversCompleted, lastBallResult.inning.legalBalls),
+                            },
+                        ],
+                    });
+                }
+            }
+        } else if (isUndoBatch && lastUndoResult) {
+            const io = req.app.get('io');
+            if (io) {
+                const { ball } = lastUndoResult;
+                emitScoreUndo(io, {
+                    matchId: match._id,
+                    inningsId: finalInning._id,
+                    inningsNumber: finalInning.inningsNumber,
+                    totalRuns: finalInning.totalRuns,
+                    wickets: finalInning.wickets,
+                    overs: state.overs,
+                    target: state.target,
+                    extras: state.inningsTotals.extras,
+                    strike: state.strike,
+                    bowler: state.bowler,
+                    undoneBall: {
+                        ballEventId: ball._id,
+                        overNumber: ball.overNumber,
+                        ballNumber: ball.ballNumber,
+                        absoluteBallSeq: ball.absoluteBallSeq,
+                    },
+                    overReopened: lastUndoResult.overReopened,
+                    inningsReopened: lastUndoResult.inningsReopened,
+                });
+            }
+        }
+
+        return res.status(200).json(new ApiResponse(200, {
+            matchId: match._id,
+            inningsId: finalInning._id,
+            inningsNumber: finalInning.inningsNumber,
+            syncStatus: match.syncStatus,
+            baseAbsoluteBallSeq,
+            absoluteBallSeq: finalInning.totalBalls,
+            appliedCount,
+            skippedCount,
+            failedAt,
+            failedCode,
+            state,
+        }, req.t("SYNC_APPLIED")));
+    } catch (err) {
+        if (err instanceof ApiError && err.message === 'SYNC_CONFLICT') {
+            await Match.updateOne({ _id: match._id }, { syncStatus: 'conflict' });
+        }
+        throw err;
     } finally {
         await session.endSession();
     }
@@ -1463,4 +1844,4 @@ const getPublicMatch = catchAsync(async (req, res) => {
     }, req.t("MATCH_FETCHED")));
 });
 
-export { createMatch, startInnings, selectBowler, scoreBall, undoBall, getMatchScorecard, getPublicMatch };
+export { createMatch, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getPublicMatch };
