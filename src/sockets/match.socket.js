@@ -156,3 +156,11 @@ export const emitScoreUndo = (io, payload) => {
 export const emitMatchComplete = (io, payload) => {
     io.to(`match:${payload.matchId}`).emit('match:complete', payload);
 };
+
+// Same room, same "no separate subscription needed" reasoning as
+// emitMatchComplete — a spectator watching a match that gets called off
+// (rain, a no-show) needs to be told the same way, not left staring at a
+// score that silently stopped updating.
+export const emitMatchAbandoned = (io, payload) => {
+    io.to(`match:${payload.matchId}`).emit('match:abandoned', payload);
+};

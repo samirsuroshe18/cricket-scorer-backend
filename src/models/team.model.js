@@ -15,9 +15,8 @@ teamSchema.index({ name: 'text' });
 // Also serves equality queries on `createdBy` alone — don't add a separate
 // single-field index on `createdBy`, it would be a redundant prefix.
 teamSchema.index({ createdBy: 1, createdAt: -1 });
-// Makes the find-or-create upsert in match.controller.js race-safe —
-// without this, two concurrent create-match calls for the same new team
-// name can each miss the "existing" check and insert a duplicate Team.
-teamSchema.index({ createdBy: 1, name: 1 }, { unique: true });
+// No unique index on {createdBy, name}: teams are match-scoped, and the same
+// scorer legitimately creates a fresh "Team A" for every new match — see
+// createTeam in match.controller.js.
 
 export const Team = mongoose.model('Team', teamSchema);

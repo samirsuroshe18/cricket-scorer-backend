@@ -10,7 +10,7 @@ import { Over } from '../models/over.model.js';
 import { BallEvent } from '../models/ballEvent.model.js';
 import { Scorecard } from '../models/scorecard.model.js';
 import { formatOvers } from '../utils/formatOvers.js';
-import { emitScoreUpdate, emitOverComplete, emitScoreUndo, emitMatchComplete, buildBowlerState, buildInningsState } from '../sockets/match.socket.js';
+import { emitScoreUpdate, emitOverComplete, emitScoreUndo, emitMatchComplete, emitMatchAbandoned, buildBowlerState, buildInningsState } from '../sockets/match.socket.js';
 import { resolveDelivery, EXTRA_TYPES, RUNS_FROM } from '../utils/resolveDelivery.js';
 import { resolveUndo } from '../utils/resolveUndo.js';
 import { resolveMatchResult } from '../utils/resolveMatchResult.js';
@@ -34,33 +34,28 @@ const MIN_OVERS = 1;
 const MAX_OVERS = 50;
 const MAX_RUNS_PER_BALL = 6;
 const MAX_PLAYER_NAME_LENGTH = 50;
+const DEFAULT_HISTORY_LIMIT = 20;
+const MAX_HISTORY_LIMIT = 50;
 
-const findOrCreateTeam = async (name, createdBy) => {
-    try {
-        return await Team.findOneAndUpdate(
-            { createdBy, name },
-            { $setOnInsert: { name, createdBy } },
-            { upsert: true, returnDocument: 'after' }
-        );
-    } catch (err) {
-        // Two concurrent create-match calls for the same new team name can both
-        // miss the "existing" check and race the upsert — the unique
-        // {createdBy, name} index rejects the loser with E11000. The winner
-        // already created the doc, so just fetch it instead of failing the request.
-        if (err.code === 11000) {
-            return Team.findOne({ createdBy, name });
-        }
-        throw err;
-    }
-};
+// Teams are match-scoped, not reused by name: Phase 1 is meant to be ad-hoc,
+// per-match-only rosters (docs/roadmap.md), so two different real teams that
+// happen to share a name — even for the same scorer, across two unrelated
+// matches — must never end up sharing a Player pool. createMatch is Team's
+// only call site, so every match unconditionally gets its own fresh Team
+// documents; there is nothing to "find" here.
+const createTeam = (name, createdBy) => Team.create({ name, createdBy });
 
-// Same shape as findOrCreateTeam, and race-safe for the same reason: the unique
-// {teamId, name} index on Player rejects the loser of two concurrent upserts with
-// E11000, and the winner's document is already there to fetch. Called outside any
-// transaction — a duplicate-key error aborts a transaction outright, so the retry
-// could not run in-session. An orphan Player from a later failure is harmless,
-// exactly as an orphan Team is in createMatch. Safe to call more than once for the
-// same name for the same reason: it always resolves to a find after the first call.
+// Unlike Team, Player still needs a real find-or-create: the same batsman or
+// bowler is looked up by name repeatedly within one match's lifetime (every
+// over's bowler selection, every incoming batsman), all correctly meant to
+// resolve to the same Player document — teamId already scopes that lookup to
+// one match's roster now that Team is always created fresh per match. Race-safe
+// the same way findOrCreateTeam used to be: the unique {teamId, name} index on
+// Player rejects the loser of two concurrent upserts with E11000, and the
+// winner's document is already there to fetch. Called outside any transaction —
+// a duplicate-key error aborts a transaction outright, so the retry could not
+// run in-session. An orphan Player from a later failure is harmless, exactly as
+// an orphan Team is in createMatch.
 const findOrCreatePlayer = async (name, teamId, createdBy) => {
     try {
         return await Player.findOneAndUpdate(
@@ -79,7 +74,7 @@ const findOrCreatePlayer = async (name, teamId, createdBy) => {
 // Six characters over a 30-character alphabet is ~729 million codes, so a
 // collision is vanishingly rare — but "vanishingly rare" is not "impossible",
 // and the unique index on Match.joinCode is what makes retrying correct rather
-// than hopeful. Same shape as findOrCreateTeam's E11000 handling: let the
+// than hopeful. Same shape as findOrCreatePlayer's E11000 handling: let the
 // database be the authority on uniqueness and react to what it says.
 const JOIN_CODE_ATTEMPTS = 5;
 
@@ -123,8 +118,8 @@ const createMatch = catchAsync(async (req, res) => {
     }
 
     const [teamA, teamB] = await Promise.all([
-        findOrCreateTeam(trimmedA, req.user._id),
-        findOrCreateTeam(trimmedB, req.user._id),
+        createTeam(trimmedA, req.user._id),
+        createTeam(trimmedB, req.user._id),
     ]);
 
     const match = await createMatchWithJoinCode({
@@ -649,15 +644,33 @@ const applyBowlerSelection = async ({ match, inning, session, req, bowlerName })
         throw new ApiError(400, "BOWLER_CANNOT_BOWL_CONSECUTIVE_OVERS");
     }
 
+    // A conditional write, not a plain `inning.save()`: two near-simultaneous
+    // selectBowler calls for the same over both pass every check above off the
+    // same stale read, and an unconditional save would let whichever landed
+    // last silently overwrite the other — both callers getting a 200 with
+    // their own choice echoed back, even though only one was ever true in the
+    // database. Matching on `currentBowlerId` as it stood when this call
+    // started makes the write a compare-and-swap: the loser's filter no
+    // longer matches once the winner has committed, so it gets a real error
+    // instead of a false success.
+    const updated = await Inning.findOneAndUpdate(
+        { _id: inning._id, currentBowlerId: inning.currentBowlerId },
+        { $set: { currentBowlerId: bowler._id } },
+        { session, returnDocument: 'after' }
+    );
+
+    if (!updated) {
+        throw new ApiError(409, "BOWLER_SELECTION_CONFLICT");
+    }
+
     inning.currentBowlerId = bowler._id;
-    await inning.save({ session });
 
     return { bowler, previousBowlerId, overNumber };
 };
 
-// A single-document write, so no transaction: the check and the set both touch
-// Inning, and the OVER_ALREADY_STARTED guard inside applyBowlerSelection is
-// what makes a concurrent ball unable to invalidate the decision after the fact.
+// A single-document write, so no transaction needed: applyBowlerSelection's
+// compare-and-swap on `currentBowlerId` is what makes the write itself safe
+// under a race, rather than a transaction around it.
 const selectBowler = catchAsync(async (req, res) => {
     const { matchId } = req.params;
     const { bowlerName } = validateBowlerInput(req.body);
@@ -836,6 +849,26 @@ const applyDelivery = async ({ match, inning, session, req, delivery }) => {
 
             if (atCrease.includes(trimmedIncoming.toLowerCase())) {
                 throw new ApiError(400, "INCOMING_BATSMAN_AT_CREASE");
+            }
+
+            // A dismissed batsman can never legally bat again in this innings,
+            // so a name matching one — even though they're long off the
+            // crease — is never "the same player back again": it's either a
+            // typo or a second real player who happens to share a name.
+            // Checked against BallEvent rather than a cached list because
+            // dismissedPlayerName already carries exactly this history, and an
+            // undone wicket's deleted row automatically frees the name back up.
+            const dismissedEarlier = await BallEvent.find({
+                inningsId: inning._id,
+                isWicket: true,
+                dismissedPlayerName: { $ne: null },
+            }, 'dismissedPlayerName').session(session);
+
+            const alreadyBatted = dismissedEarlier
+                .map((event) => event.dismissedPlayerName.toLowerCase());
+
+            if (alreadyBatted.includes(trimmedIncoming.toLowerCase())) {
+                throw new ApiError(400, "INCOMING_BATSMAN_NAME_REUSED");
             }
 
             const battingTeamId = inning.battingTeam === 'teamA' ? match.teamA : match.teamB;
@@ -1036,6 +1069,74 @@ const applyDelivery = async ({ match, inning, session, req, delivery }) => {
     return { ballEvent, over, inning, matchJustCompleted, inning1ForResult };
 };
 
+// Shared by scoreBall and syncMatch's ball/bowler branch: both converge on
+// applyDelivery for the actual write, and this is everything that follows a
+// successfully-applied ball — building the response view, generating a
+// completion scorecard, and emitting both socket events. Kept as one
+// function specifically so a future change to any of that (a new
+// completion side effect, say) has one call site to update rather than two
+// that can silently drift apart, which is what scoreBall and syncMatch used
+// to be: the same ~45 lines duplicated verbatim between them.
+const finishBallDelivery = async ({ match, req, result }) => {
+    // The pair comes from the innings rather than the ball: the innings is
+    // the authority on who is facing next, and stays so once dismissals can
+    // replace a batsman instead of swapping the pair. The over document is
+    // handed in so the summary needs no re-read of what we just wrote.
+    const view = await buildBallView(
+        result.ballEvent,
+        result.inning,
+        match.totalOvers,
+        result.over,
+        result.inning.inningsNumber,
+        result.inning.target
+    );
+
+    if (result.matchJustCompleted) {
+        try {
+            await Promise.all([
+                generateScorecard(match._id, result.inning1ForResult),
+                generateScorecard(match._id, result.inning),
+            ]);
+        } catch (err) {
+            // The ball, and the match completion itself, are already safely
+            // committed — a scorecard that fails to generate here is not
+            // that. GET .../scorecard regenerates on demand, since
+            // generateScorecard is an upsert and therefore idempotent.
+            console.error('scorecard generation failed', err);
+        }
+    }
+
+    emitBallEvents(req, result.ballEvent, result.inning, view);
+
+    if (result.matchJustCompleted) {
+        const io = req.app.get('io');
+        if (io) {
+            emitMatchComplete(io, {
+                matchId: match._id,
+                result: match.result,
+                innings: [
+                    {
+                        inningsNumber: 1,
+                        battingTeam: result.inning1ForResult.battingTeam,
+                        totalRuns: result.inning1ForResult.totalRuns,
+                        wickets: result.inning1ForResult.wickets,
+                        overs: formatOvers(result.inning1ForResult.oversCompleted, result.inning1ForResult.legalBalls),
+                    },
+                    {
+                        inningsNumber: 2,
+                        battingTeam: result.inning.battingTeam,
+                        totalRuns: result.inning.totalRuns,
+                        wickets: result.inning.wickets,
+                        overs: formatOvers(result.inning.oversCompleted, result.inning.legalBalls),
+                    },
+                ],
+            });
+        }
+    }
+
+    return view;
+};
+
 const scoreBall = catchAsync(async (req, res) => {
     const { matchId } = req.params;
     const input = validateBallInput(req.body);
@@ -1095,61 +1196,7 @@ const scoreBall = catchAsync(async (req, res) => {
             result = await applyDelivery({ match, inning, session, req, delivery: input });
         });
 
-        // The pair comes from the innings rather than the ball: the innings is
-        // the authority on who is facing next, and stays so once dismissals can
-        // replace a batsman instead of swapping the pair. The over document is
-        // handed in so the summary needs no re-read of what we just wrote.
-        const view = await buildBallView(
-            result.ballEvent,
-            result.inning,
-            match.totalOvers,
-            result.over,
-            result.inning.inningsNumber,
-            result.inning.target
-        );
-
-        if (result.matchJustCompleted) {
-            try {
-                await Promise.all([
-                    generateScorecard(match._id, result.inning1ForResult),
-                    generateScorecard(match._id, result.inning),
-                ]);
-            } catch (err) {
-                // The ball, and the match completion itself, are already
-                // safely committed — a scorecard that fails to generate here
-                // is not that. GET .../scorecard regenerates on demand, since
-                // generateScorecard is an upsert and therefore idempotent.
-                console.error('scorecard generation failed', err);
-            }
-        }
-
-        emitBallEvents(req, result.ballEvent, result.inning, view);
-
-        if (result.matchJustCompleted) {
-            const io = req.app.get('io');
-            if (io) {
-                emitMatchComplete(io, {
-                    matchId: match._id,
-                    result: match.result,
-                    innings: [
-                        {
-                            inningsNumber: 1,
-                            battingTeam: result.inning1ForResult.battingTeam,
-                            totalRuns: result.inning1ForResult.totalRuns,
-                            wickets: result.inning1ForResult.wickets,
-                            overs: formatOvers(result.inning1ForResult.oversCompleted, result.inning1ForResult.legalBalls),
-                        },
-                        {
-                            inningsNumber: 2,
-                            battingTeam: result.inning.battingTeam,
-                            totalRuns: result.inning.totalRuns,
-                            wickets: result.inning.wickets,
-                            overs: formatOvers(result.inning.oversCompleted, result.inning.legalBalls),
-                        },
-                    ],
-                });
-            }
-        }
+        const view = await finishBallDelivery({ match, req, result });
 
         return res.status(200).json(new ApiResponse(200, buildBallResponse(result.ballEvent, result.inning, view), req.t("BALL_SCORED")));
     } catch (err) {
@@ -1625,53 +1672,7 @@ const syncMatch = catchAsync(async (req, res) => {
         const state = await buildStateSnapshot(finalInning);
 
         if (!isUndoBatch && lastBallResult) {
-            const view = await buildBallView(
-                lastBallResult.ballEvent,
-                lastBallResult.inning,
-                match.totalOvers,
-                lastBallResult.over,
-                lastBallResult.inning.inningsNumber,
-                lastBallResult.inning.target
-            );
-
-            if (lastBallResult.matchJustCompleted) {
-                try {
-                    await Promise.all([
-                        generateScorecard(match._id, lastBallResult.inning1ForResult),
-                        generateScorecard(match._id, lastBallResult.inning),
-                    ]);
-                } catch (err) {
-                    console.error('scorecard generation failed', err);
-                }
-            }
-
-            emitBallEvents(req, lastBallResult.ballEvent, lastBallResult.inning, view);
-
-            if (lastBallResult.matchJustCompleted) {
-                const io = req.app.get('io');
-                if (io) {
-                    emitMatchComplete(io, {
-                        matchId: match._id,
-                        result: match.result,
-                        innings: [
-                            {
-                                inningsNumber: 1,
-                                battingTeam: lastBallResult.inning1ForResult.battingTeam,
-                                totalRuns: lastBallResult.inning1ForResult.totalRuns,
-                                wickets: lastBallResult.inning1ForResult.wickets,
-                                overs: formatOvers(lastBallResult.inning1ForResult.oversCompleted, lastBallResult.inning1ForResult.legalBalls),
-                            },
-                            {
-                                inningsNumber: 2,
-                                battingTeam: lastBallResult.inning.battingTeam,
-                                totalRuns: lastBallResult.inning.totalRuns,
-                                wickets: lastBallResult.inning.wickets,
-                                overs: formatOvers(lastBallResult.inning.oversCompleted, lastBallResult.inning.legalBalls),
-                            },
-                        ],
-                    });
-                }
-            }
+            await finishBallDelivery({ match, req, result: lastBallResult });
         } else if (isUndoBatch && lastUndoResult) {
             const io = req.app.get('io');
             if (io) {
@@ -1759,7 +1760,12 @@ const getMatchScorecard = catchAsync(async (req, res) => {
         throw new ApiError(403, "MATCH_NOT_OWNED");
     }
 
-    if (match.status !== 'completed') {
+    // Abandoned is included alongside completed: abandonMatch generates a
+    // scorecard for whatever innings exist at the moment it's called, and
+    // this is the only endpoint that serves one back. An abandoned match
+    // never reaches 'completed', so excluding it here would make that
+    // scorecard permanently unreachable.
+    if (match.status !== 'completed' && match.status !== 'abandoned') {
         throw new ApiError(400, "SCORECARD_NOT_READY");
     }
 
@@ -1774,9 +1780,13 @@ const getMatchScorecard = catchAsync(async (req, res) => {
             Inning.findOne({ matchId: match._id, inningsNumber: 2 }),
         ]);
 
+        // A completed match always has both innings — but an abandoned one
+        // can have only innings 1, if play never reached innings 2. Guard
+        // against generateScorecard(matchId, null), which reads `inning._id`
+        // unconditionally and would throw.
         [scorecard1, scorecard2] = await Promise.all([
-            scorecard1 ?? generateScorecard(match._id, inning1),
-            scorecard2 ?? generateScorecard(match._id, inning2),
+            scorecard1 ?? (inning1 ? generateScorecard(match._id, inning1) : null),
+            scorecard2 ?? (inning2 ? generateScorecard(match._id, inning2) : null),
         ]);
     }
 
@@ -1852,4 +1862,124 @@ const getPublicMatch = catchAsync(async (req, res) => {
     }, req.t("MATCH_FETCHED")));
 });
 
-export { createMatch, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getPublicMatch };
+// A live/innings-break match that will never finish — rain, a no-show, a
+// setup abandoned mid-way. Distinct from deleteMatch below: this keeps the
+// match in history with whatever partial scorecard exists, the same way a
+// completed match does, rather than removing it.
+const abandonMatch = catchAsync(async (req, res) => {
+    const { matchId } = req.params;
+
+    const match = await Match.findOne({ _id: matchId, isDeleted: false });
+    if (!match) {
+        throw new ApiError(404, "MATCH_NOT_FOUND");
+    }
+
+    if (!match.createdBy?.equals(req.user._id)) {
+        throw new ApiError(403, "MATCH_NOT_OWNED");
+    }
+
+    if (match.status === 'completed' || match.status === 'abandoned') {
+        throw new ApiError(400, "MATCH_ALREADY_COMPLETED");
+    }
+
+    match.status = 'abandoned';
+    match.completedAt = new Date();
+    await match.save();
+
+    // Best-effort, same as the matchJustCompleted branch in scoreBall above:
+    // the abandonment itself is already committed, and generateScorecard is
+    // an upsert, so a failure here just means GET .../scorecard regenerates
+    // it on demand later rather than losing anything.
+    try {
+        const innings = await Inning.find({ matchId: match._id });
+        await Promise.all(innings.map((inning) => generateScorecard(match._id, inning)));
+    } catch (err) {
+        console.error('scorecard generation failed on abandon', err);
+    }
+
+    const io = req.app.get('io');
+    if (io) {
+        emitMatchAbandoned(io, { matchId: match._id, status: match.status });
+    }
+
+    return res.status(200).json(new ApiResponse(200, {
+        matchId: match._id,
+        status: match.status,
+    }, req.t("MATCH_ABANDONED")));
+});
+
+// Soft-delete only — never a hard delete, same convention as every other
+// isDeleted-bearing resource (see the backend CLAUDE.md's Database
+// Conventions). Works regardless of Match.status: a mis-created match
+// (wrong team names typed) needs to disappear from history whether or not
+// anyone ever scored a ball on it.
+const deleteMatch = catchAsync(async (req, res) => {
+    const { matchId } = req.params;
+
+    const match = await Match.findOne({ _id: matchId, isDeleted: false });
+    if (!match) {
+        throw new ApiError(404, "MATCH_NOT_FOUND");
+    }
+
+    if (!match.createdBy?.equals(req.user._id)) {
+        throw new ApiError(403, "MATCH_NOT_OWNED");
+    }
+
+    match.isDeleted = true;
+    await match.save();
+
+    return res.status(200).json(new ApiResponse(200, {
+        matchId: match._id,
+    }, req.t("MATCH_DELETED")));
+});
+
+// The first list endpoint in this codebase — see the backend CLAUDE.md's own
+// pagination rule for why `?page`/`?limit` with an enforced max rather than
+// an unbounded `.find()`: Match is exactly the kind of collection this rule
+// exists for. Feeds the client's match-history/home screen.
+const getMatchHistory = catchAsync(async (req, res) => {
+    const page = Number.parseInt(req.query.page, 10) || 1;
+    const limit = Number.parseInt(req.query.limit, 10) || DEFAULT_HISTORY_LIMIT;
+
+    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(limit) || limit < 1 || limit > MAX_HISTORY_LIMIT) {
+        throw new ApiError(400, "INVALID_PAGINATION", { params: { max: MAX_HISTORY_LIMIT } });
+    }
+
+    const filter = { createdBy: req.user._id, isDeleted: false };
+
+    const [matches, total] = await Promise.all([
+        Match.find(filter)
+            .sort({ createdAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(limit),
+        Match.countDocuments(filter),
+    ]);
+
+    // Batched rather than one Team.findById per match — a history page is
+    // exactly the N+1 shape a per-match lookup would create.
+    const teamIds = [...new Set(matches.flatMap((match) => [String(match.teamA), String(match.teamB)]))];
+    const teams = await Team.find({ _id: { $in: teamIds } });
+    const teamNameById = new Map(teams.map((team) => [String(team._id), team.name]));
+
+    return res.status(200).json(new ApiResponse(200, {
+        matches: matches.map((match) => ({
+            matchId: match._id,
+            // Unlike getPublicMatch/getMatchScorecard, this response carries
+            // team ids, not just names — a card here can route straight back
+            // into the scoring console for a still-live match, which needs
+            // teamA/teamB ids the same shape `create` originally returned
+            // them in, not just display names.
+            teamA: { id: match.teamA, name: teamNameById.get(String(match.teamA)) ?? null },
+            teamB: { id: match.teamB, name: teamNameById.get(String(match.teamB)) ?? null },
+            totalOvers: match.totalOvers,
+            status: match.status,
+            result: match.result ?? null,
+            createdAt: match.createdAt,
+        })),
+        page,
+        limit,
+        total,
+    }, req.t("MATCH_HISTORY_FETCHED")));
+});
+
+export { createMatch, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory };
