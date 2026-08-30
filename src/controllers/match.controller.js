@@ -2035,6 +2035,7 @@ const getMatchHistory = catchAsync(async (req, res) => {
             // them in, not just display names.
             teamA: { id: match.teamA, name: teamNameById.get(String(match.teamA)) ?? null },
             teamB: { id: match.teamB, name: teamNameById.get(String(match.teamB)) ?? null },
+            joinCode: match.joinCode ?? null,
             totalOvers: match.totalOvers,
             status: match.status,
             result: match.result ?? null,
