@@ -2039,6 +2039,8 @@ const getMatchHistory = catchAsync(async (req, res) => {
             totalOvers: match.totalOvers,
             status: match.status,
             result: match.result ?? null,
+            tossWinner: match.tossWinner ?? null,
+            tossDecision: match.tossDecision ?? null,
             createdAt: match.createdAt,
         })),
         page,

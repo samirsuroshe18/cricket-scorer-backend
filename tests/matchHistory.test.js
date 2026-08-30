@@ -110,4 +110,24 @@ describe('GET /v1/match/history', () => {
     expect(res.body.data.matches[0]).toHaveProperty('totalOvers');
     expect(res.body.data.matches[0]).toHaveProperty('createdAt');
   });
+
+  it('includes tossWinner/tossDecision so a reopened console can show who won the toss', async () => {
+    const { token } = await createTestUser();
+    await createMatch(app, token, { tossWinner: 'teamA', tossDecision: 'bat' });
+
+    const res = await history(token);
+
+    expect(res.body.data.matches[0].tossWinner).toBe('teamA');
+    expect(res.body.data.matches[0].tossDecision).toBe('bat');
+  });
+
+  it('reports a null toss for a match created without one', async () => {
+    const { token } = await createTestUser();
+    await createMatch(app, token);
+
+    const res = await history(token);
+
+    expect(res.body.data.matches[0].tossWinner).toBeNull();
+    expect(res.body.data.matches[0].tossDecision).toBeNull();
+  });
 });
