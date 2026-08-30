@@ -590,6 +590,10 @@ const startInnings = catchAsync(async (req, res) => {
 // Pure, stateless shape checks for a bowler selection — shared by selectBowler
 // (called before the match/inning load, so its error precedence is unchanged)
 // and by a sync batch's per-event validation (see applySyncBallOrBowlerEvent).
+//
+// `bowlerId` is optional and is the whole disambiguation mechanism: present,
+// it names an exact returning bowler (a scorer re-picking a known name);
+// absent, the name is a new player. See resolveBowler.
 const validateBowlerInput = (body) => {
     const name = body.bowlerName?.trim();
 
@@ -597,7 +601,48 @@ const validateBowlerInput = (body) => {
         throw new ApiError(400, "BOWLER_NAME_REQUIRED");
     }
 
-    return { bowlerName: name };
+    const bowlerId = body.bowlerId ?? null;
+    if (bowlerId !== null && !mongoose.isValidObjectId(bowlerId)) {
+        throw new ApiError(400, "INVALID_BOWLER_ID");
+    }
+
+    return { bowlerName: name, bowlerId };
+};
+
+// A bowler legitimately reuses their own name across overs (returning to
+// bowl again), so unlike the incoming-batsman check, name reuse can never be
+// rejected outright here — it is the normal case. What findOrCreatePlayer
+// cannot tell apart is that from a *different* real person who happens to
+// share a name, so identity is resolved by intent instead of by string:
+// `bowlerId` present means "this exact player, a scorer re-picking a known
+// bowler"; absent means "this name names someone new". A new name that
+// collides with an existing Player on this team is therefore a genuine
+// conflict, not a reuse to fall back to — `findOrCreatePlayer`'s "fetch on
+// E11000" would silently merge exactly the two people this exists to keep
+// apart, so this creates outright and turns the unique-index violation into
+// a rejection instead.
+//
+// No `{session}` on the create, same reasoning as findOrCreatePlayer/
+// findOrCreateTeam: a duplicate-key error aborts a transaction outright, so
+// the E11000 branch below could never run in-session to report it.
+const resolveBowler = async ({ bowlerId, bowlerName, teamId, createdBy, session }) => {
+    if (bowlerId) {
+        const bowler = await Player.findOne({ _id: bowlerId, teamId }).session(session);
+        if (!bowler) {
+            throw new ApiError(404, "BOWLER_NOT_FOUND");
+        }
+        return bowler;
+    }
+
+    try {
+        const [bowler] = await Player.create([{ name: bowlerName, teamId, createdBy }]);
+        return bowler;
+    } catch (err) {
+        if (err.code === 11000) {
+            throw new ApiError(400, "BOWLER_NAME_ALREADY_EXISTS");
+        }
+        throw err;
+    }
 };
 
 // Names the bowler for the over that has not started yet, against an
@@ -606,7 +651,7 @@ const validateBowlerInput = (body) => {
 // session-scoped alongside whatever deliveries surround it in the same
 // transaction. Mutates and saves `inning` in place; the caller decides what
 // else, if anything, needs saving in the same round trip.
-const applyBowlerSelection = async ({ match, inning, session, req, bowlerName }) => {
+const applyBowlerSelection = async ({ match, inning, session, req, bowlerName, bowlerId }) => {
     if (inning.status === 'completed') {
         throw new ApiError(400, "INNINGS_COMPLETED");
     }
@@ -634,11 +679,29 @@ const applyBowlerSelection = async ({ match, inning, session, req, bowlerName })
     const previousBowlerId = previousOver?.bowlerId ?? null;
     const bowlingTeamId = inning.bowlingTeam === 'teamA' ? match.teamA : match.teamB;
 
-    // Find-or-create runs outside the transaction's atomicity (no `{session}`
-    // passed to it), same as everywhere else it is called — safe to repeat if
-    // `session.withTransaction` retries this callback, since it always
-    // resolves to the same document after the first call.
-    const bowler = await findOrCreatePlayer(bowlerName, bowlingTeamId, req.user._id);
+    // Checked by name, ahead of resolveBowler, only when no bowlerId was
+    // given: typing the previous over's bowler's name straight back is the
+    // single most common way a scorer hits Law 17.6, and it deserves that
+    // specific, actionable error rather than BOWLER_NAME_ALREADY_EXISTS —
+    // resolveBowler would otherwise see an unrecognised name colliding with
+    // an existing Player and reject it as a new-player conflict before this
+    // ever gets a chance to say what actually happened. A bowlerId makes the
+    // intent explicit already, so it skips straight to the exact-id check
+    // below instead.
+    if (!bowlerId && previousBowlerId) {
+        const previousBowler = await Player.findById(previousBowlerId).session(session);
+        if (previousBowler?.name.trim().toLowerCase() === bowlerName.trim().toLowerCase()) {
+            throw new ApiError(400, "BOWLER_CANNOT_BOWL_CONSECUTIVE_OVERS");
+        }
+    }
+
+    const bowler = await resolveBowler({
+        bowlerId,
+        bowlerName,
+        teamId: bowlingTeamId,
+        createdBy: req.user._id,
+        session,
+    });
 
     if (isSameBowler(previousBowlerId, bowler._id)) {
         throw new ApiError(400, "BOWLER_CANNOT_BOWL_CONSECUTIVE_OVERS");
@@ -673,7 +736,7 @@ const applyBowlerSelection = async ({ match, inning, session, req, bowlerName })
 // under a race, rather than a transaction around it.
 const selectBowler = catchAsync(async (req, res) => {
     const { matchId } = req.params;
-    const { bowlerName } = validateBowlerInput(req.body);
+    const { bowlerName, bowlerId } = validateBowlerInput(req.body);
 
     const match = await Match.findOne({ _id: matchId, isDeleted: false });
     if (!match) {
@@ -700,6 +763,7 @@ const selectBowler = catchAsync(async (req, res) => {
         session: null,
         req,
         bowlerName,
+        bowlerId,
     });
 
     return res.status(200).json(new ApiResponse(200, {
@@ -874,9 +938,9 @@ const applyDelivery = async ({ match, inning, session, req, delivery }) => {
             const battingTeamId = inning.battingTeam === 'teamA' ? match.teamA : match.teamB;
 
             // Outside the transaction's atomicity on purpose, same as
-            // applyBowlerSelection's find-or-create — see that function's
-            // comment. An orphan Player from a delivery that fails later in
-            // this same call is harmless, exactly as elsewhere in this file.
+            // resolveBowler's create — see that function's comment. An
+            // orphan Player from a delivery that fails later in this same
+            // call is harmless, exactly as elsewhere in this file.
             incomingPlayer = await findOrCreatePlayer(trimmedIncoming, battingTeamId, req.user._id);
         }
     }
@@ -1648,8 +1712,8 @@ const syncMatch = catchAsync(async (req, res) => {
                             });
                             lastBallResult = result;
                         } else {
-                            const { bowlerName } = validateBowlerInput(event);
-                            await applyBowlerSelection({ match, inning, session, req, bowlerName });
+                            const { bowlerName, bowlerId } = validateBowlerInput(event);
+                            await applyBowlerSelection({ match, inning, session, req, bowlerName, bowlerId });
                         }
 
                         appliedCount += 1;
