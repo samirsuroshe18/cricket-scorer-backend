@@ -30,4 +30,31 @@ const verifyJwt = catchAsync(async (req, _, next) => {
     next();
 })
 
-export { verifyJwt };
+// There is no role/admin concept anywhere in User.model.js — "logged in" was
+// being used as a stand-in for "authorized" on the translations CMS write
+// routes, which let any self-registered account rewrite or delete the i18n
+// strings every client renders. Phase 1 has exactly one real admin (whoever
+// runs the CMS maintenance calls), so this is a small, ops-controlled email
+// allowlist rather than a DB-backed role — no migration, no self-service path
+// to become admin, and it can't be granted by anything short of editing
+// `.env` and restarting. Must run AFTER verifyJwt: it reads `req.user`, which
+// only verifyJwt populates.
+//
+// Read from `process.env` on every call rather than cached at module load —
+// this is what lets a test set `process.env.ADMIN_EMAILS` per-case and see
+// it take effect immediately, and the value never changes within a running
+// process anyway, so there is no real cost to not caching it.
+const verifyAdmin = catchAsync(async (req, _, next) => {
+    const adminEmails = (process.env.ADMIN_EMAILS ?? '')
+        .split(',')
+        .map((email) => email.trim().toLowerCase())
+        .filter(Boolean);
+
+    if (!adminEmails.includes(req.user?.email?.toLowerCase())) {
+        throw new ApiError(403, "ADMIN_ACCESS_REQUIRED");
+    }
+
+    next();
+});
+
+export { verifyJwt, verifyAdmin };
