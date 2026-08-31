@@ -12,7 +12,7 @@ import { Scorecard } from '../models/scorecard.model.js';
 import { formatOvers } from '../utils/formatOvers.js';
 import { emitScoreUpdate, emitOverComplete, emitScoreUndo, emitMatchComplete, emitMatchAbandoned, buildBowlerState, buildInningsState } from '../sockets/match.socket.js';
 import { resolveDelivery, EXTRA_TYPES, RUNS_FROM } from '../utils/resolveDelivery.js';
-import { resolveUndo } from '../utils/resolveUndo.js';
+import { resolveUndo, resolveMatchUndo } from '../utils/resolveUndo.js';
 import { resolveMatchResult } from '../utils/resolveMatchResult.js';
 import { resolveToss } from '../utils/resolveToss.js';
 import { resolveSyncDecision } from '../utils/resolveSync.js';
@@ -550,13 +550,49 @@ const startInnings = catchAsync(async (req, res) => {
                     fields.target = inning1.totalRuns + 1;
                 }
 
-                [inning] = await Inning.create([fields], { session });
+                try {
+                    [inning] = await Inning.create([fields], { session });
+                } catch (err) {
+                    // Two concurrent start-innings calls for the same match
+                    // (a double-tap, a second device) can both read `existing`
+                    // as null and both attempt this create — only one insert
+                    // can win the unique {matchId, inningsNumber} index. Unlike
+                    // the analogous Over race in applyDelivery, the loser
+                    // cannot just adopt the winner's document: it may carry
+                    // different openers than what this request's caller typed,
+                    // and silently succeeding with someone else's choice is
+                    // worse than a clear rejection — the same reasoning
+                    // applyBowlerSelection's compare-and-swap already uses for
+                    // BOWLER_SELECTION_CONFLICT. INNINGS_ALREADY_STARTED is
+                    // exactly the right existing error for this: semantically
+                    // identical to the `existing.totalBalls > 0` check above,
+                    // just for the sliver of time between that check and the
+                    // insert instead of before it.
+                    const isInningIndexCollision =
+                        err.code === 11000 && Object.hasOwn(err.keyPattern ?? {}, 'inningsNumber');
+                    if (isInningIndexCollision) {
+                        throw new ApiError(400, "INNINGS_ALREADY_STARTED");
+                    }
+                    throw err;
+                }
             }
 
-            if (match.status === 'upcoming' || match.status === 'innings_break') {
-                match.status = 'live';
-                await match.save({ session });
-            }
+            // A conditional, atomic update rather than a mutate-then-save on the
+            // shared `match` document: `withTransaction` retries this whole
+            // callback on a transient error (e.g. a WriteConflict on `inning`
+            // above), and the DB write from a failed attempt rolls back while a
+            // plain JS mutation of `match.status` would not — a retry that
+            // trusted `match.status` already being 'live' in memory would then
+            // skip this write entirely, leaving the DB stuck at 'upcoming'/
+            // 'innings_break' forever even though the innings genuinely
+            // started. Conditioning on the DB's own current status, every
+            // attempt, is what `applyBowlerSelection`'s compare-and-swap does
+            // for the same reason.
+            await Match.updateOne(
+                { _id: match._id, status: { $in: ['upcoming', 'innings_break'] } },
+                { $set: { status: 'live' } },
+                { session }
+            );
         });
 
         return res.status(200).json(new ApiResponse(200, {
@@ -948,16 +984,42 @@ const applyDelivery = async ({ match, inning, session, req, delivery }) => {
     const overNumber = inning.oversCompleted + 1;
     let over = await Over.findOne({ inningsId: inning._id, overNumber }).session(session);
     if (!over) {
-        [over] = await Over.create([{
-            matchId: match._id,
-            inningsId: inning._id,
-            overNumber,
-            // Stamped once, at creation, from the pointer start-innings or
-            // select-bowler set (or, inside a sync batch, from whatever the
-            // preceding `bowler` event just set). This is what makes
-            // Over.bowlerId the permanent record of who bowled the over.
-            bowlerId: inning.currentBowlerId,
-        }], { session });
+        try {
+            [over] = await Over.create([{
+                matchId: match._id,
+                inningsId: inning._id,
+                overNumber,
+                // Stamped once, at creation, from the pointer start-innings or
+                // select-bowler set (or, inside a sync batch, from whatever the
+                // preceding `bowler` event just set). This is what makes
+                // Over.bowlerId the permanent record of who bowled the over.
+                bowlerId: inning.currentBowlerId,
+            }], { session });
+        } catch (err) {
+            // Two concurrent deliveries (a second scorer, a retried request
+            // racing the original) can both find no Over here and both
+            // attempt to create it — only one insert can win the unique
+            // {inningsId, overNumber} index. The loser isn't actually wrong;
+            // the over now exists, created microseconds earlier off the same
+            // inning.currentBowlerId this side also just read. But a plain
+            // re-read in-session can't be trusted to see it: unique-index
+            // enforcement checks live index state, not this transaction's own
+            // snapshot, so the row that just caused this very error may still
+            // be invisible to a query on the same session. Relabelling this
+            // as transient hands it to withTransaction's own retry loop
+            // instead — a fresh attempt gets a fresh snapshot, and
+            // `Over.findOne` above already finds an over that genuinely
+            // exists by the time that attempt runs. Scoped to this exact
+            // index rather than a blanket E11000 catch, so an unrelated
+            // duplicate-key bug still surfaces as an error instead of
+            // retrying forever.
+            const isOverIndexCollision =
+                err.code === 11000 && Object.hasOwn(err.keyPattern ?? {}, 'inningsId');
+            if (isOverIndexCollision) {
+                err.addErrorLabel?.('TransientTransactionError');
+            }
+            throw err;
+        }
     }
 
     const delivery1 = resolveDelivery({ runs, extraType, runsFrom });
@@ -1205,7 +1267,7 @@ const scoreBall = catchAsync(async (req, res) => {
     const { matchId } = req.params;
     const input = validateBallInput(req.body);
 
-    const match = await Match.findOne({ _id: matchId, isDeleted: false });
+    let match = await Match.findOne({ _id: matchId, isDeleted: false });
     if (!match) {
         throw new ApiError(404, "MATCH_NOT_FOUND");
     }
@@ -1248,6 +1310,17 @@ const scoreBall = catchAsync(async (req, res) => {
         let result;
 
         await session.withTransaction(async () => {
+            // Re-fetched fresh on every attempt, including a retry after a
+            // TransientTransactionError (e.g. a WriteConflict on `inning`
+            // below): the DB write from a failed attempt rolls back, but
+            // applyDelivery mutates this same JS object in place (e.g.
+            // `match.currentInnings`, `match.status` on an innings/match
+            // transition), and that mutation would NOT roll back with it. A
+            // retry that reused the previous attempt's already-mutated
+            // `match` would then, for example, look up an innings 2 that
+            // doesn't exist yet and wrongly fail a perfectly legal delivery.
+            match = await Match.findById(matchId).session(session);
+
             const inning = await Inning.findOne({ matchId: match._id, inningsNumber: match.currentInnings }).session(session);
 
             // The innings and its openers are created by start-innings. Scoring a
@@ -1360,6 +1433,19 @@ const applyUndo = async ({ match, inning, session, ballEventId }) => {
     Object.assign(inning, restored.inning);
     await inning.save({ session });
 
+    // Reverses whatever applyDelivery did to Match when THIS ball completed
+    // an innings — the transition to innings 2, or (innings 2) the match
+    // itself. Null for an ordinary ball, so this only ever writes `match`
+    // when it actually needs to.
+    const matchPatch = resolveMatchUndo({
+        inningsNumber: inning.inningsNumber,
+        wasInningsComplete: inningsWasComplete,
+    });
+    if (matchPatch) {
+        Object.assign(match, matchPatch);
+        await match.save({ session });
+    }
+
     return {
         inning,
         ball,
@@ -1370,6 +1456,7 @@ const applyUndo = async ({ match, inning, session, ballEventId }) => {
         overReopened: overWasComplete && !overRemoved,
         overRemoved,
         inningsReopened: inningsWasComplete,
+        matchReopened: Boolean(matchPatch),
     };
 };
 
@@ -1405,7 +1492,7 @@ const undoBall = catchAsync(async (req, res) => {
     const { matchId } = req.params;
     const { ballEventId } = validateUndoInput(req.body);
 
-    const match = await Match.findOne({ _id: matchId, isDeleted: false });
+    let match = await Match.findOne({ _id: matchId, isDeleted: false });
     if (!match) {
         throw new ApiError(404, "MATCH_NOT_FOUND");
     }
@@ -1414,7 +1501,11 @@ const undoBall = catchAsync(async (req, res) => {
         throw new ApiError(403, "MATCH_NOT_OWNED");
     }
 
-    if (match.status === 'completed' || match.status === 'abandoned') {
+    // A completed match's own most recent ball — the one that finished it —
+    // is still undoable; only `abandoned` (no coherent innings state to
+    // reverse into) is refused outright. applyUndo's own BALL_NOT_LATEST
+    // check is what stops this from reaching anything but that one ball.
+    if (match.status === 'abandoned') {
         throw new ApiError(400, "MATCH_ALREADY_COMPLETED");
     }
 
@@ -1423,13 +1514,31 @@ const undoBall = catchAsync(async (req, res) => {
         let result;
 
         await session.withTransaction(async () => {
-            const inning = await Inning.findOne({
+            // Re-fetched fresh on every attempt — see scoreBall's identical
+            // comment. applyUndo now mutates this same document in place
+            // (reversing an innings/match completion), and a retry after a
+            // TransientTransactionError must not reuse a previous attempt's
+            // already-mutated instance.
+            match = await Match.findById(matchId).session(session);
+
+            let inning = await Inning.findOne({
                 matchId: match._id,
                 inningsNumber: match.currentInnings,
             }).session(session);
 
-            // No innings means nothing was ever scored, so there is nothing this
-            // ball id could refer to either.
+            // Nothing started for the current innings yet is only ever
+            // reachable here when that innings' completion is exactly what
+            // advanced `currentInnings` to it — the next innings has no
+            // Inning document until its own start-innings call creates one.
+            // The ball a scorer would want to undo in that state is the
+            // previous innings' own last (completing) delivery.
+            if (!inning && match.currentInnings > 1) {
+                inning = await Inning.findOne({
+                    matchId: match._id,
+                    inningsNumber: match.currentInnings - 1,
+                }).session(session);
+            }
+
             if (!inning) {
                 throw new ApiError(400, "INNINGS_NOT_STARTED");
             }
@@ -1453,6 +1562,7 @@ const undoBall = catchAsync(async (req, res) => {
                 overReopened: false,
                 overRemoved: false,
                 inningsReopened: false,
+                matchReopened: false,
             }, req.t("BALL_UNDONE")));
         }
 
@@ -1494,6 +1604,7 @@ const undoBall = catchAsync(async (req, res) => {
                 },
                 overReopened: result.overReopened,
                 inningsReopened: result.inningsReopened,
+                matchReopened: result.matchReopened,
             });
         }
 
@@ -1507,6 +1618,7 @@ const undoBall = catchAsync(async (req, res) => {
             overReopened: result.overReopened,
             overRemoved: result.overRemoved,
             inningsReopened: result.inningsReopened,
+            matchReopened: result.matchReopened,
         }, req.t("BALL_UNDONE")));
     } finally {
         await session.endSession();
@@ -1561,6 +1673,25 @@ const validateSyncRequest = (body) => {
     return { inningsNumber, baseAbsoluteBallSeq, events, isUndoBatch: sawUndo };
 };
 
+// The batch's own declared scope must match `match.currentInnings` — except
+// an undo batch may also name the innings ONE BEHIND it: the ball a client
+// means to undo may be exactly the one that completed that innings, and the
+// server has already moved on. That reach-back is only safe while the next
+// innings has not actually been opened for real yet (no Inning document for
+// it) — once it has, undo can no longer cross the boundary, same rule and
+// same reason as undo-ball's own scope notes in docs/api.md.
+const checkSyncInningsScope = async ({ match, inningsNumber, isUndoBatch, session }) => {
+    if (inningsNumber === match.currentInnings) return;
+
+    if (isUndoBatch && inningsNumber === match.currentInnings - 1) {
+        const query = Inning.exists({ matchId: match._id, inningsNumber: match.currentInnings });
+        const nextInningsStarted = await (session ? query.session(session) : query);
+        if (!nextInningsStarted) return;
+    }
+
+    throw new ApiError(400, "SYNC_INNINGS_MISMATCH");
+};
+
 // Applies an ordered batch of events a client scored while it had no signal.
 // See docs/api.md's sync section for the full contract this implements; the
 // short version is: a lost response is not a conflict (a retry's own writes
@@ -1573,7 +1704,7 @@ const syncMatch = catchAsync(async (req, res) => {
     const { matchId } = req.params;
     const { inningsNumber, baseAbsoluteBallSeq, events, isUndoBatch } = validateSyncRequest(req.body);
 
-    const match = await Match.findOne({ _id: matchId, isDeleted: false });
+    let match = await Match.findOne({ _id: matchId, isDeleted: false });
     if (!match) {
         throw new ApiError(404, "MATCH_NOT_FOUND");
     }
@@ -1582,13 +1713,16 @@ const syncMatch = catchAsync(async (req, res) => {
         throw new ApiError(403, "MATCH_NOT_OWNED");
     }
 
-    if (match.status === 'completed' || match.status === 'abandoned') {
+    // A completed match's own most recent ball is still undoable, same
+    // carve-out as undo-ball's own guard; a ball/bowler batch must still be
+    // refused outright — there is nothing further to score into a finished
+    // match. `abandoned` is refused either way: no coherent innings state to
+    // reverse into.
+    if (match.status === 'abandoned' || (match.status === 'completed' && !isUndoBatch)) {
         throw new ApiError(400, "MATCH_ALREADY_COMPLETED");
     }
 
-    if (inningsNumber !== match.currentInnings) {
-        throw new ApiError(400, "SYNC_INNINGS_MISMATCH");
-    }
+    await checkSyncInningsScope({ match, inningsNumber, isUndoBatch });
 
     // Fail fast, before opening a session, on the common case of a batch
     // arriving before start-innings has ever been called for this innings.
@@ -1607,6 +1741,22 @@ const syncMatch = catchAsync(async (req, res) => {
         let lastBallResult = null;
         let lastUndoResult = null;
 
+        // Deliberately NOT reset per attempt, unlike everything above: a
+        // `bowler` event with no `bowlerId` makes resolveBowler create a new
+        // Player via a non-session `Player.create()` (session-scoped on
+        // purpose — see resolveBowler's own comment on why an in-session
+        // duplicate-key error can't be caught and reported gracefully). That
+        // write is therefore NOT rolled back if a later operation in the
+        // same attempt hits a TransientTransactionError and withTransaction
+        // retries the whole callback — so a retry that re-submits the same
+        // event would hit the unique index and see BOWLER_NAME_ALREADY_EXISTS
+        // for a bowler that was never actually a duplicate, only ever this
+        // same request's own earlier attempt. Recording the id here, indexed
+        // by position in the (unchanging, request-scoped) `events` array,
+        // lets a retry pass it through as `bowlerId` instead of recreating —
+        // exactly what a scorer re-picking a known bowler already does.
+        const resolvedBowlerIdByEventIndex = new Map();
+
         await session.withTransaction(async () => {
             // Reset on every attempt: withTransaction retries this callback on
             // a transient error, and a retry must start from a clean count
@@ -1618,6 +1768,20 @@ const syncMatch = catchAsync(async (req, res) => {
             failedCode = null;
             lastBallResult = null;
             lastUndoResult = null;
+
+            // Re-fetched fresh on every attempt — see scoreBall's identical
+            // comment. applyDelivery/applyBowlerSelection mutate this same
+            // document in place (e.g. `match.currentInnings`, `match.status`
+            // on an innings/match transition), and a retry after a
+            // TransientTransactionError must not reuse a previous attempt's
+            // already-mutated instance.
+            match = await Match.findById(matchId).session(session);
+
+            // A concurrent, already-committed request could have moved the
+            // match on to a different innings between this attempt and the
+            // last — re-check against the freshly re-fetched document rather
+            // than trusting the pre-transaction read above.
+            await checkSyncInningsScope({ match, inningsNumber, isUndoBatch, session });
 
             const inning = await Inning.findOne({ matchId: match._id, inningsNumber }).session(session);
             if (!inning) {
@@ -1713,7 +1877,22 @@ const syncMatch = catchAsync(async (req, res) => {
                             lastBallResult = result;
                         } else {
                             const { bowlerName, bowlerId } = validateBowlerInput(event);
-                            await applyBowlerSelection({ match, inning, session, req, bowlerName, bowlerId });
+                            // A prior attempt's own (uncommitted-by-the-abort)
+                            // Player create takes priority over re-creating —
+                            // see the comment on `resolvedBowlerIdByEventIndex`.
+                            const effectiveBowlerId =
+                                bowlerId ?? resolvedBowlerIdByEventIndex.get(i) ?? null;
+                            const { bowler } = await applyBowlerSelection({
+                                match,
+                                inning,
+                                session,
+                                req,
+                                bowlerName,
+                                bowlerId: effectiveBowlerId,
+                            });
+                            if (!bowlerId) {
+                                resolvedBowlerIdByEventIndex.set(i, bowler._id.toString());
+                            }
                         }
 
                         appliedCount += 1;
@@ -1760,6 +1939,7 @@ const syncMatch = catchAsync(async (req, res) => {
                     },
                     overReopened: lastUndoResult.overReopened,
                     inningsReopened: lastUndoResult.inningsReopened,
+                    matchReopened: lastUndoResult.matchReopened,
                 });
             }
         }

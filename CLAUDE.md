@@ -82,6 +82,8 @@ Reusable constants go in `src/constants/<topic>.constants.js` — enum-like sets
 - **NoSQL injection:** `sanitizeMiddleware` strips keys starting with `$` or containing `.` from body/params/query. `express-mongo-sanitize` is deliberately **not** used — it reassigns `req.query`, which is a getter in Express 5 and throws.
 - **Response hygiene:** `password`, `refreshToken`, `emailOtp`, `emailOtpExpiry`, `otpVerifyToken`, and `otpVerifyTokenExpiry` must never reach a response. The OTP/reset fields are `select: false` in the schema — opt in with `.select("+field")` where a handler genuinely needs them, and add `select: false` to any new secret field rather than filtering it per-endpoint.
 - **Secrets:** `.env.development` / `.env.production` and `service-account-file-*.json` are gitignored — never commit real values or read secrets from anywhere but `process.env`.
+- **Fixed (2026-08-31): the translations CMS write routes (`bulk-update`, `:lang/set-key`, `DELETE :lang/key/:key`) were guarded by `verifyJwt` alone.** There is no role/admin concept anywhere in `User.model.js` — "logged in" was standing in for "authorized," so any self-registered account could rewrite or delete the i18n strings every client renders. `verifyAdmin` (same file as `verifyJwt`) is the actual check now: a small `ADMIN_EMAILS` allowlist read from `process.env` on every call, not a DB-backed role — Phase 1 has exactly one real admin (whoever runs the CMS maintenance calls), so there's no self-service path to become one, and granting access means editing `.env` and restarting. Must run after `verifyJwt` (reads `req.user`). Covered by [tests/translationAdminAccess.test.js](tests/translationAdminAccess.test.js).
+- **Fixed (2026-08-31): the profile-picture upload (`POST /user/update-profile`) had a path-traversal arbitrary-file-write.** `multer.middleware.js`'s `filename` callback built the on-disk name straight from `file.originalname` — fully attacker-controlled multipart input — and multer's disk storage does a plain `path.join(destination, filename)` with no traversal guard, so an originalname like `"../../../../some/path/evil.js"` wrote outside `./public/temp` from any authenticated account. `buildUploadFilename` now generates a random name (`crypto.randomUUID()`); the only thing taken from client input is a whitelisted, regex-validated extension, which by construction can't contain a path separator. Covered by [tests/multerMiddleware.test.js](tests/multerMiddleware.test.js).
 
 ## Database Conventions
 
@@ -113,6 +115,8 @@ Reusable constants go in `src/constants/<topic>.constants.js` — enum-like sets
 ### Translations: two independent systems
 
 Don't conflate them. **`src/locales/*/common.json`** are static backend response strings (i18next). The **`Localization`/`TranslationMeta` models** are a client-facing CMS that serves app strings to the mobile client, with a global version counter (`incrementGlobalVersion()` on every write) that clients poll via `GET /version` to invalidate their cache. They only share the language codes `en`/`hi`/`mr`.
+
+The CMS's read routes are public by design (fetched before login); its three write routes require `verifyAdmin` — see "Auth & Security" above.
 
 ## Naming Conventions
 

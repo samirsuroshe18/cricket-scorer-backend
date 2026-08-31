@@ -62,3 +62,30 @@ export const resolveUndo = ({ preEventState, isWicket = false, overWickets = 0 }
         },
     };
 };
+
+/**
+ * The `Match` fields to reverse when the ball being undone was the one that
+ * completed an innings — either the innings-1-to-2 transition, or (innings 2)
+ * the match itself. `null` for an ordinary ball: `applyDelivery` only ever
+ * writes these fields from inside its own `outcome.inningsComplete` branch,
+ * so nothing else could have needed reversing.
+ *
+ * Innings 1 completing only ever moves `currentInnings`/`status` — a target
+ * is set later, by start-innings, once innings 2's own `Inning` document
+ * exists, so there is nothing here to undo for it. Innings 2 completing IS
+ * match completion, so this reverses `status`/`completedAt`/`result` instead.
+ * `undefined` rather than `null` for the latter two: both are optional
+ * schema paths, and assigning `undefined` is what makes Mongoose `$unset`
+ * them on save rather than persist an explicit `null`.
+ *
+ * Covered by tests/resolveUndo.test.js.
+ */
+export const resolveMatchUndo = ({ inningsNumber, wasInningsComplete }) => {
+    if (!wasInningsComplete) return null;
+
+    if (inningsNumber === 1) {
+        return { currentInnings: 1, status: 'live' };
+    }
+
+    return { status: 'live', completedAt: undefined, result: undefined };
+};

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { verifyJwt } from "../middlewares/auth.middleware.js";
+import { verifyJwt, verifyAdmin } from "../middlewares/auth.middleware.js";
 import { bulkSetTranslations, deleteTranslationKey, getAllTranslations, getTranslationByLang, getTranslationsVersion, setTranslationKey } from "../controllers/translation.controller.js";
 
 const router = Router();
@@ -9,9 +9,12 @@ router.route('/all').get(getAllTranslations);
 router.route('/version').get(getTranslationsVersion);
 router.route('/:lang').get(getTranslationByLang);
 
-// Protected routes — write operations
-router.route('/bulk-update').post(verifyJwt, bulkSetTranslations);
-router.route('/:lang/set-key').post(verifyJwt, setTranslationKey);
-router.route('/:lang/key/:key').delete(verifyJwt, deleteTranslationKey);
+// Admin-only routes — write operations. `verifyJwt` alone used to guard
+// these, which meant any self-registered account could rewrite or delete
+// the i18n strings every client renders; `verifyAdmin` (ADMIN_EMAILS
+// allowlist) is the actual authorization check.
+router.route('/bulk-update').post(verifyJwt, verifyAdmin, bulkSetTranslations);
+router.route('/:lang/set-key').post(verifyJwt, verifyAdmin, setTranslationKey);
+router.route('/:lang/key/:key').delete(verifyJwt, verifyAdmin, deleteTranslationKey);
 
 export default router;

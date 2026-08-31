@@ -1,4 +1,4 @@
-import { resolveUndo } from '../src/utils/resolveUndo.js';
+import { resolveUndo, resolveMatchUndo } from '../src/utils/resolveUndo.js';
 import { resolveDelivery } from '../src/utils/resolveDelivery.js';
 import { resolveBallOutcome } from '../src/utils/resolveOver.js';
 import { resolveStrike } from '../src/utils/resolveStrike.js';
@@ -296,6 +296,37 @@ describe('resolveUndo', () => {
             expect(inning.wickets).toBe(9);
             expect(inning.status).toBe('in_progress');
             expect(inning.completionReason).toBeUndefined();
+        });
+    });
+});
+
+describe('resolveMatchUndo', () => {
+    // An ordinary ball never touches Match — applyDelivery only ever writes
+    // these fields from inside its own outcome.inningsComplete branch, so
+    // nothing else could need reversing.
+    it('returns null when the undone ball did not complete an innings', () => {
+        expect(resolveMatchUndo({ inningsNumber: 1, wasInningsComplete: false })).toBeNull();
+        expect(resolveMatchUndo({ inningsNumber: 2, wasInningsComplete: false })).toBeNull();
+    });
+
+    // Undoing the ball that completed innings 1 reverses exactly the
+    // transition applyDelivery made: currentInnings back to 1, status back
+    // to live. No target/result involved — those belong to innings 2 only.
+    it('reverses the innings-1-to-2 transition', () => {
+        expect(resolveMatchUndo({ inningsNumber: 1, wasInningsComplete: true })).toEqual({
+            currentInnings: 1,
+            status: 'live',
+        });
+    });
+
+    // Innings 2 completing IS match completion, so undoing its last ball
+    // reverses the match completion instead: status back to live, and the
+    // result/completedAt that only ever get set alongside it cleared.
+    it('reverses match completion when innings 2 is the one undone from', () => {
+        expect(resolveMatchUndo({ inningsNumber: 2, wasInningsComplete: true })).toEqual({
+            status: 'live',
+            completedAt: undefined,
+            result: undefined,
         });
     });
 });

@@ -1,3 +1,7 @@
+# Multer's upload staging directory — created at runtime (multer.middleware.js),
+# never committed. Deliberately outside ./public; see that file for why.
+uploads/
+
 # Logs
 logs
 *.log

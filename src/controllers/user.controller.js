@@ -5,6 +5,7 @@ import mailSender from '../utils/mailSender.js';
 import { User } from '../models/user.model.js';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import bcrypt from 'bcrypt';
 import { uploadOnCloudinary } from '../utils/cloudinary.js';
 import { generateSecureToken } from "../utils/token.js";
 import { OTP_TYPES } from "../constants/otp.constants.js";
@@ -81,6 +82,15 @@ const registerUser = catchAsync(async (req, res) => {
     throw new ApiError(500, "EMAIL_SEND_FAILED");
 });
 
+// A fixed, valid bcrypt hash with no known corresponding password — compared
+// against on a login attempt for an email that doesn't exist, purely so
+// `bcrypt.compare` still runs (and costs roughly the same as a real one).
+// Skipping it entirely for a nonexistent account would make "no such email"
+// measurably faster than "wrong password", a timing side-channel on top of
+// the same enumeration `INVALID_CREDENTIALS` below already closes at the
+// response-content level.
+const DUMMY_PASSWORD_HASH = '$2b$10$prMXiJ8DkadOCQf/ySQP3OF694/IfqrEIO9qILM52WZFTGikoGbO.';
+
 const loginUser = catchAsync(async (req, res) => {
     const { email, password, fcmToken, isRemember } = req.body;
 
@@ -90,10 +100,26 @@ const loginUser = catchAsync(async (req, res) => {
 
     const user = await User.findOne({ email });
 
-    if (!user) {
+    // The password check runs — and must fail the same way — before
+    // anything about the account is revealed, checked, or acted on.
+    // Previously, isEmailVerified/accountStatus were checked (and, for an
+    // unverified account, a fresh OTP actually sent) before the password
+    // was looked at at all: any caller who merely knew a registered email
+    // could tell it apart from an unregistered one, tell an unverified
+    // account apart from a blocked one, and trigger unlimited OTP emails to
+    // it — all with no credential whatsoever, limited only by the generic
+    // per-IP authLimiter every other login attempt also shares.
+    const isPasswordValid = user
+        ? await user.isPasswordCorrect(password)
+        : await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
+
+    if (!user || !isPasswordValid) {
         throw new ApiError(401, "INVALID_CREDENTIALS");
     }
 
+    // Reached only once the password is confirmed correct — the caller has
+    // proven ownership, so the account's own state is now safe (and useful)
+    // to act on and report.
     if (!user.isEmailVerified) {
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
         const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
@@ -110,12 +136,6 @@ const loginUser = catchAsync(async (req, res) => {
             "ACCOUNT_STATUS_ISSUE",
             { params: {status: req.t(`ACCOUNT_STATUS.${user.accountStatus}`)} }
         );
-    }
-
-    const isPasswordValid = await user.isPasswordCorrect(password);
-
-    if (!isPasswordValid) {
-        throw new ApiError(401, "INVALID_CREDENTIALS");
     }
 
     const { accessToken, refreshToken } = await generateAccessAndRefreshToken(

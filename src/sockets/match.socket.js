@@ -4,6 +4,7 @@ import { Player } from '../models/player.model.js';
 import { formatOvers } from '../utils/formatOvers.js';
 import { findMatchByIdOrCode } from '../utils/matchLookup.js';
 import { liveStrikeFigures } from '../utils/scorecard.js';
+import { isRateLimited } from '../utils/socketRateLimit.js';
 
 // Who is bowling, and who bowled the over before — the pair that tells a scorer
 // resuming on a fresh app launch whether a bowler is still owed:
@@ -91,6 +92,15 @@ export const registerMatchSocket = (io) => {
         // docs/api.md before adding anything to this socket.
         socket.on('match:join', async ({ matchId, code } = {}) => {
             try {
+                // The join-code space (six characters, ~30-character alphabet)
+                // is otherwise brute-forceable with zero friction: no auth on
+                // this event, and a miss returns nothing at all (deliberate —
+                // see findMatchByIdOrCode's own comment). Keyed on the
+                // connecting IP rather than this one socket, so opening a
+                // fresh connection doesn't reset the count. Checked before any
+                // DB work, so a request over budget costs nothing further.
+                if (isRateLimited(socket.handshake.address)) return;
+
                 // `code` accepts either form — the 24-hex id or the six-character
                 // share code — so a spectator holding only the code never needs
                 // to resolve it first. `matchId` stays supported unchanged: the

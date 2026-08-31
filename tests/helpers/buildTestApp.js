@@ -3,6 +3,7 @@ import { localeMiddleware } from '../../src/middlewares/locale.middleware.js';
 import { sanitizeMiddleware } from '../../src/middlewares/sanitize.middleware.js';
 import { errorHandler } from '../../src/utils/errorHandler.js';
 import matchRouter from '../../src/routes/match.routes.js';
+import translationRouter from '../../src/routes/translation.routes.js';
 
 /**
  * A minimal Express app, not the real `src/app.js` — that file initializes
@@ -12,13 +13,20 @@ import matchRouter from '../../src/routes/match.routes.js';
  * the routes under test actually need. No `io` is set on the app, so any
  * handler's `req.app.get('io')` resolves to `undefined` and its socket
  * emission is skipped — every emit call site already guards on that.
+ *
+ * `withTranslations` is opt-in rather than always-mounted, same reasoning:
+ * every existing caller only exercises `matchRouter` and shouldn't pay for
+ * (or accidentally rely on) a router it never asked for.
  */
-export const buildTestApp = () => {
+export const buildTestApp = ({ withTranslations = false } = {}) => {
   const app = express();
   app.use(express.json());
   app.use(sanitizeMiddleware);
   app.use(localeMiddleware);
   app.use('/api/v1/match', matchRouter);
+  if (withTranslations) {
+    app.use('/api/v1/translations', translationRouter);
+  }
   app.use(errorHandler);
   return app;
 };
