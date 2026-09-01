@@ -81,9 +81,14 @@ const setTranslationKey = catchAsync(async (req, res) => {
         throw new ApiError(400, "KEY_VALUE_REQUIRED");
     }
 
+    // `findOneAndUpdate` bypasses Localization's `pre('save')` version-bump
+    // hook — that hook only fires on a real `.save()` (deleteTranslationKey's
+    // path). `$inc` here mirrors what bulkSetTranslations already does for
+    // the identical reason, so all three write paths keep this field's
+    // invariant: version advances whenever `strings` does.
     const translation = await Localization.findOneAndUpdate(
         { languageCode: lang.toLowerCase() },
-        { $set: { [`strings.${key}`]: value } },
+        { $set: { [`strings.${key}`]: value }, $inc: { version: 1 } },
         { upsert: true, new: true }
     );
 
