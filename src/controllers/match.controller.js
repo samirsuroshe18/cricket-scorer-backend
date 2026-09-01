@@ -1380,11 +1380,26 @@ const applyUndo = async ({ match, inning, session, ballEventId }) => {
         matchId: match._id,
     }).session(session);
 
-    // Gone means a previous attempt already removed it. Answering with
-    // alreadyUndone rather than an error is what makes undo idempotent, and it
-    // is safe because a ball scored SINCE has a different id — a retried undo
-    // matches nothing and correctly does nothing.
+    // Gone means either a previous attempt already removed it (a legitimate
+    // retry — answering alreadyUndone rather than an error is what makes
+    // undo idempotent, safe because a ball scored SINCE has a different id)
+    // or this id was never this match's to begin with. Hard-deleting on
+    // undo leaves no record to tell those apart once the ball really is
+    // gone — but a ball can never move matches, so one case of the second
+    // is still catchable: an id that demonstrably belongs to a DIFFERENT
+    // match right now is a genuine client bug (a stale or mismatched id),
+    // never a same-match retry, and is worth surfacing rather than masking
+    // as a harmless no-op.
     if (!ball) {
+        const belongsToAnotherMatch = await BallEvent.exists({
+            _id: ballEventId,
+            matchId: { $ne: match._id },
+        }).session(session);
+
+        if (belongsToAnotherMatch) {
+            throw new ApiError(400, "BALL_EVENT_ID_MISMATCH");
+        }
+
         return { inning, alreadyUndone: true };
     }
 

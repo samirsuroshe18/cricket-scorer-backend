@@ -321,6 +321,36 @@ describe('scoring flow', () => {
       expect(res.body.data.alreadyUndone).toBe(true);
     });
 
+    // A ball can never move matches, so an id that demonstrably belongs to a
+    // DIFFERENT match is never a legitimate "already undone" retry — unlike
+    // the case above, this must not be masked as a harmless no-op.
+    it('rejects a ballEventId that belongs to a different match, rather than reporting alreadyUndone', async () => {
+      const { token } = await createTestUser();
+
+      const matchA = await createMatch(app, token);
+      await startLiveInnings(app, token, matchA);
+
+      const matchB = await createMatch(app, token);
+      await startLiveInnings(app, token, matchB);
+      const scoredInB = await scoreDotBall(app, token, matchB);
+
+      const res = await request(app)
+        .post(`/api/v1/match/${matchA}/undo-ball`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ ballEventId: scoredInB.body.data.ballEventId });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('BALL_EVENT_ID_MISMATCH');
+
+      // The ball is untouched in its real match.
+      const stillThere = await request(app)
+        .post(`/api/v1/match/${matchB}/undo-ball`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ ballEventId: scoredInB.body.data.ballEventId });
+      expect(stillThere.status).toBe(200);
+      expect(stillThere.body.data.alreadyUndone).toBe(false);
+    });
+
     it('rejects with MATCH_NOT_OWNED for a different user', async () => {
       const { token: ownerToken } = await createTestUser();
       const { token: otherToken } = await createTestUser();
