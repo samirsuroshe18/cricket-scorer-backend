@@ -22,8 +22,9 @@ const playerSchema = new Schema(
 
 // Unique so the find-or-create upsert in match.controller.js is race-safe —
 // without it, two concurrent start-innings calls naming the same new opener can
-// each miss the "existing" check and insert a duplicate Player. Mirrors the
-// {createdBy, name} unique index on Team.
+// each miss the "existing" check and insert a duplicate Player. Team has no
+// equivalent: see team.model.js's own comment on why a name there is
+// deliberately reusable across matches, unlike a Player within one team.
 //
 // Keyed on `nameLower`, not `name`: every collision rule in match.controller.js
 // (openers must differ, bowler can't bowl consecutive overs, incoming-batsman
