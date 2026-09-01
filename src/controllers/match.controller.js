@@ -2126,29 +2126,44 @@ const abandonMatch = catchAsync(async (req, res) => {
         throw new ApiError(400, "MATCH_ALREADY_COMPLETED");
     }
 
-    match.status = 'abandoned';
-    match.completedAt = new Date();
-    await match.save();
+    // A compare-and-swap, not the read-then-save() this used to be —
+    // applyBowlerSelection's comment above explains why an unconditional save
+    // is unsafe under a race. Here the race is with scoreBall completing the
+    // match in its own transaction: a read-then-save would let this request's
+    // stale in-memory match win the write even after that completion has
+    // already committed, silently reverting a completed match's status back
+    // to 'abandoned'. Re-checking status (and isDeleted, in case a concurrent
+    // delete also landed) at write time, not just at the read above, closes
+    // that window.
+    const updated = await Match.findOneAndUpdate(
+        { _id: match._id, isDeleted: false, status: { $nin: ['completed', 'abandoned'] } },
+        { $set: { status: 'abandoned', completedAt: new Date() } },
+        { returnDocument: 'after' }
+    );
+
+    if (!updated) {
+        throw new ApiError(400, "MATCH_ALREADY_COMPLETED");
+    }
 
     // Best-effort, same as the matchJustCompleted branch in scoreBall above:
     // the abandonment itself is already committed, and generateScorecard is
     // an upsert, so a failure here just means GET .../scorecard regenerates
     // it on demand later rather than losing anything.
     try {
-        const innings = await Inning.find({ matchId: match._id });
-        await Promise.all(innings.map((inning) => generateScorecard(match._id, inning)));
+        const innings = await Inning.find({ matchId: updated._id });
+        await Promise.all(innings.map((inning) => generateScorecard(updated._id, inning)));
     } catch (err) {
         console.error('scorecard generation failed on abandon', err);
     }
 
     const io = req.app.get('io');
     if (io) {
-        emitMatchAbandoned(io, { matchId: match._id, status: match.status });
+        emitMatchAbandoned(io, { matchId: updated._id, status: updated.status });
     }
 
     return res.status(200).json(new ApiResponse(200, {
-        matchId: match._id,
-        status: match.status,
+        matchId: updated._id,
+        status: updated.status,
     }, req.t("MATCH_ABANDONED")));
 });
 
@@ -2169,11 +2184,23 @@ const deleteMatch = catchAsync(async (req, res) => {
         throw new ApiError(403, "MATCH_NOT_OWNED");
     }
 
-    match.isDeleted = true;
-    await match.save();
+    // Compare-and-swap on isDeleted, same reasoning as abandonMatch above: a
+    // plain read-then-save() lets two concurrent deletes of the same match
+    // both report success off the same stale read. Gating the write on
+    // isDeleted still being false makes the loser see the truth — an
+    // already-deleted match, reported the same way an unknown id is.
+    const updated = await Match.findOneAndUpdate(
+        { _id: match._id, isDeleted: false },
+        { $set: { isDeleted: true } },
+        { returnDocument: 'after' }
+    );
+
+    if (!updated) {
+        throw new ApiError(404, "MATCH_NOT_FOUND");
+    }
 
     return res.status(200).json(new ApiResponse(200, {
-        matchId: match._id,
+        matchId: updated._id,
     }, req.t("MATCH_DELETED")));
 });
 
