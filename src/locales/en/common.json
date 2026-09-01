@@ -133,5 +133,6 @@
   "MATCH_FETCHED": "Match fetched",
   "MATCH_CODE_REQUIRED": "A match code is required",
   "SCORECARD_FETCHED": "Scorecard fetched",
-  "SCORECARD_NOT_READY": "The scorecard is available once the match has finished"
+  "SCORECARD_NOT_READY": "The scorecard is available once the match has finished",
+  "INVALID_ID": "That reference isn't valid"
 }
