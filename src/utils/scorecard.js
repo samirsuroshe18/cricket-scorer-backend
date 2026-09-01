@@ -190,6 +190,55 @@ export const liveStrikeFigures = async (inningsId, strikerId, nonStrikerId) => {
 };
 
 /**
+ * The not-out pair's own runs and legal balls faced together, since the last
+ * wicket (or since the innings began, if none has fallen yet) — what a
+ * broadcast's "Partnership: 47 (38)" reports.
+ *
+ * Only ever needed at the two moments a client has no local history to fall
+ * back on — a socket join and the public fetch, both via `buildInningsState`
+ * — never on the per-ball hot path: score-ball's own response and
+ * `score:update` are already followed, ball by ball, by a client that tracks
+ * the running partnership incrementally from there. Computing it here on
+ * every delivery too would be a second full round trip to Mongo for
+ * something the client already has cheaper, second-by-second, from its own
+ * state.
+ *
+ * `runs` sums `BallEvent.runs + .extras` — a delivery's whole contribution to
+ * the team total, exactly what a partnership stat counts, not just the two
+ * batsmen's own credited runs (see `buildBattingScores`, which counts only
+ * the latter for a very different stat). `balls` counts legal deliveries
+ * only, same convention as `liveStrikeFigures`.
+ *
+ * Pure aggregation, no model beyond BallEvent — findOne for the last
+ * wicket's own sequence number, then a single `$group` for everything
+ * strictly after it. Both queries are covered by existing indexes
+ * (`{inningsId, absoluteBallSeq}` variants) — no new index needed.
+ */
+export const currentPartnership = async (inningsId) => {
+    const id = new mongoose.Types.ObjectId(inningsId);
+
+    const lastWicket = await BallEvent.findOne({ inningsId: id, isWicket: true })
+        .sort({ absoluteBallSeq: -1 })
+        .select('absoluteBallSeq');
+
+    const sinceSeq = lastWicket?.absoluteBallSeq ?? 0;
+
+    const rows = await BallEvent.aggregate([
+        { $match: { inningsId: id, absoluteBallSeq: { $gt: sinceSeq } } },
+        {
+            $group: {
+                _id: null,
+                runs: { $sum: { $add: ['$runs', '$extras'] } },
+                balls: { $sum: { $cond: ['$isLegal', 1, 0] } },
+            },
+        },
+    ]);
+
+    const { runs = 0, balls = 0 } = rows[0] ?? {};
+    return { partnershipRuns: runs, partnershipBalls: balls };
+};
+
+/**
  * Fetches one innings' full history, resolves the player names BallEvent
  * doesn't carry, and upserts its Scorecard — safe to call more than once for
  * the same innings, since `{matchId, inningsNumber}` is unique and this always
