@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { BallEvent } from '../models/ballEvent.model.js';
 import { Over } from '../models/over.model.js';
 import { Player } from '../models/player.model.js';
@@ -146,26 +147,36 @@ export const buildBowlingScores = (overs, ballEvents, playerNames) => {
 /**
  * The two batsmen currently at the crease, as far as their own runs and
  * legal balls faced go — the "Rohit Sharma 24 (18)" a real broadcast shows
- * next to the striker's name. Reuses [buildBattingScores] rather than a
- * separate live counter: there is nothing incrementally tracked per batsman
- * anywhere else in this codebase, by design (see that function's own doc
- * comment), so a delivery just scored or just undone is correct here for the
- * same reason it is correct in the post-match Scorecard — both read the same
- * append-only history, just at different times.
- *
- * Player names are not needed here — the caller already has them from the
- * live strike pair — so `buildBattingScores` is given an empty map rather
- * than paying for a `Player.find` this call has no use for.
+ * next to the striker's name. Still derived from the append-only ball
+ * history rather than a running counter — there is nothing incrementally
+ * tracked per batsman anywhere else in this codebase, by design — but as a
+ * targeted `$group` for just these two player ids, not [buildBattingScores]'s
+ * full-innings reduction: this is called on every single ball/join/undo,
+ * so pulling and re-aggregating every delivery ever bowled in the innings
+ * (most of it for players who aren't even the two now at the crease) made
+ * one ball O(n) and a full innings O(n²). A batsman's own figures only ever
+ * grow by what they personally face, so grouping by `strikerId` server-side
+ * is both correct (every run in a line is credited to that ball's striker —
+ * see buildBattingScores' identical `striker.runs += ball.runs`) and, given
+ * the {inningsId, strikerId} index below, cheap regardless of how long the
+ * innings has run.
  */
 export const liveStrikeFigures = async (inningsId, strikerId, nonStrikerId) => {
-    const ballEvents = await BallEvent.find({ inningsId }).sort({ absoluteBallSeq: 1 });
-    const scores = buildBattingScores(ballEvents, new Map());
+    const playerIds = [strikerId, nonStrikerId].filter(Boolean).map((id) => new mongoose.Types.ObjectId(id));
 
-    const figuresFor = (playerId) => {
-        if (!playerId) return { runs: 0, balls: 0 };
-        const line = scores.find((score) => String(score.playerId) === String(playerId));
-        return line ? { runs: line.runs, balls: line.balls } : { runs: 0, balls: 0 };
-    };
+    if (playerIds.length === 0) {
+        return { strikerRuns: 0, strikerBalls: 0, nonStrikerRuns: 0, nonStrikerBalls: 0 };
+    }
+
+    const rows = await BallEvent.aggregate([
+        { $match: { inningsId: new mongoose.Types.ObjectId(inningsId), strikerId: { $in: playerIds } } },
+        { $group: { _id: '$strikerId', runs: { $sum: '$runs' }, balls: { $sum: { $cond: ['$isLegal', 1, 0] } } } },
+    ]);
+
+    const figuresById = new Map(rows.map((row) => [String(row._id), { runs: row.runs, balls: row.balls }]));
+
+    const figuresFor = (playerId) =>
+        (playerId && figuresById.get(String(playerId))) || { runs: 0, balls: 0 };
 
     const striker = figuresFor(strikerId);
     const nonStriker = figuresFor(nonStrikerId);
