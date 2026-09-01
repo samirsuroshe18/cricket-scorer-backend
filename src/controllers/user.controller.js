@@ -51,25 +51,47 @@ const registerUser = catchAsync(async (req, res) => {
     }
 
     const existedUser = await User.findOne({ email });
-    if (existedUser) {
-        throw new ApiError(409, "EMAIL_ALREADY_EXISTS");
+
+    // Never reported back to the caller — same reasoning as loginUser's
+    // INVALID_CREDENTIALS convergence above. A verified account already owns
+    // this email, so there's nothing left for this request to do, but a 409
+    // (or any response distinguishable from a fresh registration) would let
+    // this endpoint enumerate which emails have accounts. Combined with H7's
+    // login fix, this closes the last of this API's account-existence
+    // oracles.
+    if (existedUser?.isEmailVerified) {
+        return res.status(200).json(
+            new ApiResponse(200, {}, req.t("REGISTRATION_OTP_SENT"))
+        );
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
 
-    const user = await User.create({
-        email,
-        password,
-        fullName,
-        emailOtp: otp,
-        emailOtpExpiry: otpExpiry,
-        expireDocAfterSeconds: new Date(Date.now() + 24 * 60 * 60 * 1000),
-    });
+    if (existedUser) {
+        // An unverified, still-pending signup for this email — refreshed in
+        // place rather than reported as a conflict, so retrying (or a second
+        // device) restarts the same registration instead of a dead end.
+        existedUser.fullName = fullName;
+        existedUser.password = password;
+        existedUser.emailOtp = otp;
+        existedUser.emailOtpExpiry = otpExpiry;
+        existedUser.expireDocAfterSeconds = new Date(Date.now() + 24 * 60 * 60 * 1000);
+        await existedUser.save();
+    } else {
+        const user = await User.create({
+            email,
+            password,
+            fullName,
+            emailOtp: otp,
+            emailOtpExpiry: otpExpiry,
+            expireDocAfterSeconds: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        });
 
-    const createdUser = await User.findById(user._id);
-    if (!createdUser) {
-        throw new ApiError(500, "USER_REGISTRATION_FAILED");
+        const createdUser = await User.findById(user._id);
+        if (!createdUser) {
+            throw new ApiError(500, "USER_REGISTRATION_FAILED");
+        }
     }
 
     const mailResponse = await mailSender(email, OTP_TYPES.EMAIL_VERIFICATION, otp);
