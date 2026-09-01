@@ -10,9 +10,25 @@ import path from 'path';
 import {localeMiddleware} from "./middlewares/locale.middleware.js";
 import { sanitizeMiddleware } from "./middlewares/sanitize.middleware.js";
 import { globalLimiter } from "./middlewares/rateLimit.middleware.js";
+import { resolveTrustProxyHops } from "./utils/trustProxy.js";
 
 const app = express();
 initializeFirebaseAdmin();
+
+// How many reverse-proxy hops in front of this process to trust when reading
+// X-Forwarded-For — this is what globalLimiter/authLimiter's IP-keyed rate
+// limiting actually resolves against (see rateLimit.middleware.js). Getting
+// the count wrong fails in one of two directions, not just one: too few
+// (the default, unset) and every request behind a real proxy collapses onto
+// the proxy's own address — one shared bucket for every user; `true` (trust
+// everything) and a client can prepend whatever it likes to X-Forwarded-For
+// to rotate its way past the limiter entirely. Nothing sits in front of this
+// process today (see the backend CLAUDE.md — dev-only, direct LAN
+// connections), so 0 (trust nothing, `req.ip` is the raw socket peer) is the
+// correct default now and the safe failure mode later: deploying behind a
+// single load balancer (Phase 7) without setting this still gets the
+// shared-bucket failure, never the spoofable one.
+app.set('trust proxy', resolveTrustProxyHops(process.env.TRUST_PROXY_HOPS));
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
