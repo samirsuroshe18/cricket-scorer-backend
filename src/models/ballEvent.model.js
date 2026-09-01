@@ -106,9 +106,10 @@ ballEventSchema.index({ matchId: 1, idempotencyKey: 1 }, { unique: true });
 ballEventSchema.index({ inningsId: 1, absoluteBallSeq: -1 });
 // Over breakdown
 ballEventSchema.index({ inningsId: 1, overNumber: 1, ballNumber: 1 });
-// `strikerId`/`bowlerId` indexes deliberately omitted for now — nothing
-// queries by them yet, and this is the highest-write-volume collection in the
-// app. Add them back in the same change that ships the player-stats feature.
+// Added for liveStrikeFigures' per-batsman $group (scorecard.js) — the first
+// query in this collection to filter by strikerId, per the comment this one
+// replaces. `bowlerId` still has none: nothing queries by it yet.
+ballEventSchema.index({ inningsId: 1, strikerId: 1 });
 
 // Immutability guard — ball events should never be updated, only deleted on undo
 ballEventSchema.pre('updateOne', function () {
