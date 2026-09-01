@@ -199,7 +199,11 @@ const refreshAccessToken = catchAsync(async (req, res) => {
 
     let decodedToken;
     try {
-        decodedToken = jwt.verify(incomingRefreshToken, process.env.REFRESH_TOKEN_SECRET);
+        // Pinned for the same reason as verifyJwt's identical comment: every
+        // refresh token this app issues is signed HS256 (see
+        // User.generateRefreshToken), so that's the only algorithm a valid
+        // one can ever carry.
+        decodedToken = jwt.verify(incomingRefreshToken, process.env.REFRESH_TOKEN_SECRET, { algorithms: ['HS256'] });
     } catch (err) {
         if (err.name === 'TokenExpiredError') {
             throw new ApiError(401, "REFRESH_TOKEN_EXPIRED");

@@ -12,7 +12,14 @@ const verifyJwt = catchAsync(async (req, _, next) => {
 
     let decodedToken;
     try {
-        decodedToken = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
+        // Pinned rather than left to jsonwebtoken's own inference from the
+        // secret's type: inference is a property of a plain-string secret
+        // (HS256 today), not a guarantee, and jwt.verify with no allowlist at
+        // all accepts whatever algorithm the token's own header names —
+        // including 'none' on older library versions. Every token this app
+        // issues is signed with HS256 (see User.generateAccessToken), so
+        // that's the only one a valid token can ever need.
+        decodedToken = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, { algorithms: ['HS256'] });
     } catch (error) {
         if (error.name === 'TokenExpiredError') {
             throw new ApiError(401, "ACCESS_TOKEN_EXPIRED");
