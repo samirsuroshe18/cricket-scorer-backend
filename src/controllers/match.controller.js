@@ -105,7 +105,16 @@ const createMatch = catchAsync(async (req, res) => {
     const trimmedA = teamAName.trim();
     const trimmedB = teamBName.trim();
 
-    if (trimmedA.toLowerCase() === trimmedB.toLowerCase()) {
+    // Case-insensitive AND whitespace-insensitive: comparing trimmed-only
+    // strings let "Mumbai Indians" and "Mumbai  Indians" (a doubled space,
+    // an easy typo) both pass as "different" teams, defeating the whole
+    // point of this check. Collapsing internal runs of whitespace first is
+    // comparison-only — what actually gets stored on Team.name below is
+    // untouched, since a stray double space there is harmless (Team has no
+    // uniqueness constraint at all; see team.model.js).
+    const collapseWhitespace = (name) => name.replace(/\s+/g, ' ').toLowerCase();
+
+    if (collapseWhitespace(trimmedA) === collapseWhitespace(trimmedB)) {
         throw new ApiError(400, "TEAM_NAMES_MUST_DIFFER");
     }
 
