@@ -8,6 +8,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import { uploadOnCloudinary } from '../utils/cloudinary.js';
 import { generateSecureToken } from "../utils/token.js";
+import { timingSafeEqualString } from "../utils/timingSafeEqual.js";
 import { OTP_TYPES } from "../constants/otp.constants.js";
 import { SUPPORTED_LANGUAGES } from "../constants/language.constants.js";
 import { MIN_PASSWORD_LENGTH } from "../constants/password.constants.js";
@@ -333,7 +334,7 @@ const verifyEmail = async (req, res) => {
         throw new ApiError(400, "OTP_EXPIRED");
     }
 
-    if (user.emailOtp !== emailOtp) {
+    if (!timingSafeEqualString(user.emailOtp, emailOtp)) {
         throw new ApiError(400, "INVALID_OTP");
     }
 
@@ -370,7 +371,7 @@ const verifyForgotPasswordOtp = async (req, res) => {
         throw new ApiError(400, "OTP_EXPIRED");
     }
 
-    if (user.emailOtp !== emailOtp) {
+    if (!timingSafeEqualString(user.emailOtp, emailOtp)) {
         throw new ApiError(400, "INVALID_OTP");
     }
 
@@ -422,7 +423,7 @@ const setPassword = catchAsync(async (req, res) => {
     // at large, or any valid token could reset any account's password.
     if (
         !user.otpVerifyToken ||
-        user.otpVerifyToken !== hashedToken ||
+        !timingSafeEqualString(user.otpVerifyToken, hashedToken) ||
         !user.otpVerifyTokenExpiry ||
         user.otpVerifyTokenExpiry.getTime() <= Date.now()
     ) {
