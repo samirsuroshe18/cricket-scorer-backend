@@ -57,15 +57,16 @@ const createTeam = (name, createdBy) => Team.create({ name, createdBy });
 // run in-session. An orphan Player from a later failure is harmless, exactly as
 // an orphan Team is in createMatch.
 const findOrCreatePlayer = async (name, teamId, createdBy) => {
+    const nameLower = name.trim().toLowerCase();
     try {
         return await Player.findOneAndUpdate(
-            { teamId, name },
-            { $setOnInsert: { name, teamId, createdBy } },
+            { teamId, nameLower },
+            { $setOnInsert: { name, nameLower, teamId, createdBy } },
             { upsert: true, returnDocument: 'after' }
         );
     } catch (err) {
         if (err.code === 11000) {
-            return Player.findOne({ teamId, name });
+            return Player.findOne({ teamId, nameLower });
         }
         throw err;
     }
@@ -671,7 +672,12 @@ const resolveBowler = async ({ bowlerId, bowlerName, teamId, createdBy, session 
     }
 
     try {
-        const [bowler] = await Player.create([{ name: bowlerName, teamId, createdBy }]);
+        const [bowler] = await Player.create([{
+            name: bowlerName,
+            nameLower: bowlerName.trim().toLowerCase(),
+            teamId,
+            createdBy,
+        }]);
         return bowler;
     } catch (err) {
         if (err.code === 11000) {
