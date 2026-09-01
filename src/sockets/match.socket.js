@@ -3,7 +3,7 @@ import { Over } from '../models/over.model.js';
 import { Player } from '../models/player.model.js';
 import { formatOvers } from '../utils/formatOvers.js';
 import { findMatchByIdOrCode } from '../utils/matchLookup.js';
-import { liveStrikeFigures } from '../utils/scorecard.js';
+import { currentPartnership, liveStrikeFigures } from '../utils/scorecard.js';
 import { isRateLimited } from '../utils/socketRateLimit.js';
 
 // Who is bowling, and who bowled the over before — the pair that tells a scorer
@@ -51,7 +51,10 @@ export const buildBowlerState = async (inning) => {
 export const buildInningsState = async (matchId, inning) => {
     if (!inning) return null;
 
-    const strikeFigures = await liveStrikeFigures(inning._id, inning.strikerId, inning.nonStrikerId);
+    const [strikeFigures, partnership] = await Promise.all([
+        liveStrikeFigures(inning._id, inning.strikerId, inning.nonStrikerId),
+        currentPartnership(inning._id),
+    ]);
 
     return {
         matchId,
@@ -76,6 +79,12 @@ export const buildInningsState = async (matchId, inning) => {
             nonStrikerName: inning.nonStrikerName ?? null,
             ...strikeFigures,
         },
+        // Only ever sent here — a join ack or a spectator's initial fetch —
+        // never on `score:update`. A client already tracks this incrementally
+        // ball to ball; what it cannot do on its own is seed it correctly the
+        // moment it connects mid-partnership, which is exactly what this
+        // is for. See `currentPartnership`'s own doc comment.
+        ...partnership,
         bowler: await buildBowlerState(inning),
     };
 };
