@@ -91,14 +91,17 @@ export const buildInningsState = async (matchId, inning) => {
 
 export const registerMatchSocket = (io) => {
     io.on('connection', (socket) => {
-        // The ONLY inbound socket event in the application, and it only reads.
+        // One of exactly two inbound socket events in the application — this
+        // one, and match:leave below — and both only touch room membership,
+        // never stored state.
         //
         // That is load-bearing, not incidental: there is no io.use() middleware
-        // and no per-event authentication, so any second handler added here
-        // would be world-writable the moment it is written. Scoring actions
-        // travel over REST, where verifyJwt and the createdBy ownership check
-        // both apply. See "What a spectator connection cannot do" in
-        // docs/api.md before adding anything to this socket.
+        // and no per-event authentication, so any handler added here that
+        // reads or writes match state would be world-writable the moment it
+        // is written. Scoring actions travel over REST, where verifyJwt and
+        // the createdBy ownership check both apply. See "What a spectator
+        // connection cannot do" in docs/api.md before adding a third handler
+        // here.
         socket.on('match:join', async ({ matchId, code } = {}) => {
             try {
                 // The join-code space (six characters, ~30-character alphabet)
@@ -143,6 +146,26 @@ export const registerMatchSocket = (io) => {
                 socket.emit('match:state', state);
             } catch (err) {
                 console.error('match:join failed', err);
+            }
+        });
+
+        // The read-only inverse of match:join's `socket.join` above — removes
+        // this connection from a room it no longer cares about (navigating
+        // from one match's spectate/console screen to another, in one
+        // continuous app session) so a stale connection doesn't keep sitting
+        // in every room it has ever joined for the rest of the process.
+        // Deliberately does no DB lookup and no ownership check, unlike
+        // match:join: it never reads or writes anything, its only effect is
+        // on the calling socket's own room membership, and leaving a room
+        // this socket was never in — or a room name it invented outright —
+        // is a no-op, never something that could affect any other
+        // connection's data. See docs/api.md's "What a spectator connection
+        // cannot do" before adding a THIRD handler here; this one keeps that
+        // section's guarantee intact rather than breaking it, precisely
+        // because it stays in this narrower, structurally-harmless category.
+        socket.on('match:leave', ({ matchId } = {}) => {
+            if (typeof matchId === 'string' && matchId) {
+                socket.leave(`match:${matchId}`);
             }
         });
     });
