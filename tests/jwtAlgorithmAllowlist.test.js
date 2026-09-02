@@ -53,7 +53,7 @@ describe('jwt.verify pins the algorithm allowlist', () => {
       .get('/api/v1/user/get-current-user')
       .set('Authorization', `Bearer ${wrongAlgToken}`);
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
     expect(res.body.code).toBe('INVALID_ACCESS_TOKEN');
   });
 
@@ -87,7 +87,7 @@ describe('jwt.verify pins the algorithm allowlist', () => {
       .get('/api/v1/user/refresh-token')
       .set('x-refresh-token', wrongAlgToken);
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
     expect(res.body.code).toBe('INVALID_REFRESH_TOKEN');
   });
 });

@@ -24,7 +24,12 @@ const verifyJwt = catchAsync(async (req, _, next) => {
         if (error.name === 'TokenExpiredError') {
             throw new ApiError(401, "ACCESS_TOKEN_EXPIRED");
         } else {
-            throw new ApiError(403, "INVALID_ACCESS_TOKEN");
+            // 401, matching every other INVALID_ACCESS_TOKEN branch (the
+            // no-user-found one right below, and docs/api.md's uniformly-401
+            // row for it) — a bad signature/algorithm and an unresolvable
+            // user are both "your credentials don't work," not "you're not
+            // allowed to do this."
+            throw new ApiError(401, "INVALID_ACCESS_TOKEN");
         }
     }
     const user = await User.findById(decodedToken?._id).select("-password -refreshToken -__v -fcmToken -isGoogleVerified -isVerified");
