@@ -138,8 +138,14 @@ export const registerMatchSocket = (io) => {
                     overs: '0.0',
                     target: null,
                     extras: { wides: 0, noBalls: 0, byes: 0, legByes: 0 },
-                    // No innings yet means no openers and no bowler chosen yet.
+                    // No innings yet means no openers and no bowler chosen
+                    // yet, and no partnership yet either — zeroed rather
+                    // than omitted, so this shape always matches the
+                    // populated path's (buildInningsState's own), which
+                    // always carries both keys once an innings exists.
                     strike: null,
+                    partnershipRuns: 0,
+                    partnershipBalls: 0,
                     bowler: null,
                 };
 
