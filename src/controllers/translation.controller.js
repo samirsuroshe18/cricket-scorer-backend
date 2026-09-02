@@ -89,7 +89,7 @@ const setTranslationKey = catchAsync(async (req, res) => {
     const translation = await Localization.findOneAndUpdate(
         { languageCode: lang.toLowerCase() },
         { $set: { [`strings.${key}`]: value }, $inc: { version: 1 } },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
     );
 
     await incrementGlobalVersion();
