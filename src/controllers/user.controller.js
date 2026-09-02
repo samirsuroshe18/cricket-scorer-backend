@@ -320,6 +320,12 @@ const changeCurrentPassword = catchAsync(async (req, res) => {
 
     user.password = newPassword;
     user.passwordChangedAt = new Date();
+    // Same reasoning as setPassword's identical line: invalidates any
+    // existing session (single-session model) — otherwise a session
+    // compromised via a leaked/stolen refresh token survives a password
+    // change made through this route, exactly the path a scorer who
+    // noticed the hijack would use.
+    user.refreshToken = undefined;
     await user.save({ validateBeforeSave: false });
 
     return res.status(200).json(new ApiResponse(200, {}, req.t("PASSWORD_CHANGED")));
