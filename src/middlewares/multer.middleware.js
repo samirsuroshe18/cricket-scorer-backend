@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import multer from "multer";
 import ApiError from "../utils/ApiError.js";
+import { sniffImageType } from "../utils/sniffImageType.js";
 
 // `file.originalname` is fully attacker-controlled multipart input — never
 // safe to use in building a filesystem path. Multer's disk storage does a
@@ -70,7 +71,28 @@ const multerUpload = multer({
 export const upload = {
   single: (fieldName) => (req, res, next) => {
     multerUpload.single(fieldName)(req, res, (err) => {
-      if (!err) return next();
+      if (!err) {
+        if (!req.file) return next();
+
+        // fileFilter above only ever saw file.mimetype — the client-supplied
+        // Content-Type header, independent of the actual bytes sent. Now
+        // that the upload has landed (in the staging directory only
+        // app.js's own auth-gated routes can reach — see UPLOAD_DIR's own
+        // comment), the real content is checked before this goes anywhere
+        // further (Cloudinary): a spoofed mimetype over an SVG/HTML payload
+        // is deleted here rather than trusted.
+        const head = Buffer.alloc(12);
+        const fd = fs.openSync(req.file.path, 'r');
+        fs.readSync(fd, head, 0, 12, 0);
+        fs.closeSync(fd);
+
+        if (!sniffImageType(head)) {
+          fs.unlinkSync(req.file.path);
+          return next(new ApiError(400, "UNSUPPORTED_FILE_TYPE"));
+        }
+
+        return next();
+      }
 
       if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
         return next(new ApiError(400, "FILE_TOO_LARGE"));
