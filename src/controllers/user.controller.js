@@ -304,8 +304,16 @@ const forgotPassword = catchAsync(async (req, res) => {
     }
 
     const user = await User.findOne({ email, isEmailVerified: true });
+
+    // Never reported back to the caller — same convergence as loginUser's
+    // INVALID_CREDENTIALS and registerUser's REGISTRATION_OTP_SENT. No
+    // verified account for this email means there is nothing to do, but a
+    // distinguishable response here would let this endpoint enumerate which
+    // emails have accounts, with no credential required at all.
     if (!user) {
-        throw new ApiError(404, "INVALID_EMAIL_OR_NOT_VERIFIED");
+        return res.status(200).json(
+            new ApiResponse(200, {}, req.t("FORGOT_PASSWORD_OTP_SENT"))
+        );
     }
 
     const otp = crypto.randomInt(100000, 999999).toString();
@@ -523,8 +531,14 @@ const resendOtp = catchAsync(async (req, res) => {
     }
 
     const user = await User.findOne(query).select("+emailOtp +emailOtpExpiry");
+
+    // Never reported back — same convergence as forgotPassword/loginUser/
+    // registerUser. No account matching this email+type means there is
+    // nothing to resend, but a distinguishable response would let this
+    // endpoint enumerate account existence (and, via `type`, whether that
+    // account is verified) with no credential at all.
     if (!user) {
-        throw new ApiError(404, "NO_ACCOUNT_FOUND");
+        return res.status(200).json(new ApiResponse(200, {}, req.t("OTP_RESENT")));
     }
 
     const THIRTY_SECONDS = 30 * 1000;
