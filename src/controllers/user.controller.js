@@ -231,7 +231,10 @@ const refreshAccessToken = catchAsync(async (req, res) => {
         if (err.name === 'TokenExpiredError') {
             throw new ApiError(401, "REFRESH_TOKEN_EXPIRED");
         }
-        throw new ApiError(403, "INVALID_REFRESH_TOKEN");
+        // 401, matching the no-user-found INVALID_REFRESH_TOKEN branch right
+        // below and docs/api.md's uniformly-401 row for it — same reasoning
+        // as verifyJwt's identical fix.
+        throw new ApiError(401, "INVALID_REFRESH_TOKEN");
     }
 
     const user = await User.findById(decodedToken?._id);
