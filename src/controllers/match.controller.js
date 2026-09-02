@@ -30,6 +30,15 @@ import {
     RUN_OUT,
 } from '../utils/resolveStrike.js';
 
+// A JSON body preserves types — a number, boolean, object, or array can sit
+// where a free-text field is expected. `!field?.trim()` alone only guards a
+// null/undefined *receiver*; it does not guard a receiver that exists but
+// has no `.trim` method, so `(123)?.trim()` still throws a TypeError that
+// reaches the generic 500 handler instead of the field's own *_REQUIRED 400.
+// Every required-string check in this file reads through this first so a
+// wrong-typed field is rejected the same way a missing one already is.
+const asString = (value) => (typeof value === 'string' ? value : '');
+
 const MIN_OVERS = 1;
 const MAX_OVERS = 50;
 const MAX_RUNS_PER_BALL = 6;
@@ -98,7 +107,7 @@ const createMatchWithJoinCode = async (fields) => {
 const createMatch = catchAsync(async (req, res) => {
     const { teamAName, teamBName, totalOvers, tossWinner, tossDecision } = req.body;
 
-    if (!teamAName?.trim() || !teamBName?.trim()) {
+    if (!asString(teamAName).trim() || !asString(teamBName).trim()) {
         throw new ApiError(400, "TEAM_NAMES_REQUIRED");
     }
 
@@ -455,7 +464,7 @@ const startInnings = catchAsync(async (req, res) => {
     const { matchId } = req.params;
     const { strikerName, nonStrikerName, bowlerName } = req.body;
 
-    if (!strikerName?.trim() || !nonStrikerName?.trim()) {
+    if (!asString(strikerName).trim() || !asString(nonStrikerName).trim()) {
         throw new ApiError(400, "OPENER_NAMES_REQUIRED");
     }
 
@@ -470,7 +479,7 @@ const startInnings = catchAsync(async (req, res) => {
         throw new ApiError(400, "OPENER_NAMES_MUST_DIFFER");
     }
 
-    const bowler = bowlerName?.trim();
+    const bowler = asString(bowlerName).trim();
 
     if (!bowler || bowler.length > MAX_PLAYER_NAME_LENGTH) {
         throw new ApiError(400, "BOWLER_NAME_REQUIRED");
@@ -641,7 +650,7 @@ const startInnings = catchAsync(async (req, res) => {
 // it names an exact returning bowler (a scorer re-picking a known name);
 // absent, the name is a new player. See resolveBowler.
 const validateBowlerInput = (body) => {
-    const name = body.bowlerName?.trim();
+    const name = asString(body.bowlerName).trim();
 
     if (!name || name.length > MAX_PLAYER_NAME_LENGTH) {
         throw new ApiError(400, "BOWLER_NAME_REQUIRED");
@@ -865,7 +874,7 @@ const validateBallInput = (body) => {
         throw new ApiError(400, "RUNS_OUT_OF_RANGE");
     }
 
-    if (!idempotencyKey?.trim()) {
+    if (!asString(idempotencyKey).trim()) {
         throw new ApiError(400, "IDEMPOTENCY_KEY_REQUIRED");
     }
 
@@ -984,7 +993,7 @@ const applyDelivery = async ({ match, inning, session, req, delivery }) => {
 
     if (wicketType) {
         const isFinalWicket = inning.wickets + 1 >= MAX_WICKETS;
-        const trimmedIncoming = incomingBatsmanName?.trim();
+        const trimmedIncoming = asString(incomingBatsmanName).trim();
 
         if (!isFinalWicket && !trimmedIncoming) {
             throw new ApiError(400, "INCOMING_BATSMAN_REQUIRED");
