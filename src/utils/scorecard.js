@@ -209,33 +209,39 @@ export const liveStrikeFigures = async (inningsId, strikerId, nonStrikerId) => {
  * the latter for a very different stat). `balls` counts legal deliveries
  * only, same convention as `liveStrikeFigures`.
  *
- * Pure aggregation, no model beyond BallEvent — findOne for the last
- * wicket's own sequence number, then a single `$group` for everything
- * strictly after it. Both queries are covered by existing indexes
- * (`{inningsId, absoluteBallSeq}` variants) — no new index needed.
+ * One single find, not the findOne-then-aggregate pair this used to be: two
+ * separate round trips could straddle a concurrent scoreBall transaction
+ * committing a new wicket in the gap between them, leaving the "since"
+ * cutoff stale and blending the just-finished partnership's stats with the
+ * brand new one. A single query reads one consistent snapshot, so that
+ * window doesn't exist here. An innings never holds more than a few hundred
+ * deliveries, so pulling every row (four fields each) and reducing in JS
+ * costs nothing worth trading that guarantee for. Covered by the existing
+ * `{inningsId, absoluteBallSeq}` index — no new index needed.
  */
 export const currentPartnership = async (inningsId) => {
     const id = new mongoose.Types.ObjectId(inningsId);
 
-    const lastWicket = await BallEvent.findOne({ inningsId: id, isWicket: true })
-        .sort({ absoluteBallSeq: -1 })
-        .select('absoluteBallSeq');
+    const balls = await BallEvent.find({ inningsId: id })
+        .select('absoluteBallSeq isWicket runs extras isLegal')
+        .lean();
 
-    const sinceSeq = lastWicket?.absoluteBallSeq ?? 0;
+    const sinceSeq = balls.reduce(
+        (max, ball) => (ball.isWicket && ball.absoluteBallSeq > max ? ball.absoluteBallSeq : max),
+        0,
+    );
 
-    const rows = await BallEvent.aggregate([
-        { $match: { inningsId: id, absoluteBallSeq: { $gt: sinceSeq } } },
-        {
-            $group: {
-                _id: null,
-                runs: { $sum: { $add: ['$runs', '$extras'] } },
-                balls: { $sum: { $cond: ['$isLegal', 1, 0] } },
-            },
+    const { runs, balls: legalBalls } = balls.reduce(
+        (totals, ball) => {
+            if (ball.absoluteBallSeq <= sinceSeq) return totals;
+            totals.runs += ball.runs + ball.extras;
+            if (ball.isLegal) totals.balls += 1;
+            return totals;
         },
-    ]);
+        { runs: 0, balls: 0 },
+    );
 
-    const { runs = 0, balls = 0 } = rows[0] ?? {};
-    return { partnershipRuns: runs, partnershipBalls: balls };
+    return { partnershipRuns: runs, partnershipBalls: legalBalls };
 };
 
 /**
