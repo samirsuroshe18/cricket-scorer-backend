@@ -94,12 +94,41 @@ describe('upload.single (size limit, type filter, staging location)', () => {
     expect(res.body.code).toBe('UNSUPPORTED_FILE_TYPE');
   });
 
+  // file.mimetype is the multipart part's client-supplied Content-Type
+  // header — fully attacker-controlled and independent of the actual bytes
+  // sent, unlike the check above. A request that spoofs an image mimetype
+  // over an actually-malicious payload (an SVG carrying a <script>, here)
+  // used to pass the fileFilter above cleanly and reach disk, then
+  // Cloudinary — this is what sniffImageType's post-write check closes.
+  it('rejects a spoofed image mimetype over actual SVG/script content', async () => {
+    const app = buildApp();
+
+    const res = await request(app)
+      .post('/upload')
+      .attach('file', Buffer.from('<svg onload="alert(1)"><script>alert(1)</script></svg>'), {
+        filename: 'photo.png',
+        contentType: 'image/png',
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('UNSUPPORTED_FILE_TYPE');
+  });
+
+  // A real, minimal 1x1 PNG — the PNG signature plus just enough of an IHDR
+  // chunk for the byte-sniff to recognize, not a fully valid/decodable
+  // image. Good enough: sniffImageType only ever inspects the leading
+  // bytes, the same contract a real photo upload satisfies.
+  const REAL_PNG_BYTES = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+  ]);
+
   it('stages an accepted upload outside the statically-served public directory', async () => {
     const app = buildApp();
 
     const res = await request(app)
       .post('/upload')
-      .attach('file', Buffer.from('not really a png'), {
+      .attach('file', REAL_PNG_BYTES, {
         filename: 'photo.png',
         contentType: 'image/png',
       });
