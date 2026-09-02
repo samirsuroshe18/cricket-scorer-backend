@@ -67,6 +67,49 @@ describe('undo across an innings/match boundary', () => {
     expect(inning1.totalBalls).toBe(5);
   });
 
+  // The fallback above (`!inning && match.currentInnings > 1`) only fires
+  // when NO Inning document exists yet for the current innings. Once
+  // innings 2 has actually been started — even with zero balls scored —
+  // that fallback never runs, `undoBall` resolves against innings 2's own
+  // (empty) Inning instead, and applyUndo's "is this the latest ball of
+  // THIS innings" check always fails for a ball that, from the scorer's
+  // perspective, plainly is the latest one.
+  it('undoes the ball that completed innings 1 even after innings 2 has already been started', async () => {
+    const { token } = await createTestUser();
+    const matchId = await createMatch(app, token, { totalOvers: 1 });
+    await startLiveInnings(app, token, matchId);
+
+    let lastBallId;
+    for (let i = 0; i < 6; i += 1) {
+      const res = await scoreDotBall(app, token, matchId);
+      expect(res.status).toBe(200);
+      lastBallId = res.body.data.ballEventId;
+    }
+
+    // Innings 2 is opened for real before the undo is attempted — the one
+    // difference from the test above.
+    const startRes = await startLiveInnings(app, token, matchId, {
+      strikerName: 'New Striker',
+      nonStrikerName: 'New Non-Striker',
+      bowlerName: 'New Bowler',
+    });
+    expect(startRes).toHaveProperty('inningsNumber', 2);
+
+    const res = await undoBall(token, matchId, lastBallId);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.inningsNumber).toBe(1);
+    expect(res.body.data.inningsReopened).toBe(true);
+
+    const match = await Match.findById(matchId);
+    expect(match.currentInnings).toBe(1);
+    expect(match.status).toBe('live');
+
+    const inning1 = await Inning.findOne({ matchId, inningsNumber: 1 });
+    expect(inning1.status).toBe('in_progress');
+    expect(inning1.totalBalls).toBe(5);
+  });
+
   it('undoes the ball that completed the match, reversing status/result/completedAt', async () => {
     const { token } = await createTestUser();
     const matchId = await createMatch(app, token, { totalOvers: 1 });

@@ -1589,17 +1589,35 @@ const undoBall = catchAsync(async (req, res) => {
             match = await Match.findById(matchId).session(session);
             assertMatchWritable(match, { allowCompleted: true });
 
-            let inning = await Inning.findOne({
+            // Resolved from the ball's own inningsId, not guessed off
+            // match.currentInnings: once the next innings has actually been
+            // started — even with zero balls scored — an Inning document
+            // already exists for it, so the "nothing started yet" fallback
+            // below never fires for the ball that completed the PREVIOUS
+            // innings, and undo would resolve against the wrong (empty)
+            // inning and always report BALL_NOT_LATEST for a ball that
+            // plainly is the latest one, once you look at the innings it
+            // actually belongs to.
+            const targetBall = await BallEvent.findOne({
+                _id: ballEventId,
                 matchId: match._id,
-                inningsNumber: match.currentInnings,
             }).session(session);
+
+            let inning = targetBall
+                ? await Inning.findById(targetBall.inningsId).session(session)
+                : await Inning.findOne({
+                    matchId: match._id,
+                    inningsNumber: match.currentInnings,
+                }).session(session);
 
             // Nothing started for the current innings yet is only ever
             // reachable here when that innings' completion is exactly what
-            // advanced `currentInnings` to it — the next innings has no
-            // Inning document until its own start-innings call creates one.
-            // The ball a scorer would want to undo in that state is the
-            // previous innings' own last (completing) delivery.
+            // advanced `currentInnings` to it, and the ball being undone is
+            // already gone (applyUndo's own idempotent-retry path) — the
+            // next innings has no Inning document until its own
+            // start-innings call creates one. The ball a scorer would want
+            // to undo in that state is the previous innings' own last
+            // (completing) delivery.
             if (!inning && match.currentInnings > 1) {
                 inning = await Inning.findOne({
                     matchId: match._id,
