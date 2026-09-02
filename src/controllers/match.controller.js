@@ -671,7 +671,7 @@ const validateBowlerInput = (body) => {
 // No `{session}` on the create, same reasoning as findOrCreatePlayer/
 // findOrCreateTeam: a duplicate-key error aborts a transaction outright, so
 // the E11000 branch below could never run in-session to report it.
-const resolveBowler = async ({ bowlerId, bowlerName, teamId, createdBy, session }) => {
+const resolveBowler = async ({ bowlerId, bowlerName, teamId, createdBy, session, currentBowlerId }) => {
     if (bowlerId) {
         const bowler = await Player.findOne({ _id: bowlerId, teamId }).session(session);
         if (!bowler) {
@@ -690,6 +690,21 @@ const resolveBowler = async ({ bowlerId, bowlerName, teamId, createdBy, session 
         return bowler;
     } catch (err) {
         if (err.code === 11000) {
+            // A sync batch retried after its own response was lost can land
+            // here having already created this exact Player in the attempt
+            // that never got acknowledged — currentBowlerId already names a
+            // bowler for this exact upcoming over (see applyBowlerSelection's
+            // comment on when it's set/cleared), so if the name that just
+            // collided is that same bowler's, this is the harmless retry
+            // docs/api.md promises for a bowler event sitting on a sync
+            // resume boundary, not a genuine same-name-different-person
+            // conflict. The E11000 alone can't tell those two apart.
+            if (currentBowlerId) {
+                const alreadySelected = await Player.findOne({ _id: currentBowlerId, teamId }).session(session);
+                if (alreadySelected?.nameLower === bowlerName.trim().toLowerCase()) {
+                    return alreadySelected;
+                }
+            }
             throw new ApiError(400, "BOWLER_NAME_ALREADY_EXISTS");
         }
         throw err;
@@ -752,6 +767,7 @@ const applyBowlerSelection = async ({ match, inning, session, req, bowlerName, b
         teamId: bowlingTeamId,
         createdBy: req.user._id,
         session,
+        currentBowlerId: inning.currentBowlerId,
     });
 
     if (isSameBowler(previousBowlerId, bowler._id)) {
