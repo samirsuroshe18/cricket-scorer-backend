@@ -201,7 +201,7 @@ const logoutUser = catchAsync(async (req, res) => {
     await User.findOneAndUpdate(
         { refreshToken: refreshToken },
         { $unset: { refreshToken: 1, fcmToken: 1 } },
-        { new: true }
+        { returnDocument: 'after' }
     );
 
     return res.status(200).json(new ApiResponse(200, {}, req.t("LOGOUT_SUCCESS")));
@@ -499,7 +499,7 @@ const updateProfile = catchAsync(async (req, res) => {
     const updatedUser = await User.findByIdAndUpdate(
         req.user._id,
         { $set: updateData },
-        { new: true, runValidators: true }
+        { returnDocument: 'after', runValidators: true }
     ).select("-password -refreshToken -emailOtp -emailOtpExpiry");
 
     return res.status(200).json(
@@ -593,7 +593,7 @@ const updateUserLanguage = catchAsync(async (req, res) => {
     const user = await User.findByIdAndUpdate(
         req.user._id,
         { language: language.toLowerCase().trim() },
-        { new: true }
+        { returnDocument: 'after' }
     ).select('language');
 
     if (!user) {

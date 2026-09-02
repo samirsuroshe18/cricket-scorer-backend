@@ -295,6 +295,6 @@ export const generateScorecard = async (matchId, inning) => {
             },
             generatedAt: new Date(),
         },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
     );
 };

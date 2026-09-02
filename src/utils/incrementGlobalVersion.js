@@ -4,7 +4,7 @@ const incrementGlobalVersion = () =>
     TranslationMeta.findOneAndUpdate(
         {},
         { $inc: { version: 1 } },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
     );
 
 export default incrementGlobalVersion;
