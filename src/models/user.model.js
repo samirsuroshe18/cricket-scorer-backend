@@ -1,6 +1,7 @@
 import mongoose, { Schema } from "mongoose";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
+import crypto from "crypto";
 
 const userSchema = new Schema(
     {
@@ -155,6 +156,16 @@ userSchema.methods.generateRefreshToken = function (expiry) {
     return jwt.sign(
         {
             _id: this._id,
+            // jsonwebtoken's own `iat` is second-granularity, and this
+            // payload otherwise carries nothing but `_id` — two refresh
+            // tokens minted for the same user within the same wall-clock
+            // second are otherwise byte-for-byte identical, defeating any
+            // comparison meant to tell "the token already on record" apart
+            // from "a freshly rotated one" (see refreshAccessToken's own
+            // compare-and-swap, which relies on exactly that distinction).
+            // A random id per issuance, never itself checked against
+            // anything, is what actually guarantees uniqueness.
+            jti: crypto.randomUUID(),
         },
         process.env.REFRESH_TOKEN_SECRET,
         {

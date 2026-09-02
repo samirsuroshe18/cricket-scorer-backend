@@ -13,7 +13,18 @@ import { OTP_TYPES } from "../constants/otp.constants.js";
 import { SUPPORTED_LANGUAGES } from "../constants/language.constants.js";
 import { MIN_PASSWORD_LENGTH } from "../constants/password.constants.js";
 
-const generateAccessAndRefreshToken = async (userId, isRemember = false) => {
+// `expectedRefreshToken`, when passed, turns the write into a compare-and-
+// swap: refreshAccessToken's caller already verified this exact value was
+// current, but that read is stale by the time this function's own write
+// runs. Two concurrent refreshes of the same still-valid token would
+// otherwise both pass their own check off the same stale read, both mint a
+// distinct pair, and only the LAST save win -- silently invalidating the
+// OTHER caller's brand-new token, which then fails its own next use with
+// REFRESH_TOKEN_EXPIRED_OR_USED, indistinguishable from a stolen token.
+// Same shape as applyBowlerSelection's/abandonMatch's own CAS fixes.
+// loginUser never passes it: a fresh login has no prior session to race
+// against, so its plain, unconditional save is correct as-is.
+const generateAccessAndRefreshToken = async (userId, isRemember = false, expectedRefreshToken = undefined) => {
     try {
         const user = await User.findById(userId);
 
@@ -25,10 +36,19 @@ const generateAccessAndRefreshToken = async (userId, isRemember = false) => {
         const accessToken = user.generateAccessToken();
         const refreshToken = user.generateRefreshToken(refreshExpiry);
 
-        user.refreshToken = refreshToken;
-
-        // when we use save() method is used then all the fields are neccesary so to avoid that we have to pass an object with property {validatBeforeSave:false}
-        await user.save({ validateBeforeSave: false });
+        if (expectedRefreshToken !== undefined) {
+            const updated = await User.findOneAndUpdate(
+                { _id: userId, refreshToken: expectedRefreshToken },
+                { $set: { refreshToken } }
+            );
+            if (!updated) {
+                return null;
+            }
+        } else {
+            user.refreshToken = refreshToken;
+            // when we use save() method is used then all the fields are neccesary so to avoid that we have to pass an object with property {validatBeforeSave:false}
+            await user.save({ validateBeforeSave: false });
+        }
 
         return { accessToken, refreshToken }
     } catch (error) {
@@ -246,7 +266,16 @@ const refreshAccessToken = catchAsync(async (req, res) => {
         throw new ApiError(401, "REFRESH_TOKEN_EXPIRED_OR_USED");
     }
 
-    const { accessToken, refreshToken } = await generateAccessAndRefreshToken(user._id);
+    const result = await generateAccessAndRefreshToken(user._id, false, incomingRefreshToken);
+
+    // A concurrent refresh of this same token already won the race and
+    // rotated it out from under this request — the check above only saw
+    // this token as current as of its own stale read.
+    if (!result) {
+        throw new ApiError(401, "REFRESH_TOKEN_EXPIRED_OR_USED");
+    }
+
+    const { accessToken, refreshToken } = result;
 
     return res.status(200).json(
         new ApiResponse(200, { accessToken, refreshToken }, req.t("ACCESS_TOKEN_REFRESHED"))
