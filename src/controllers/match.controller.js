@@ -914,6 +914,26 @@ const validateBallInput = (body) => {
     return { runs, idempotencyKey, extraType, runsFrom, wicketType, dismissedBatsman, incomingBatsmanName };
 };
 
+// Re-verified against the freshly session-scoped `match`, once inside the
+// transaction: the plain pre-transaction read each caller does first can
+// only ever see status as of that read, so on its own it cannot catch a
+// concurrent abandon/delete that commits in the window between it and this
+// transaction actually starting. Mirrors abandonMatch/deleteMatch's own
+// compare-and-swap fix for the reverse race (a completing scoreBall landing
+// between their read and their write) — same TOCTOU shape, other direction.
+// `allowCompleted` lets undo (and an undo sync batch) still reach the one
+// ball that completed the match, exactly as their own pre-transaction checks
+// already do.
+const assertMatchWritable = (match, { allowCompleted }) => {
+    if (!match || match.isDeleted) {
+        throw new ApiError(404, "MATCH_NOT_FOUND");
+    }
+
+    if (match.status === 'abandoned' || (match.status === 'completed' && !allowCompleted)) {
+        throw new ApiError(400, "MATCH_ALREADY_COMPLETED");
+    }
+};
+
 // Applies one already-validated delivery against an already-loaded, session-
 // bound `inning` — the entire per-ball write scoreBall used to do inline,
 // factored out so a sync batch can call it once per queued ball inside one
@@ -1335,6 +1355,7 @@ const scoreBall = catchAsync(async (req, res) => {
             // `match` would then, for example, look up an innings 2 that
             // doesn't exist yet and wrongly fail a perfectly legal delivery.
             match = await Match.findById(matchId).session(session);
+            assertMatchWritable(match, { allowCompleted: false });
 
             const inning = await Inning.findOne({ matchId: match._id, inningsNumber: match.currentInnings }).session(session);
 
@@ -1550,6 +1571,7 @@ const undoBall = catchAsync(async (req, res) => {
             // TransientTransactionError must not reuse a previous attempt's
             // already-mutated instance.
             match = await Match.findById(matchId).session(session);
+            assertMatchWritable(match, { allowCompleted: true });
 
             let inning = await Inning.findOne({
                 matchId: match._id,
@@ -1808,9 +1830,11 @@ const syncMatch = catchAsync(async (req, res) => {
             match = await Match.findById(matchId).session(session);
 
             // A concurrent, already-committed request could have moved the
-            // match on to a different innings between this attempt and the
-            // last — re-check against the freshly re-fetched document rather
-            // than trusting the pre-transaction read above.
+            // match on to a different innings — or abandoned/deleted it, or
+            // completed it — between this attempt and the last; re-check
+            // against the freshly re-fetched document rather than trusting
+            // the pre-transaction reads above.
+            assertMatchWritable(match, { allowCompleted: isUndoBatch });
             await checkSyncInningsScope({ match, inningsNumber, isUndoBatch, session });
 
             const inning = await Inning.findOne({ matchId: match._id, inningsNumber }).session(session);
