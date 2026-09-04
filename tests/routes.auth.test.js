@@ -1,6 +1,8 @@
 import matchRouter from '../src/routes/match.routes.js';
 import userRouter from '../src/routes/user.routes.js';
 import translationRouter from '../src/routes/translation.routes.js';
+import playerRouter from '../src/routes/player.routes.js';
+import teamRouter from '../src/routes/team.routes.js';
 import { verifyJwt } from '../src/middlewares/auth.middleware.js';
 
 // Auth in this app is opt-in, per-route and positional: `verifyJwt` is an
@@ -51,6 +53,12 @@ const PUBLIC_ROUTES = {
         'GET /version',
         'GET /:lang',
     ],
+    // Every player route reads a specific scorer's own private data
+    // (career-stats), so none of them belong on this allowlist.
+    player: [],
+    // Every team route reads or lists a specific scorer's own teams/rosters,
+    // same reasoning as player above.
+    team: [],
 };
 
 // `catchAsync` returns an anonymous arrow, so `verifyJwt.name` is the empty
@@ -76,6 +84,8 @@ const ROUTERS = {
     match: matchRouter,
     user: userRouter,
     translation: translationRouter,
+    player: playerRouter,
+    team: teamRouter,
 };
 
 describe('every route is authenticated unless explicitly allowlisted', () => {

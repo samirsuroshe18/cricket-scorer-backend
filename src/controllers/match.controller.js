@@ -17,6 +17,7 @@ import { resolveMatchResult } from '../utils/resolveMatchResult.js';
 import { resolveToss } from '../utils/resolveToss.js';
 import { resolveSyncDecision } from '../utils/resolveSync.js';
 import { generateScorecard, liveStrikeFigures } from '../utils/scorecard.js';
+import { applyCareerStatsIncrement } from '../utils/careerStats.js';
 import { generateJoinCode } from '../utils/joinCode.js';
 import { findMatchByIdOrCode } from '../utils/matchLookup.js';
 import { resolveBallOutcome, isSameBowler, LEGAL_DELIVERIES_PER_OVER } from '../utils/resolveOver.js';
@@ -46,39 +47,65 @@ const MAX_PLAYER_NAME_LENGTH = 50;
 const DEFAULT_HISTORY_LIMIT = 20;
 const MAX_HISTORY_LIMIT = 50;
 
-// Teams are match-scoped, not reused by name: Phase 1 is meant to be ad-hoc,
-// per-match-only rosters (docs/roadmap.md), so two different real teams that
-// happen to share a name — even for the same scorer, across two unrelated
-// matches — must never end up sharing a Player pool. createMatch is Team's
-// only call site, so every match unconditionally gets its own fresh Team
-// documents; there is nothing to "find" here.
+// Teams are not reused by NAME: two different real teams that happen to
+// share a name — even for the same scorer, across two unrelated matches —
+// must never end up sharing a Player pool (see matchTeamScoping.test.js).
+// This is still the only path that creates a Team; explicit reuse by id
+// (see resolveTeamSide below) is the one sanctioned way a match ends up
+// pointing at an existing Team instead.
 const createTeam = (name, createdBy) => Team.create({ name, createdBy });
 
+// Adds `playerId` to `teamId`'s roster for this match — the set a name
+// resolves against for THIS side. Rejects first if `playerId` is already on
+// `opposingTeamId`'s roster for this same match: identity is scorer-scoped
+// now (see Player's own comment), so two different real people sharing a
+// name across the two sides of one match no longer separate automatically
+// the way per-team-scoped Player identity used to do for free. This is what
+// catches that case instead of silently merging them — see "Player identity
+// — scorer-scoped rework" in docs/api.md. `$addToSet` makes the add itself
+// idempotent, and — like findOrCreatePlayer's own create — deliberately not
+// session-scoped: grouped with player-identity resolution as a side effect
+// that must not abort a surrounding transaction on conflict, and an orphan
+// roster entry from a later failure is harmless, exactly as an orphan Player
+// already is.
+const rosterPlayer = async (playerId, teamId, opposingTeamId) => {
+    const onOpposingSide = await Team.exists({ _id: opposingTeamId, players: playerId });
+    if (onOpposingSide) {
+        throw new ApiError(400, "PLAYER_ON_OPPOSING_TEAM");
+    }
+    await Team.updateOne({ _id: teamId }, { $addToSet: { players: playerId } });
+};
+
 // Unlike Team, Player still needs a real find-or-create: the same batsman or
-// bowler is looked up by name repeatedly within one match's lifetime (every
-// over's bowler selection, every incoming batsman), all correctly meant to
-// resolve to the same Player document — teamId already scopes that lookup to
-// one match's roster now that Team is always created fresh per match. Race-safe
-// the same way findOrCreateTeam used to be: the unique {teamId, name} index on
-// Player rejects the loser of two concurrent upserts with E11000, and the
-// winner's document is already there to fetch. Called outside any transaction —
-// a duplicate-key error aborts a transaction outright, so the retry could not
-// run in-session. An orphan Player from a later failure is harmless, exactly as
-// an orphan Team is in createMatch.
-const findOrCreatePlayer = async (name, teamId, createdBy) => {
+// bowler is looked up by name repeatedly, both within one match (every
+// incoming batsman) and — since the player-identity rework — across every
+// match this scorer records, all correctly meant to resolve to the same
+// Player document. Race-safe the same way findOrCreateTeam used to be: the
+// unique {createdBy, nameLower} index on Player rejects the loser of two
+// concurrent upserts with E11000, and the winner's document is already there
+// to fetch. Called outside any transaction — a duplicate-key error aborts a
+// transaction outright, so the retry could not run in-session. An orphan
+// Player from a later failure is harmless, exactly as an orphan Team is in
+// createMatch.
+const findOrCreatePlayer = async (name, teamId, opposingTeamId, createdBy) => {
     const nameLower = name.trim().toLowerCase();
+    let player;
     try {
-        return await Player.findOneAndUpdate(
-            { teamId, nameLower },
-            { $setOnInsert: { name, nameLower, teamId, createdBy } },
+        player = await Player.findOneAndUpdate(
+            { createdBy, nameLower },
+            { $setOnInsert: { name, nameLower, createdBy } },
             { upsert: true, returnDocument: 'after' }
         );
     } catch (err) {
         if (err.code === 11000) {
-            return Player.findOne({ teamId, nameLower });
+            player = await Player.findOne({ createdBy, nameLower });
+        } else {
+            throw err;
         }
-        throw err;
     }
+
+    await rosterPlayer(player._id, teamId, opposingTeamId);
+    return player;
 };
 
 // Six characters over a 30-character alphabet is ~729 million codes, so a
@@ -104,15 +131,41 @@ const createMatchWithJoinCode = async (fields) => {
     }
 };
 
-const createMatch = catchAsync(async (req, res) => {
-    const { teamAName, teamBName, totalOvers, tossWinner, tossDecision } = req.body;
-
-    if (!asString(teamAName).trim() || !asString(teamBName).trim()) {
-        throw new ApiError(400, "TEAM_NAMES_REQUIRED");
+// Explicit opt-in reuse of a persistent Team, for the team-profile feature's
+// "past results" list to have something to query. Deliberately NOT the
+// name-based find-or-create that used to live here (see createTeam's own
+// comment, and matchTeamScoping.test.js) — that silently merged two
+// different real teams that happened to share a name. Here the client states
+// the identity explicitly, by id, so there is nothing to guess: the scorer
+// picked "yes, this is the same team" themselves.
+const resolveTeamSide = async (name, existingTeamId, createdBy) => {
+    if (existingTeamId != null) {
+        // A malformed existingTeamId throws a Mongoose CastError here, which
+        // errorHandler already turns into 400 INVALID_ID — same convention
+        // getCareerStats relies on for a malformed playerId.
+        const team = await Team.findOne({ _id: existingTeamId, isDeleted: false });
+        if (!team) {
+            throw new ApiError(404, "TEAM_NOT_FOUND");
+        }
+        if (!team.createdBy?.equals(createdBy)) {
+            throw new ApiError(403, "TEAM_NOT_OWNED");
+        }
+        return { existing: team, resolvedName: team.name };
     }
 
-    const trimmedA = teamAName.trim();
-    const trimmedB = teamBName.trim();
+    if (!asString(name).trim()) {
+        throw new ApiError(400, "TEAM_NAMES_REQUIRED");
+    }
+    return { existing: null, resolvedName: name.trim() };
+};
+
+const createMatch = catchAsync(async (req, res) => {
+    const { teamAName, teamBName, teamAId, teamBId, totalOvers, tossWinner, tossDecision } = req.body;
+
+    const [sideA, sideB] = await Promise.all([
+        resolveTeamSide(teamAName, teamAId, req.user._id),
+        resolveTeamSide(teamBName, teamBId, req.user._id),
+    ]);
 
     // Case-insensitive AND whitespace-insensitive: comparing trimmed-only
     // strings let "Mumbai Indians" and "Mumbai  Indians" (a doubled space,
@@ -120,10 +173,14 @@ const createMatch = catchAsync(async (req, res) => {
     // point of this check. Collapsing internal runs of whitespace first is
     // comparison-only — what actually gets stored on Team.name below is
     // untouched, since a stray double space there is harmless (Team has no
-    // uniqueness constraint at all; see team.model.js).
+    // uniqueness constraint at all; see team.model.js). Also catches the
+    // reused-team case where both sides resolve to the very same team.
     const collapseWhitespace = (name) => name.replace(/\s+/g, ' ').toLowerCase();
 
-    if (collapseWhitespace(trimmedA) === collapseWhitespace(trimmedB)) {
+    if (
+        (sideA.existing && sideB.existing && sideA.existing._id.equals(sideB.existing._id)) ||
+        collapseWhitespace(sideA.resolvedName) === collapseWhitespace(sideB.resolvedName)
+    ) {
         throw new ApiError(400, "TEAM_NAMES_MUST_DIFFER");
     }
 
@@ -137,8 +194,8 @@ const createMatch = catchAsync(async (req, res) => {
     }
 
     const [teamA, teamB] = await Promise.all([
-        createTeam(trimmedA, req.user._id),
-        createTeam(trimmedB, req.user._id),
+        sideA.existing ?? createTeam(sideA.resolvedName, req.user._id),
+        sideB.existing ?? createTeam(sideB.resolvedName, req.user._id),
     ]);
 
     const match = await createMatchWithJoinCode({
@@ -520,14 +577,19 @@ const startInnings = catchAsync(async (req, res) => {
     const battingTeamId = battingTeam === 'teamA' ? match.teamA : match.teamB;
     const bowlingTeamId = bowlingTeam === 'teamA' ? match.teamA : match.teamB;
 
-    const [strikerDoc, nonStrikerDoc, bowlerDoc] = await Promise.all([
-        findOrCreatePlayer(striker, battingTeamId, req.user._id),
-        findOrCreatePlayer(nonStriker, battingTeamId, req.user._id),
-        // Against the BOWLING side, so a name shared with a batsman is a
-        // different Player document — which is what the {teamId, name} unique
-        // index already implies.
-        findOrCreatePlayer(bowler, bowlingTeamId, req.user._id),
-    ]);
+    // Sequential, not Promise.all: each call's opposing-roster check must see
+    // the roster additions the earlier calls in this same request just made.
+    // Concretely, the bowler is resolved against the BOWLING side with the
+    // BATTING side as its opposing roster — if that ran concurrently with
+    // the two openers' own resolution, it could read the batting roster
+    // before either opener had actually landed on it, and a genuine name
+    // collision between a batsman and this innings' bowler would go
+    // undetected. Innings 1 never has anything to collide with (both rosters
+    // start empty); innings 2 can, once the sides have swapped and the other
+    // team's roster from innings 1 is already committed.
+    const strikerDoc = await findOrCreatePlayer(striker, battingTeamId, bowlingTeamId, req.user._id);
+    const nonStrikerDoc = await findOrCreatePlayer(nonStriker, battingTeamId, bowlingTeamId, req.user._id);
+    const bowlerDoc = await findOrCreatePlayer(bowler, bowlingTeamId, battingTeamId, req.user._id);
 
     const session = await mongoose.startSession();
     try {
@@ -666,55 +728,82 @@ const validateBowlerInput = (body) => {
 
 // A bowler legitimately reuses their own name across overs (returning to
 // bowl again), so unlike the incoming-batsman check, name reuse can never be
-// rejected outright here — it is the normal case. What findOrCreatePlayer
+// rejected outright here — it is the normal case. What a name match alone
 // cannot tell apart is that from a *different* real person who happens to
-// share a name, so identity is resolved by intent instead of by string:
+// share it, so identity is resolved by intent instead of by string:
 // `bowlerId` present means "this exact player, a scorer re-picking a known
-// bowler"; absent means "this name names someone new". A new name that
-// collides with an existing Player on this team is therefore a genuine
-// conflict, not a reuse to fall back to — `findOrCreatePlayer`'s "fetch on
-// E11000" would silently merge exactly the two people this exists to keep
-// apart, so this creates outright and turns the unique-index violation into
-// a rejection instead.
+// bowler"; absent means "this name names someone new to THIS match's bowling
+// side" — genuinely new, or a Player this scorer already tracks from a
+// different match, being rostered here for the first time. A name that
+// collides with a Player already on this side's roster THIS match, with no
+// `bowlerId`, is therefore a real conflict — silently reusing it would merge
+// exactly the two people this exists to keep apart.
 //
-// No `{session}` on the create, same reasoning as findOrCreatePlayer/
-// findOrCreateTeam: a duplicate-key error aborts a transaction outright, so
-// the E11000 branch below could never run in-session to report it.
-const resolveBowler = async ({ bowlerId, bowlerName, teamId, createdBy, session, currentBowlerId }) => {
+// No `{session}` on the create (or its own roster $addToSet), same reasoning
+// as findOrCreatePlayer: a duplicate-key error aborts a transaction outright,
+// so the E11000 branch below could never run in-session to report it, and
+// grouping the roster write alongside it keeps "resolve and roster this
+// player" one non-transactional side effect rather than a half-committed one.
+const resolveBowler = async ({ bowlerId, bowlerName, teamId, opposingTeamId, createdBy, session, currentBowlerId }) => {
     if (bowlerId) {
-        const bowler = await Player.findOne({ _id: bowlerId, teamId }).session(session);
-        if (!bowler) {
+        const bowler = await Player.findOne({ _id: bowlerId, createdBy }).session(session);
+        const rostered = bowler && await Team.exists({ _id: teamId, players: bowler._id }).session(session);
+        if (!bowler || !rostered) {
             throw new ApiError(404, "BOWLER_NOT_FOUND");
         }
         return bowler;
     }
 
-    try {
-        const [bowler] = await Player.create([{
-            name: bowlerName,
-            nameLower: bowlerName.trim().toLowerCase(),
-            teamId,
-            createdBy,
-        }]);
-        return bowler;
-    } catch (err) {
-        if (err.code === 11000) {
+    const nameLower = bowlerName.trim().toLowerCase();
+    const existing = await Player.findOne({ createdBy, nameLower }).session(session);
+
+    if (existing) {
+        const onOpposingSide = await Team.exists({ _id: opposingTeamId, players: existing._id }).session(session);
+        if (onOpposingSide) {
+            throw new ApiError(400, "PLAYER_ON_OPPOSING_TEAM");
+        }
+
+        const alreadyRostered = await Team.exists({ _id: teamId, players: existing._id }).session(session);
+        if (alreadyRostered) {
             // A sync batch retried after its own response was lost can land
-            // here having already created this exact Player in the attempt
+            // here having already selected this exact bowler in the attempt
             // that never got acknowledged — currentBowlerId already names a
             // bowler for this exact upcoming over (see applyBowlerSelection's
             // comment on when it's set/cleared), so if the name that just
             // collided is that same bowler's, this is the harmless retry
             // docs/api.md promises for a bowler event sitting on a sync
             // resume boundary, not a genuine same-name-different-person
-            // conflict. The E11000 alone can't tell those two apart.
-            if (currentBowlerId) {
-                const alreadySelected = await Player.findOne({ _id: currentBowlerId, teamId }).session(session);
-                if (alreadySelected?.nameLower === bowlerName.trim().toLowerCase()) {
-                    return alreadySelected;
-                }
+            // conflict.
+            if (currentBowlerId && String(currentBowlerId) === String(existing._id)) {
+                return existing;
             }
             throw new ApiError(400, "BOWLER_NAME_ALREADY_EXISTS");
+        }
+
+        // Known to this scorer from a different match (or from earlier this
+        // match on a different role), not yet rostered on this side — the
+        // ordinary cross-match reuse case the player-identity rework exists
+        // for.
+        await Team.updateOne({ _id: teamId }, { $addToSet: { players: existing._id } });
+        return existing;
+    }
+
+    try {
+        const [bowler] = await Player.create([{
+            name: bowlerName,
+            nameLower,
+            createdBy,
+        }]);
+        await Team.updateOne({ _id: teamId }, { $addToSet: { players: bowler._id } });
+        return bowler;
+    } catch (err) {
+        if (err.code === 11000) {
+            // Two concurrent calls resolving this exact brand-new name for
+            // the first time ever — the loser re-fetches the winner's
+            // Player and rosters it, same as the `existing` branch above.
+            const bowler = await Player.findOne({ createdBy, nameLower });
+            await Team.updateOne({ _id: teamId }, { $addToSet: { players: bowler._id } });
+            return bowler;
         }
         throw err;
     }
@@ -753,6 +842,7 @@ const applyBowlerSelection = async ({ match, inning, session, req, bowlerName, b
 
     const previousBowlerId = previousOver?.bowlerId ?? null;
     const bowlingTeamId = inning.bowlingTeam === 'teamA' ? match.teamA : match.teamB;
+    const battingTeamId = inning.battingTeam === 'teamA' ? match.teamA : match.teamB;
 
     // Checked by name, ahead of resolveBowler, only when no bowlerId was
     // given: typing the previous over's bowler's name straight back is the
@@ -774,6 +864,7 @@ const applyBowlerSelection = async ({ match, inning, session, req, bowlerName, b
         bowlerId,
         bowlerName,
         teamId: bowlingTeamId,
+        opposingTeamId: battingTeamId,
         createdBy: req.user._id,
         session,
         currentBowlerId: inning.currentBowlerId,
@@ -1032,12 +1123,14 @@ const applyDelivery = async ({ match, inning, session, req, delivery }) => {
             }
 
             const battingTeamId = inning.battingTeam === 'teamA' ? match.teamA : match.teamB;
+            const bowlingTeamId = inning.bowlingTeam === 'teamA' ? match.teamA : match.teamB;
 
             // Outside the transaction's atomicity on purpose, same as
             // resolveBowler's create — see that function's comment. An
-            // orphan Player from a delivery that fails later in this same
-            // call is harmless, exactly as elsewhere in this file.
-            incomingPlayer = await findOrCreatePlayer(trimmedIncoming, battingTeamId, req.user._id);
+            // orphan Player (or orphan roster entry) from a delivery that
+            // fails later in this same call is harmless, exactly as
+            // elsewhere in this file.
+            incomingPlayer = await findOrCreatePlayer(trimmedIncoming, battingTeamId, bowlingTeamId, req.user._id);
         }
     }
 
@@ -1279,10 +1372,26 @@ const finishBallDelivery = async ({ match, req, result }) => {
 
     if (result.matchJustCompleted) {
         try {
-            await Promise.all([
+            const scorecards = await Promise.all([
                 generateScorecard(match._id, result.inning1ForResult),
                 generateScorecard(match._id, result.inning),
             ]);
+            // Completed matches only, never abandoned — see "The hook point"
+            // in docs/api.md. Deliberately its own try/catch, nested inside
+            // the one above rather than folded into a single Promise.all:
+            // a Scorecard failure and a career-stats failure are independent
+            // events, and one failing must not stop the other's best-effort
+            // attempt from running.
+            try {
+                await applyCareerStatsIncrement(match._id, scorecards);
+            } catch (err) {
+                // Same posture as the outer catch: the match is already
+                // committed, a career-stats side effect failing here is not
+                // that. Unlike Scorecard, there is currently no read path
+                // that retries this on demand — see "A failed career-stats
+                // increment has no self-heal" in docs/api.md.
+                console.error('career stats increment failed', err);
+            }
         } catch (err) {
             // The ball, and the match completion itself, are already safely
             // committed — a scorecard that fails to generate here is not
@@ -2353,4 +2462,4 @@ const getMatchHistory = catchAsync(async (req, res) => {
     }, req.t("MATCH_HISTORY_FETCHED")));
 });
 
-export { createMatch, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory };
+export { createMatch, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };

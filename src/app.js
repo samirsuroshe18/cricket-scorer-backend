@@ -58,11 +58,15 @@ app.use(globalLimiter);
 import userRouter from './routes/user.routes.js';
 import translationRouter from './routes/translation.routes.js';
 import matchRouter from './routes/match.routes.js';
+import playerRouter from './routes/player.routes.js';
+import teamRouter from './routes/team.routes.js';
 
 //Routes declaration
 app.use("/api/v1/user", userRouter);
 app.use("/api/v1/translations", translationRouter);
 app.use("/api/v1/match", matchRouter);
+app.use("/api/v1/player", playerRouter);
+app.use("/api/v1/team", teamRouter);
 
 // Custom error handeling
 app.use(errorHandler)

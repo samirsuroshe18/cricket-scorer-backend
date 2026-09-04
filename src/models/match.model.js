@@ -49,6 +49,12 @@ matchSchema.index({ status: 1, createdAt: -1 });
 // Cloud sync queue: find all unsynced matches. Also serves equality queries
 // on `syncStatus` alone — same reasoning as above, don't duplicate it.
 matchSchema.index({ syncStatus: 1, updatedAt: 1 });
+// Team past-results (GET /v1/team/:teamId/matches): a team can appear as
+// either side, so the query is an $or across these two fields — Mongo can't
+// satisfy that with one compound index, hence one per side. All statuses are
+// shown (no status filter), so `status` doesn't belong in either index.
+matchSchema.index({ teamA: 1, createdAt: -1 });
+matchSchema.index({ teamB: 1, createdAt: -1 });
 // The spectator lookup, and the constraint that makes createMatch's
 // retry-on-E11000 correct rather than hopeful. SPARSE because every match
 // written before share codes existed has no joinCode, and a plain unique index

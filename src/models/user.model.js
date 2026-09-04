@@ -3,6 +3,16 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
 import crypto from "crypto";
 
+// Arm and pace/spin folded into one field rather than kept independent,
+// because that's how the game actually talks about a bowler ("left-arm
+// spin"), not two facts a UI would have to recombine into a sentence.
+// Deliberately stops at 2x2 rather than the fast/fast-medium/medium and
+// off-break/leg-break/googly/orthodox/chinaman split a professional profile
+// uses — a recreational bowler is unlikely to know which of five sub-styles
+// they bowl, and a field most users mis-select is worse than one left blank.
+export const BATTING_STYLES = ['right_handed', 'left_handed'];
+export const BOWLING_STYLES = ['right_arm_pace', 'left_arm_pace', 'right_arm_spin', 'left_arm_spin'];
+
 const userSchema = new Schema(
     {
         email: {
@@ -63,6 +73,22 @@ const userSchema = new Schema(
         bio: {
             type: String,
             maxlength: 200
+        },
+
+        // Self-declared, on User rather than Player: a Player document is
+        // frequently found-or-created by someone else naming a teammate, with
+        // no consent step and no link back to any account. Putting a style a
+        // person claims about themselves on a document someone else can create
+        // for them is exactly the data-integrity complaint CricHeroes users
+        // report most — see docs/api.md's update-profile section.
+        battingStyle: {
+            type: String,
+            enum: BATTING_STYLES,
+        },
+
+        bowlingStyle: {
+            type: String,
+            enum: BOWLING_STYLES,
         },
 
         profileCompleted: {

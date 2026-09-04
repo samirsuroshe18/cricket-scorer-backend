@@ -2,7 +2,7 @@ import catchAsync from '../utils/catchAsync.js';
 import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import mailSender from '../utils/mailSender.js';
-import { User } from '../models/user.model.js';
+import { User, BATTING_STYLES, BOWLING_STYLES } from '../models/user.model.js';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
@@ -514,12 +514,27 @@ const setPassword = catchAsync(async (req, res) => {
 });
 
 const updateProfile = catchAsync(async (req, res) => {
-    const { userName, bio } = req.body;
+    const { userName, bio, battingStyle, bowlingStyle } = req.body;
     let imageUrl = null;
     const imagePath = req.file?.path || null;
 
     if (typeof userName !== "string" || !userName.trim()) {
         throw new ApiError(400, "FULL_NAME_REQUIRED");
+    }
+
+    // Validated against the schema's own enums before any upload work runs,
+    // the same way `create` checks tossWinner/tossDecision itself rather than
+    // trusting Mongoose's `enum` to catch it — errorHandler only turns an
+    // ApiError into a matchable `code`; a bare ValidationError falls through
+    // to a 500.
+    const trimmedBattingStyle = typeof battingStyle === "string" ? battingStyle.trim() : "";
+    if (trimmedBattingStyle && !BATTING_STYLES.includes(trimmedBattingStyle)) {
+        throw new ApiError(400, "INVALID_BATTING_STYLE");
+    }
+
+    const trimmedBowlingStyle = typeof bowlingStyle === "string" ? bowlingStyle.trim() : "";
+    if (trimmedBowlingStyle && !BOWLING_STYLES.includes(trimmedBowlingStyle)) {
+        throw new ApiError(400, "INVALID_BOWLING_STYLE");
     }
 
     if (imagePath) {
@@ -529,6 +544,8 @@ const updateProfile = catchAsync(async (req, res) => {
 
     const updateData = { userName: userName.trim(), profileCompleted: true };
     if (typeof bio === "string" && bio.trim()) updateData.bio = bio.trim();
+    if (trimmedBattingStyle) updateData.battingStyle = trimmedBattingStyle;
+    if (trimmedBowlingStyle) updateData.bowlingStyle = trimmedBowlingStyle;
     if (imageUrl) updateData.photoUrl = imageUrl;
 
     const updatedUser = await User.findByIdAndUpdate(

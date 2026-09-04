@@ -4,6 +4,8 @@ import { sanitizeMiddleware } from '../../src/middlewares/sanitize.middleware.js
 import { errorHandler } from '../../src/utils/errorHandler.js';
 import matchRouter from '../../src/routes/match.routes.js';
 import translationRouter from '../../src/routes/translation.routes.js';
+import playerRouter from '../../src/routes/player.routes.js';
+import teamRouter from '../../src/routes/team.routes.js';
 
 /**
  * A minimal Express app, not the real `src/app.js` — that file initializes
@@ -14,11 +16,11 @@ import translationRouter from '../../src/routes/translation.routes.js';
  * handler's `req.app.get('io')` resolves to `undefined` and its socket
  * emission is skipped — every emit call site already guards on that.
  *
- * `withTranslations` is opt-in rather than always-mounted, same reasoning:
- * every existing caller only exercises `matchRouter` and shouldn't pay for
- * (or accidentally rely on) a router it never asked for.
+ * `withTranslations`/`withPlayer` are opt-in rather than always-mounted,
+ * same reasoning: every existing caller only exercises `matchRouter` and
+ * shouldn't pay for (or accidentally rely on) a router it never asked for.
  */
-export const buildTestApp = ({ withTranslations = false } = {}) => {
+export const buildTestApp = ({ withTranslations = false, withPlayer = false, withTeam = false } = {}) => {
   const app = express();
   app.use(express.json());
   app.use(sanitizeMiddleware);
@@ -26,6 +28,12 @@ export const buildTestApp = ({ withTranslations = false } = {}) => {
   app.use('/api/v1/match', matchRouter);
   if (withTranslations) {
     app.use('/api/v1/translations', translationRouter);
+  }
+  if (withPlayer) {
+    app.use('/api/v1/player', playerRouter);
+  }
+  if (withTeam) {
+    app.use('/api/v1/team', teamRouter);
   }
   app.use(errorHandler);
   return app;
