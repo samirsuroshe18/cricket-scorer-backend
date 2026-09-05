@@ -16,7 +16,7 @@ describe('match abandon/delete', () => {
 
   beforeAll(async () => {
     await connectTestDb();
-    app = buildTestApp();
+    app = buildTestApp({ withOrganization: true });
   });
 
   afterEach(async () => {
@@ -69,6 +69,26 @@ describe('match abandon/delete', () => {
 
       const stored = await Match.findById(matchId);
       expect(stored.status).toBe('upcoming');
+    });
+
+    it('rejects an assigned scorer trying to abandon the match', async () => {
+      const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+      const { token: scorerToken, user: scorer } = await createTestUser({ email: 'scorer@example.com' });
+      const orgRes = await request(app).post('/api/v1/organization').set('Authorization', `Bearer ${ownerToken}`).send({ name: 'Org' });
+      const orgId = orgRes.body.data.id;
+      await request(app).post(`/api/v1/organization/${orgId}/members`).set('Authorization', `Bearer ${ownerToken}`).send({ email: scorer.email });
+      const teamRes = await request(app).post(`/api/v1/organization/${orgId}/teams`).set('Authorization', `Bearer ${ownerToken}`).send({ name: 'Org Team' });
+      const matchRes = await request(app).post('/api/v1/match/create').set('Authorization', `Bearer ${ownerToken}`).send({ teamAId: teamRes.body.data.id, teamBName: 'Visitors', totalOvers: 5 });
+      const matchId = matchRes.body.data.matchId;
+      await request(app).patch(`/api/v1/match/${matchId}/scorer`).set('Authorization', `Bearer ${ownerToken}`).send({ scorerId: String(scorer._id) });
+
+      const res = await request(app)
+        .post(`/api/v1/match/${matchId}/abandon`)
+        .set('Authorization', `Bearer ${scorerToken}`)
+        .send();
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('MATCH_NOT_OWNED');
     });
 
     it('rejects with MATCH_NOT_FOUND for an unknown matchId', async () => {
@@ -173,6 +193,26 @@ describe('match abandon/delete', () => {
 
       const stored = await Match.findById(matchId);
       expect(stored.isDeleted).toBe(false);
+    });
+
+    it('rejects an assigned scorer trying to delete the match', async () => {
+      const { token: ownerToken } = await createTestUser({ email: 'owner2@example.com' });
+      const { token: scorerToken, user: scorer } = await createTestUser({ email: 'scorer2@example.com' });
+      const orgRes = await request(app).post('/api/v1/organization').set('Authorization', `Bearer ${ownerToken}`).send({ name: 'Org 2' });
+      const orgId = orgRes.body.data.id;
+      await request(app).post(`/api/v1/organization/${orgId}/members`).set('Authorization', `Bearer ${ownerToken}`).send({ email: scorer.email });
+      const teamRes = await request(app).post(`/api/v1/organization/${orgId}/teams`).set('Authorization', `Bearer ${ownerToken}`).send({ name: 'Org Team 2' });
+      const matchRes = await request(app).post('/api/v1/match/create').set('Authorization', `Bearer ${ownerToken}`).send({ teamAId: teamRes.body.data.id, teamBName: 'Visitors', totalOvers: 5 });
+      const matchId = matchRes.body.data.matchId;
+      await request(app).patch(`/api/v1/match/${matchId}/scorer`).set('Authorization', `Bearer ${ownerToken}`).send({ scorerId: String(scorer._id) });
+
+      const res = await request(app)
+        .delete(`/api/v1/match/${matchId}`)
+        .set('Authorization', `Bearer ${scorerToken}`)
+        .send();
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('MATCH_NOT_OWNED');
     });
 
     it('treats an already-deleted match as not found, same as an unknown id', async () => {
