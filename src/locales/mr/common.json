@@ -140,6 +140,7 @@
   "TEAM_CREATED": "टीम तयार झाली",
   "TEAM_ALREADY_IN_ORGANIZATION": "ती टीम आधीच एका संस्थेशी जोडलेली आहे",
   "TEAM_ORGANIZATION_UPDATED": "टीमची संस्था अद्ययावत केली",
+  "ORGANIZATION_DELETED": "संस्था हटवली",
   "BALL_UNDONE": "चेंडू मागे घेतला",
   "BALL_EVENT_ID_REQUIRED": "मागे घ्यायचा चेंडू नमूद करणे आवश्यक आहे",
   "INVALID_BALL_EVENT_ID": "अवैध चेंडू संदर्भ",

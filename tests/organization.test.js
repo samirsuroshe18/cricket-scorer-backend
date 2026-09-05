@@ -3,6 +3,7 @@ import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 import { Organization } from '../src/models/organization.model.js';
+import { Team } from '../src/models/team.model.js';
 
 // DB connect/disconnect is shared across every describe block below — Jest
 // runs describe blocks in the same file sequentially, but a describe's own
@@ -294,5 +295,48 @@ describe('POST /v1/organization/:orgId/teams', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('TEAM_NAMES_REQUIRED');
+  });
+});
+
+describe('DELETE /v1/organization/:orgId', () => {
+  const createOrgTeam = (token, orgId, body) =>
+    request(app).post(`/api/v1/organization/${orgId}/teams`).set('Authorization', `Bearer ${token}`).send(body);
+
+  const deleteOrg = (token, orgId) =>
+    request(app).delete(`/api/v1/organization/${orgId}`).set('Authorization', `Bearer ${token}`).send();
+
+  const getOrg = (token, orgId) =>
+    request(app).get(`/api/v1/organization/${orgId}`).set('Authorization', `Bearer ${token}`).send();
+
+  it('soft-deletes the organization and orphans its teams back to standalone', async () => {
+    const { token } = await createTestUser();
+    const orgRes = await createOrg(token, { name: 'Riverside CC' });
+    const orgId = orgRes.body.data.id;
+    const teamRes = await createOrgTeam(token, orgId, { name: 'Riverside U19' });
+    const teamId = teamRes.body.data.id;
+
+    const res = await deleteOrg(token, orgId);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({ orgId });
+
+    const team = await Team.findById(teamId);
+    expect(team.organization).toBeNull();
+
+    const afterDelete = await getOrg(token, orgId);
+    expect(afterDelete.status).toBe(404);
+    expect(afterDelete.body.code).toBe('ORG_NOT_FOUND');
+  });
+
+  it('403s when a non-owner tries to delete', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const orgRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const orgId = orgRes.body.data.id;
+    const { token: strangerToken } = await createTestUser({ email: 'stranger@example.com' });
+
+    const res = await deleteOrg(strangerToken, orgId);
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('ORG_NOT_OWNED');
   });
 });

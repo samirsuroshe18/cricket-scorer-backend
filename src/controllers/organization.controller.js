@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import catchAsync from '../utils/catchAsync.js';
 import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
@@ -173,6 +174,23 @@ const createOrganizationTeam = catchAsync(async (req, res) => {
     }, req.t("TEAM_CREATED")));
 });
 
+const deleteOrganization = catchAsync(async (req, res) => {
+    const { orgId } = req.params;
+    const org = await findOwnedOrganization(orgId, req.user._id);
+
+    const session = await mongoose.startSession();
+    try {
+        await session.withTransaction(async () => {
+            await Organization.updateOne({ _id: org._id }, { $set: { isDeleted: true } }, { session });
+            await Team.updateMany({ organization: org._id }, { $set: { organization: null } }, { session });
+        });
+    } finally {
+        await session.endSession();
+    }
+
+    return res.status(200).json(new ApiResponse(200, { orgId: org._id }, req.t("ORGANIZATION_DELETED")));
+});
+
 export {
     createOrganization,
     listMyOrganizations,
@@ -180,4 +198,5 @@ export {
     addOrganizationMember,
     removeOrganizationMember,
     createOrganizationTeam,
+    deleteOrganization,
 };
