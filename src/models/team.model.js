@@ -10,6 +10,11 @@ const teamSchema = new Schema(
     // findOrCreatePlayer/resolveBowler, never read/written directly here.
     players:    [{ type: Schema.Types.ObjectId, ref: 'Player' }],
     createdBy:  { type: Schema.Types.ObjectId, ref: 'User' },
+    // Optional — null is the default and the only value every team created
+    // before this feature, or created ad-hoc since, ever has. Set only via
+    // POST /v1/organization/:orgId/teams (create-under-org) or
+    // PATCH /v1/team/:teamId/organization (attach an existing team).
+    organization: { type: Schema.Types.ObjectId, ref: 'Organization', default: null },
     isDeleted:  { type: Boolean, default: false },
   },
   { timestamps: true }
@@ -19,6 +24,7 @@ teamSchema.index({ name: 'text' });
 // Also serves equality queries on `createdBy` alone — don't add a separate
 // single-field index on `createdBy`, it would be a redundant prefix.
 teamSchema.index({ createdBy: 1, createdAt: -1 });
+teamSchema.index({ organization: 1, createdAt: -1 });
 // No unique index on {createdBy, name}: teams are match-scoped, and the same
 // scorer legitimately creates a fresh "Team A" for every new match — see
 // createTeam in match.controller.js.
