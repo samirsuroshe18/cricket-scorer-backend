@@ -17,7 +17,7 @@ describe('scoring flow', () => {
 
   beforeAll(async () => {
     await connectTestDb();
-    app = buildTestApp();
+    app = buildTestApp({ withOrganization: true });
   });
 
   afterEach(async () => {
@@ -27,6 +27,31 @@ describe('scoring flow', () => {
   afterAll(async () => {
     await disconnectTestDb();
   });
+
+  // Every widened-check test in this file needs the same shape: an
+  // org-owned teamA, an owner (the creator), a plain member, an assigned
+  // scorer (also a plain member until assigned), and a stranger.
+  const setupDelegatedMatch = async (overrides = {}) => {
+    const { token: ownerToken, user: owner } = await createTestUser({ email: `owner-${randomUUID()}@example.com` });
+    const { token: scorerToken, user: scorer } = await createTestUser({ email: `scorer-${randomUUID()}@example.com` });
+    const { token: memberToken, user: member } = await createTestUser({ email: `member-${randomUUID()}@example.com` });
+    const { token: strangerToken } = await createTestUser({ email: `stranger-${randomUUID()}@example.com` });
+
+    const orgRes = await request(app)
+      .post('/api/v1/organization')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ name: `Org ${randomUUID()}` });
+    const orgId = orgRes.body.data.id;
+    await request(app).post(`/api/v1/organization/${orgId}/members`).set('Authorization', `Bearer ${ownerToken}`).send({ email: scorer.email });
+    await request(app).post(`/api/v1/organization/${orgId}/members`).set('Authorization', `Bearer ${ownerToken}`).send({ email: member.email });
+    const teamRes = await request(app).post(`/api/v1/organization/${orgId}/teams`).set('Authorization', `Bearer ${ownerToken}`).send({ name: 'Org Team' });
+    const teamId = teamRes.body.data.id;
+
+    const matchId = await createMatch(app, ownerToken, { teamAId: teamId, teamBName: 'Visitors', ...overrides });
+    await request(app).patch(`/api/v1/match/${matchId}/scorer`).set('Authorization', `Bearer ${ownerToken}`).send({ scorerId: String(scorer._id) });
+
+    return { ownerToken, memberToken, scorerToken, strangerToken, matchId };
+  };
 
   describe('POST /:matchId/start-innings', () => {
     it('creates the Inning document with the named openers and bowler', async () => {
@@ -81,6 +106,29 @@ describe('scoring flow', () => {
       const res = await request(app)
         .post(`/api/v1/match/${matchId}/start-innings`)
         .set('Authorization', `Bearer ${otherToken}`)
+        .send({ strikerName: 'A', nonStrikerName: 'B', bowlerName: 'C' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('MATCH_NOT_OWNED');
+    });
+
+    it('lets the assigned scorer start the innings', async () => {
+      const { scorerToken, matchId } = await setupDelegatedMatch();
+
+      const res = await request(app)
+        .post(`/api/v1/match/${matchId}/start-innings`)
+        .set('Authorization', `Bearer ${scorerToken}`)
+        .send({ strikerName: 'A', nonStrikerName: 'B', bowlerName: 'C' });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('still rejects a plain org member who is not the assigned scorer', async () => {
+      const { memberToken, matchId } = await setupDelegatedMatch();
+
+      const res = await request(app)
+        .post(`/api/v1/match/${matchId}/start-innings`)
+        .set('Authorization', `Bearer ${memberToken}`)
         .send({ strikerName: 'A', nonStrikerName: 'B', bowlerName: 'C' });
 
       expect(res.status).toBe(403);
@@ -151,6 +199,37 @@ describe('scoring flow', () => {
       const res = await request(app)
         .post(`/api/v1/match/${matchId}/select-bowler`)
         .set('Authorization', `Bearer ${otherToken}`)
+        .send({ bowlerName: 'Bowler Two' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('MATCH_NOT_OWNED');
+    });
+
+    it('lets the assigned scorer select the bowler', async () => {
+      const { ownerToken, scorerToken, matchId } = await setupDelegatedMatch();
+      await startLiveInnings(app, ownerToken, matchId);
+      for (let i = 0; i < 6; i += 1) {
+        await scoreDotBall(app, ownerToken, matchId);
+      }
+
+      const res = await request(app)
+        .post(`/api/v1/match/${matchId}/select-bowler`)
+        .set('Authorization', `Bearer ${scorerToken}`)
+        .send({ bowlerName: 'Bowler Two' });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('still rejects a plain org member who is not the assigned scorer', async () => {
+      const { ownerToken, memberToken, matchId } = await setupDelegatedMatch();
+      await startLiveInnings(app, ownerToken, matchId);
+      for (let i = 0; i < 6; i += 1) {
+        await scoreDotBall(app, ownerToken, matchId);
+      }
+
+      const res = await request(app)
+        .post(`/api/v1/match/${matchId}/select-bowler`)
+        .set('Authorization', `Bearer ${memberToken}`)
         .send({ bowlerName: 'Bowler Two' });
 
       expect(res.status).toBe(403);
@@ -262,6 +341,25 @@ describe('scoring flow', () => {
       expect(res.status).toBe(403);
       expect(res.body.code).toBe('MATCH_NOT_OWNED');
     });
+
+    it('lets the assigned scorer score a ball', async () => {
+      const { ownerToken, scorerToken, matchId } = await setupDelegatedMatch();
+      await startLiveInnings(app, ownerToken, matchId);
+
+      const res = await scoreDotBall(app, scorerToken, matchId, { runs: 1 });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('still rejects a plain org member who is not the assigned scorer', async () => {
+      const { ownerToken, memberToken, matchId } = await setupDelegatedMatch();
+      await startLiveInnings(app, ownerToken, matchId);
+
+      const res = await scoreDotBall(app, memberToken, matchId, { runs: 1 });
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('MATCH_NOT_OWNED');
+    });
   });
 
   describe('POST /:matchId/undo-ball', () => {
@@ -362,6 +460,33 @@ describe('scoring flow', () => {
         .post(`/api/v1/match/${matchId}/undo-ball`)
         .set('Authorization', `Bearer ${otherToken}`)
         .send({ ballEventId: scored.body.data.ballEventId });
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('MATCH_NOT_OWNED');
+    });
+
+    it('lets the assigned scorer undo a ball', async () => {
+      const { ownerToken, scorerToken, matchId } = await setupDelegatedMatch();
+      await startLiveInnings(app, ownerToken, matchId);
+      const scoreRes = await scoreDotBall(app, ownerToken, matchId);
+
+      const res = await request(app)
+        .post(`/api/v1/match/${matchId}/undo-ball`)
+        .set('Authorization', `Bearer ${scorerToken}`)
+        .send({ ballEventId: scoreRes.body.data.ballEventId });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('still rejects a plain org member who is not the assigned scorer', async () => {
+      const { ownerToken, memberToken, matchId } = await setupDelegatedMatch();
+      await startLiveInnings(app, ownerToken, matchId);
+      const scoreRes = await scoreDotBall(app, ownerToken, matchId);
+
+      const res = await request(app)
+        .post(`/api/v1/match/${matchId}/undo-ball`)
+        .set('Authorization', `Bearer ${memberToken}`)
+        .send({ ballEventId: scoreRes.body.data.ballEventId });
 
       expect(res.status).toBe(403);
       expect(res.body.code).toBe('MATCH_NOT_OWNED');

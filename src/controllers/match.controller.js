@@ -550,7 +550,7 @@ const startInnings = catchAsync(async (req, res) => {
         throw new ApiError(404, "MATCH_NOT_FOUND");
     }
 
-    if (!match.createdBy?.equals(req.user._id)) {
+    if (!match.createdBy?.equals(req.user._id) && !match.assignedScorer?.equals(req.user._id)) {
         throw new ApiError(403, "MATCH_NOT_OWNED");
     }
 
@@ -913,7 +913,7 @@ const selectBowler = catchAsync(async (req, res) => {
         throw new ApiError(404, "MATCH_NOT_FOUND");
     }
 
-    if (!match.createdBy?.equals(req.user._id)) {
+    if (!match.createdBy?.equals(req.user._id) && !match.assignedScorer?.equals(req.user._id)) {
         throw new ApiError(403, "MATCH_NOT_OWNED");
     }
 
@@ -1444,7 +1444,7 @@ const scoreBall = catchAsync(async (req, res) => {
         throw new ApiError(404, "MATCH_NOT_FOUND");
     }
 
-    if (!match.createdBy?.equals(req.user._id)) {
+    if (!match.createdBy?.equals(req.user._id) && !match.assignedScorer?.equals(req.user._id)) {
         throw new ApiError(403, "MATCH_NOT_OWNED");
     }
 
@@ -1685,7 +1685,7 @@ const undoBall = catchAsync(async (req, res) => {
         throw new ApiError(404, "MATCH_NOT_FOUND");
     }
 
-    if (!match.createdBy?.equals(req.user._id)) {
+    if (!match.createdBy?.equals(req.user._id) && !match.assignedScorer?.equals(req.user._id)) {
         throw new ApiError(403, "MATCH_NOT_OWNED");
     }
 
@@ -1916,7 +1916,7 @@ const syncMatch = catchAsync(async (req, res) => {
         throw new ApiError(404, "MATCH_NOT_FOUND");
     }
 
-    if (!match.createdBy?.equals(req.user._id)) {
+    if (!match.createdBy?.equals(req.user._id) && !match.assignedScorer?.equals(req.user._id)) {
         throw new ApiError(403, "MATCH_NOT_OWNED");
     }
 
@@ -2209,7 +2209,7 @@ const getMatchScorecard = catchAsync(async (req, res) => {
         throw new ApiError(404, "MATCH_NOT_FOUND");
     }
 
-    if (!match.createdBy?.equals(req.user._id)) {
+    if (!match.createdBy?.equals(req.user._id) && !match.assignedScorer?.equals(req.user._id)) {
         throw new ApiError(403, "MATCH_NOT_OWNED");
     }
 

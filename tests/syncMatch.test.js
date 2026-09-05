@@ -15,7 +15,7 @@ describe('POST /:matchId/sync', () => {
 
   beforeAll(async () => {
     await connectTestDb();
-    app = buildTestApp();
+    app = buildTestApp({ withOrganization: true });
   });
 
   afterEach(async () => {
@@ -166,6 +166,47 @@ describe('POST /:matchId/sync', () => {
       inningsNumber: 1,
       baseAbsoluteBallSeq: 0,
       events: [ballEvent()],
+    });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('MATCH_NOT_OWNED');
+  });
+
+  it('lets the assigned scorer sync a batch', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const { token: scorerToken, user: scorer } = await createTestUser({ email: 'scorer@example.com' });
+    const orgRes = await request(app).post('/api/v1/organization').set('Authorization', `Bearer ${ownerToken}`).send({ name: 'Org' });
+    const orgId = orgRes.body.data.id;
+    await request(app).post(`/api/v1/organization/${orgId}/members`).set('Authorization', `Bearer ${ownerToken}`).send({ email: scorer.email });
+    const teamRes = await request(app).post(`/api/v1/organization/${orgId}/teams`).set('Authorization', `Bearer ${ownerToken}`).send({ name: 'Org Team' });
+    const matchId = await createMatch(app, ownerToken, { teamAId: teamRes.body.data.id, teamBName: 'Visitors' });
+    await request(app).patch(`/api/v1/match/${matchId}/scorer`).set('Authorization', `Bearer ${ownerToken}`).send({ scorerId: String(scorer._id) });
+    await startLiveInnings(app, ownerToken, matchId);
+
+    const res = await sync(scorerToken, matchId, {
+      inningsNumber: 1,
+      baseAbsoluteBallSeq: 0,
+      events: [ballEvent({ runs: 1 })],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.appliedCount).toBe(1);
+  });
+
+  it('still rejects a plain org member who is not the assigned scorer', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner2@example.com' });
+    const { token: memberToken, user: member } = await createTestUser({ email: 'member2@example.com' });
+    const orgRes = await request(app).post('/api/v1/organization').set('Authorization', `Bearer ${ownerToken}`).send({ name: 'Org 2' });
+    const orgId = orgRes.body.data.id;
+    await request(app).post(`/api/v1/organization/${orgId}/members`).set('Authorization', `Bearer ${ownerToken}`).send({ email: member.email });
+    const teamRes = await request(app).post(`/api/v1/organization/${orgId}/teams`).set('Authorization', `Bearer ${ownerToken}`).send({ name: 'Org Team 2' });
+    const matchId = await createMatch(app, ownerToken, { teamAId: teamRes.body.data.id, teamBName: 'Visitors' });
+    await startLiveInnings(app, ownerToken, matchId);
+
+    const res = await sync(memberToken, matchId, {
+      inningsNumber: 1,
+      baseAbsoluteBallSeq: 0,
+      events: [ballEvent({ runs: 1 })],
     });
 
     expect(res.status).toBe(403);
