@@ -128,6 +128,7 @@
   "ORG_NAME_REQUIRED": "संस्थेचे नाव आवश्यक आहे",
   "ORG_NAME_TAKEN": "या नावाची संस्था तुमच्याकडे आधीच आहे",
   "ORGANIZATION_CREATED": "संस्था तयार झाली",
+  "ORGANIZATIONS_FETCHED": "संस्था मिळाल्या",
   "BALL_UNDONE": "चेंडू मागे घेतला",
   "BALL_EVENT_ID_REQUIRED": "मागे घ्यायचा चेंडू नमूद करणे आवश्यक आहे",
   "INVALID_BALL_EVENT_ID": "अवैध चेंडू संदर्भ",

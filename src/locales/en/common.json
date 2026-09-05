@@ -128,6 +128,7 @@
   "ORG_NAME_REQUIRED": "Organization name is required",
   "ORG_NAME_TAKEN": "You already have an organization with this name",
   "ORGANIZATION_CREATED": "Organization created",
+  "ORGANIZATIONS_FETCHED": "Organizations fetched",
   "BALL_UNDONE": "Ball undone",
   "BALL_EVENT_ID_REQUIRED": "The ball to undo must be specified",
   "INVALID_BALL_EVENT_ID": "Invalid ball reference",

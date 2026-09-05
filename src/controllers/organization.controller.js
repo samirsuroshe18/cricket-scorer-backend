@@ -2,6 +2,7 @@ import catchAsync from '../utils/catchAsync.js';
 import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import { Organization } from '../models/organization.model.js';
+import { Team } from '../models/team.model.js';
 
 const asString = (value) => (typeof value === 'string' ? value : '');
 
@@ -37,4 +38,25 @@ const createOrganization = catchAsync(async (req, res) => {
     }, req.t("ORGANIZATION_CREATED")));
 });
 
-export { createOrganization };
+const listMyOrganizations = catchAsync(async (req, res) => {
+    const orgs = await Organization.find({ 'members.user': req.user._id, isDeleted: false }).sort({ createdAt: -1 });
+
+    const orgIds = orgs.map((org) => org._id);
+    const teamCounts = await Team.aggregate([
+        { $match: { organization: { $in: orgIds }, isDeleted: false } },
+        { $group: { _id: '$organization', count: { $sum: 1 } } },
+    ]);
+    const teamCountByOrgId = new Map(teamCounts.map((row) => [String(row._id), row.count]));
+
+    return res.status(200).json(new ApiResponse(200, {
+        organizations: orgs.map((org) => ({
+            id: org._id,
+            name: org.name,
+            myRole: org.members.find((m) => m.user.equals(req.user._id))?.role ?? 'member',
+            memberCount: org.members.length,
+            teamCount: teamCountByOrgId.get(String(org._id)) ?? 0,
+        })),
+    }, req.t("ORGANIZATIONS_FETCHED")));
+});
+
+export { createOrganization, listMyOrganizations };
