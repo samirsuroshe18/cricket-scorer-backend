@@ -4,6 +4,7 @@ import translationRouter from '../src/routes/translation.routes.js';
 import playerRouter from '../src/routes/player.routes.js';
 import teamRouter from '../src/routes/team.routes.js';
 import organizationRouter from '../src/routes/organization.routes.js';
+import tournamentRouter from '../src/routes/tournament.routes.js';
 import { verifyJwt } from '../src/middlewares/auth.middleware.js';
 
 // Auth in this app is opt-in, per-route and positional: `verifyJwt` is an
@@ -63,6 +64,9 @@ const PUBLIC_ROUTES = {
     // Every organization route manages or reads a specific org's members/
     // teams, same reasoning as team above.
     organization: [],
+    // Every tournament route reads or manages a specific org's tournament,
+    // same reasoning as organization above.
+    tournament: [],
 };
 
 // `catchAsync` returns an anonymous arrow, so `verifyJwt.name` is the empty
@@ -104,6 +108,7 @@ const ROUTERS = {
     player: playerRouter,
     team: teamRouter,
     organization: organizationRouter,
+    tournament: tournamentRouter,
 };
 
 describe('every route is authenticated unless explicitly allowlisted', () => {

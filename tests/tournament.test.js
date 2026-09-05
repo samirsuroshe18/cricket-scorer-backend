@@ -9,7 +9,7 @@ let app;
 beforeAll(async () => {
   await connectTestDb();
   await Tournament.init();
-  app = buildTestApp({ withOrganization: true });
+  app = buildTestApp({ withOrganization: true, withTournament: true });
 });
 
 afterEach(async () => {
@@ -25,6 +25,12 @@ const createOrg = (token, body) =>
 
 const createTournament = (token, orgId, body) =>
   request(app).post(`/api/v1/organization/${orgId}/tournaments`).set('Authorization', `Bearer ${token}`).send(body);
+
+const createOrgTeam = (token, orgId, body) =>
+  request(app).post(`/api/v1/organization/${orgId}/teams`).set('Authorization', `Bearer ${token}`).send(body);
+
+const getTournament = (token, tournamentId) =>
+  request(app).get(`/api/v1/tournament/${tournamentId}`).set('Authorization', `Bearer ${token}`).send();
 
 describe('POST /v1/organization/:orgId/tournaments', () => {
   it('creates a tournament under the organization', async () => {
@@ -120,5 +126,46 @@ describe('POST /v1/organization/:orgId/tournaments', () => {
     const res = await createTournament(token2, org2.body.data.id, { name: 'Summer T20', format: 'knockout' });
 
     expect(res.status).toBe(200);
+  });
+});
+
+describe('GET /v1/tournament/:tournamentId', () => {
+  it("404s for a tournamentId that doesn't exist", async () => {
+    const { token } = await createTestUser();
+
+    const res = await getTournament(token, '665f3b1c2d3e4f5a6b7c8d90');
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('TOURNAMENT_NOT_FOUND');
+  });
+
+  it('403s for a caller who is not a member of the owning organization', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const orgRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const tournamentRes = await createTournament(ownerToken, orgRes.body.data.id, { name: 'Summer T20', format: 'knockout' });
+    const { token: strangerToken } = await createTestUser({ email: 'stranger@example.com' });
+
+    const res = await getTournament(strangerToken, tournamentRes.body.data.id);
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('NOT_ORG_MEMBER');
+  });
+
+  it('returns the tournament with its organization for an org member', async () => {
+    const { token } = await createTestUser();
+    const orgRes = await createOrg(token, { name: 'Riverside CC' });
+    const orgId = orgRes.body.data.id;
+    const tournamentRes = await createTournament(token, orgId, { name: 'Summer T20', format: 'knockout' });
+
+    const res = await getTournament(token, tournamentRes.body.data.id);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({
+      name: 'Summer T20',
+      format: 'knockout',
+      status: 'upcoming',
+      organization: { id: orgId, name: 'Riverside CC' },
+      teams: [],
+    });
   });
 });

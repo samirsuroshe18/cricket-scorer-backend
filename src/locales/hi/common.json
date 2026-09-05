@@ -151,6 +151,8 @@
   "INVALID_TOURNAMENT_FORMAT": "यह एक मान्य टूर्नामेंट प्रारूप नहीं है",
   "TOURNAMENT_NAME_TAKEN": "इस संगठन में पहले से ही इस नाम का एक टूर्नामेंट है",
   "TOURNAMENT_CREATED": "टूर्नामेंट बनाया गया",
+  "TOURNAMENT_NOT_FOUND": "वह टूर्नामेंट नहीं मिल सका",
+  "TOURNAMENT_FETCHED": "टूर्नामेंट प्राप्त हुआ",
   "BALL_UNDONE": "गेंद वापस ली गई",
   "BALL_EVENT_ID_REQUIRED": "वापस लेने वाली गेंद बतानी आवश्यक है",
   "INVALID_BALL_EVENT_ID": "अमान्य गेंद संदर्भ",

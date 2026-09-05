@@ -151,6 +151,8 @@
   "INVALID_TOURNAMENT_FORMAT": "That isn't a valid tournament format",
   "TOURNAMENT_NAME_TAKEN": "This organization already has a tournament with this name",
   "TOURNAMENT_CREATED": "Tournament created",
+  "TOURNAMENT_NOT_FOUND": "That tournament couldn't be found",
+  "TOURNAMENT_FETCHED": "Tournament fetched",
   "BALL_UNDONE": "Ball undone",
   "BALL_EVENT_ID_REQUIRED": "The ball to undo must be specified",
   "INVALID_BALL_EVENT_ID": "Invalid ball reference",

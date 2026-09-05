@@ -151,6 +151,8 @@
   "INVALID_TOURNAMENT_FORMAT": "हा वैध स्पर्धा प्रकार नाही",
   "TOURNAMENT_NAME_TAKEN": "या संस्थेत या नावाची स्पर्धा आधीच आहे",
   "TOURNAMENT_CREATED": "स्पर्धा तयार झाली",
+  "TOURNAMENT_NOT_FOUND": "ती स्पर्धा सापडली नाही",
+  "TOURNAMENT_FETCHED": "स्पर्धा मिळाली",
   "BALL_UNDONE": "चेंडू मागे घेतला",
   "BALL_EVENT_ID_REQUIRED": "मागे घ्यायचा चेंडू नमूद करणे आवश्यक आहे",
   "INVALID_BALL_EVENT_ID": "अवैध चेंडू संदर्भ",
