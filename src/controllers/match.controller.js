@@ -2518,7 +2518,7 @@ const getMatchHistory = catchAsync(async (req, res) => {
         throw new ApiError(400, "INVALID_PAGINATION", { params: { max: MAX_HISTORY_LIMIT } });
     }
 
-    const filter = { createdBy: req.user._id, isDeleted: false };
+    const filter = { $or: [{ createdBy: req.user._id }, { assignedScorer: req.user._id }], isDeleted: false };
 
     const [matches, total] = await Promise.all([
         Match.find(filter)
@@ -2533,6 +2533,15 @@ const getMatchHistory = catchAsync(async (req, res) => {
     const teamIds = [...new Set(matches.flatMap((match) => [String(match.teamA), String(match.teamB)]))];
     const teams = await Team.find({ _id: { $in: teamIds } });
     const teamNameById = new Map(teams.map((team) => [String(team._id), team.name]));
+
+    // Same batching reasoning as teamIds above — one lookup for every
+    // createdBy/assignedScorer this page needs a display name for.
+    const userIds = [...new Set(matches.flatMap((match) => [
+        match.createdBy ? String(match.createdBy) : null,
+        match.assignedScorer ? String(match.assignedScorer) : null,
+    ]).filter(Boolean))];
+    const users = await User.find({ _id: { $in: userIds } }, 'fullName');
+    const userNameById = new Map(users.map((user) => [String(user._id), user.fullName]));
 
     return res.status(200).json(new ApiResponse(200, {
         matches: matches.map((match) => ({
@@ -2550,6 +2559,12 @@ const getMatchHistory = catchAsync(async (req, res) => {
             result: match.result ?? null,
             tossWinner: match.tossWinner ?? null,
             tossDecision: match.tossDecision ?? null,
+            createdBy: match.createdBy
+                ? { id: match.createdBy, name: userNameById.get(String(match.createdBy)) ?? null }
+                : null,
+            assignedScorer: match.assignedScorer
+                ? { id: match.assignedScorer, name: userNameById.get(String(match.assignedScorer)) ?? null }
+                : null,
             createdAt: match.createdAt,
         })),
         page,

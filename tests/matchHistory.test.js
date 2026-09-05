@@ -12,7 +12,7 @@ describe('GET /v1/match/history', () => {
 
   beforeAll(async () => {
     await connectTestDb();
-    app = buildTestApp();
+    app = buildTestApp({ withOrganization: true });
   });
 
   afterEach(async () => {
@@ -129,5 +129,49 @@ describe('GET /v1/match/history', () => {
 
     expect(res.body.data.matches[0].tossWinner).toBeNull();
     expect(res.body.data.matches[0].tossDecision).toBeNull();
+  });
+
+  it('includes a match the caller is the assigned scorer on, not just ones they created', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const { token: scorerToken, user: scorer } = await createTestUser({ email: 'scorer@example.com' });
+    const orgRes = await request(app).post('/api/v1/organization').set('Authorization', `Bearer ${ownerToken}`).send({ name: 'Org' });
+    const orgId = orgRes.body.data.id;
+    await request(app).post(`/api/v1/organization/${orgId}/members`).set('Authorization', `Bearer ${ownerToken}`).send({ email: scorer.email });
+    const teamRes = await request(app).post(`/api/v1/organization/${orgId}/teams`).set('Authorization', `Bearer ${ownerToken}`).send({ name: 'Org Team' });
+    const matchId = await createMatch(app, ownerToken, { teamAId: teamRes.body.data.id, teamBName: 'Visitors' });
+    await request(app).patch(`/api/v1/match/${matchId}/scorer`).set('Authorization', `Bearer ${ownerToken}`).send({ scorerId: String(scorer._id) });
+
+    const res = await history(scorerToken);
+
+    expect(res.status).toBe(200);
+    const match = res.body.data.matches.find((m) => m.matchId === matchId);
+    expect(match).toBeDefined();
+    expect(match.createdBy.id).toBeDefined();
+    expect(match.assignedScorer.id).toBe(String(scorer._id));
+  });
+
+  it("shows the assignedScorer on the creator's own list once delegated", async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner2@example.com' });
+    const { token: scorerToken, user: scorer } = await createTestUser({ email: 'scorer2@example.com' });
+    const orgRes = await request(app).post('/api/v1/organization').set('Authorization', `Bearer ${ownerToken}`).send({ name: 'Org 2' });
+    const orgId = orgRes.body.data.id;
+    await request(app).post(`/api/v1/organization/${orgId}/members`).set('Authorization', `Bearer ${ownerToken}`).send({ email: scorer.email });
+    const teamRes = await request(app).post(`/api/v1/organization/${orgId}/teams`).set('Authorization', `Bearer ${ownerToken}`).send({ name: 'Org Team 2' });
+    const matchId = await createMatch(app, ownerToken, { teamAId: teamRes.body.data.id, teamBName: 'Visitors' });
+    await request(app).patch(`/api/v1/match/${matchId}/scorer`).set('Authorization', `Bearer ${ownerToken}`).send({ scorerId: String(scorer._id) });
+
+    const res = await history(ownerToken);
+
+    const match = res.body.data.matches.find((m) => m.matchId === matchId);
+    expect(match.assignedScorer).toMatchObject({ id: String(scorer._id) });
+  });
+
+  it('still shows assignedScorer as null for a match with no delegation', async () => {
+    const { token } = await createTestUser({ email: 'solo@example.com' });
+    await createMatch(app, token);
+
+    const res = await history(token);
+
+    expect(res.body.data.matches[0].assignedScorer).toBeNull();
   });
 });

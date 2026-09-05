@@ -13,7 +13,7 @@ describe('GET /v1/team/:teamId/matches', () => {
 
   beforeAll(async () => {
     await connectTestDb();
-    app = buildTestApp({ withTeam: true });
+    app = buildTestApp({ withTeam: true, withOrganization: true });
   });
 
   afterEach(async () => {
@@ -125,5 +125,25 @@ describe('GET /v1/team/:teamId/matches', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('INVALID_PAGINATION');
+  });
+
+  it('carries createdBy/assignedScorer on each entry', async () => {
+    const { token: ownerToken, user: owner } = await createTestUser({ email: 'owner@example.com' });
+    const { user: scorer } = await createTestUser({ email: 'scorer@example.com' });
+    const orgRes = await request(app).post('/api/v1/organization').set('Authorization', `Bearer ${ownerToken}`).send({ name: 'Org' });
+    const orgId = orgRes.body.data.id;
+    await request(app).post(`/api/v1/organization/${orgId}/members`).set('Authorization', `Bearer ${ownerToken}`).send({ email: scorer.email });
+    const teamRes = await request(app).post(`/api/v1/organization/${orgId}/teams`).set('Authorization', `Bearer ${ownerToken}`).send({ name: 'Org Team' });
+    const teamId = teamRes.body.data.id;
+    const matchRes = await createMatch(ownerToken, { teamAId: teamId, teamBName: 'Visitors' });
+    const matchId = matchRes.body.data.matchId;
+    await request(app).patch(`/api/v1/match/${matchId}/scorer`).set('Authorization', `Bearer ${ownerToken}`).send({ scorerId: String(scorer._id) });
+
+    const res = await teamMatches(ownerToken, teamId);
+
+    expect(res.status).toBe(200);
+    const match = res.body.data.matches.find((m) => m.matchId === matchId);
+    expect(match.createdBy).toMatchObject({ id: String(owner._id) });
+    expect(match.assignedScorer).toMatchObject({ id: String(scorer._id) });
   });
 });
