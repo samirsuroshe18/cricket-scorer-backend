@@ -162,6 +162,8 @@
   "TEAM_NOT_IN_ORGANIZATION": "That team doesn't belong to this tournament's organization",
   "TEAM_ALREADY_IN_TOURNAMENT": "That team is already in this tournament",
   "TEAM_ADDED_TO_TOURNAMENT": "Team added to tournament",
+  "TEAM_NOT_IN_TOURNAMENT": "That team isn't in this tournament",
+  "TEAM_REMOVED_FROM_TOURNAMENT": "Team removed from tournament",
   "BALL_UNDONE": "Ball undone",
   "BALL_EVENT_ID_REQUIRED": "The ball to undo must be specified",
   "INVALID_BALL_EVENT_ID": "Invalid ball reference",

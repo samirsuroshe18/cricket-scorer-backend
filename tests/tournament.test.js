@@ -44,6 +44,9 @@ const addOrgMember = (token, orgId, email) =>
 const addTeam = (token, tournamentId, body) =>
   request(app).post(`/api/v1/tournament/${tournamentId}/teams`).set('Authorization', `Bearer ${token}`).send(body);
 
+const removeTeam = (token, tournamentId, teamId) =>
+  request(app).delete(`/api/v1/tournament/${tournamentId}/teams/${teamId}`).set('Authorization', `Bearer ${token}`).send();
+
 describe('POST /v1/organization/:orgId/tournaments', () => {
   it('creates a tournament under the organization', async () => {
     const { token } = await createTestUser();
@@ -360,5 +363,54 @@ describe('POST /v1/tournament/:tournamentId/teams', () => {
 
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('TEAM_NOT_FOUND');
+  });
+});
+
+describe('DELETE /v1/tournament/:tournamentId/teams/:teamId', () => {
+  it('removes an enrolled team', async () => {
+    const { token } = await createTestUser();
+    const orgRes = await createOrg(token, { name: 'Riverside CC' });
+    const orgId = orgRes.body.data.id;
+    const tournamentRes = await createTournament(token, orgId, { name: 'Summer T20', format: 'knockout' });
+    const tournamentId = tournamentRes.body.data.id;
+    const teamRes = await createOrgTeam(token, orgId, { name: 'Riverside U19' });
+    await addTeam(token, tournamentId, { teamId: teamRes.body.data.id });
+
+    const res = await removeTeam(token, tournamentId, teamRes.body.data.id);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({ tournamentId, teamId: teamRes.body.data.id });
+
+    const after = await getTournament(token, tournamentId);
+    expect(after.body.data.teams).toEqual([]);
+  });
+
+  it("404s when the team isn't enrolled", async () => {
+    const { token } = await createTestUser();
+    const orgRes = await createOrg(token, { name: 'Riverside CC' });
+    const orgId = orgRes.body.data.id;
+    const tournamentRes = await createTournament(token, orgId, { name: 'Summer T20', format: 'knockout' });
+    const teamRes = await createOrgTeam(token, orgId, { name: 'Riverside U19' });
+
+    const res = await removeTeam(token, tournamentRes.body.data.id, teamRes.body.data.id);
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('TEAM_NOT_IN_TOURNAMENT');
+  });
+
+  it('403s when an org member who is not the owner tries to remove a team', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const orgRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const orgId = orgRes.body.data.id;
+    const tournamentRes = await createTournament(ownerToken, orgId, { name: 'Summer T20', format: 'knockout' });
+    const teamRes = await createOrgTeam(ownerToken, orgId, { name: 'Riverside U19' });
+    await addTeam(ownerToken, tournamentRes.body.data.id, { teamId: teamRes.body.data.id });
+    const { token: memberToken } = await createTestUser({ email: 'member@example.com' });
+    await addOrgMember(ownerToken, orgId, 'member@example.com');
+
+    const res = await removeTeam(memberToken, tournamentRes.body.data.id, teamRes.body.data.id);
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('TOURNAMENT_NOT_OWNED');
   });
 });

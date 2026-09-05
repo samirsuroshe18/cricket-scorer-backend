@@ -162,6 +162,8 @@
   "TEAM_NOT_IN_ORGANIZATION": "वह टीम इस टूर्नामेंट के संगठन से संबंधित नहीं है",
   "TEAM_ALREADY_IN_TOURNAMENT": "वह टीम पहले से ही इस टूर्नामेंट में है",
   "TEAM_ADDED_TO_TOURNAMENT": "टीम को टूर्नामेंट में जोड़ा गया",
+  "TEAM_NOT_IN_TOURNAMENT": "वह टीम इस टूर्नामेंट में नहीं है",
+  "TEAM_REMOVED_FROM_TOURNAMENT": "टीम को टूर्नामेंट से हटाया गया",
   "BALL_UNDONE": "गेंद वापस ली गई",
   "BALL_EVENT_ID_REQUIRED": "वापस लेने वाली गेंद बतानी आवश्यक है",
   "INVALID_BALL_EVENT_ID": "अमान्य गेंद संदर्भ",

@@ -162,6 +162,8 @@
   "TEAM_NOT_IN_ORGANIZATION": "तो संघ या स्पर्धेच्या संस्थेशी संबंधित नाही",
   "TEAM_ALREADY_IN_TOURNAMENT": "तो संघ आधीच या स्पर्धेत आहे",
   "TEAM_ADDED_TO_TOURNAMENT": "संघ स्पर्धेत जोडला",
+  "TEAM_NOT_IN_TOURNAMENT": "तो संघ या स्पर्धेत नाही",
+  "TEAM_REMOVED_FROM_TOURNAMENT": "संघ स्पर्धेतून काढला",
   "BALL_UNDONE": "चेंडू मागे घेतला",
   "BALL_EVENT_ID_REQUIRED": "मागे घ्यायचा चेंडू नमूद करणे आवश्यक आहे",
   "INVALID_BALL_EVENT_ID": "अवैध चेंडू संदर्भ",

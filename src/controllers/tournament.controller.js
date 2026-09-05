@@ -148,6 +148,21 @@ const addTournamentTeam = catchAsync(async (req, res) => {
     }, req.t("TEAM_ADDED_TO_TOURNAMENT")));
 });
 
+const removeTournamentTeam = catchAsync(async (req, res) => {
+    const { tournamentId, teamId } = req.params;
+    const { tournament } = await findOwnedTournament(tournamentId, req.user._id);
+
+    const wasEnrolled = tournament.teams.some((entry) => entry.team.equals(teamId));
+    if (!wasEnrolled) {
+        throw new ApiError(404, "TEAM_NOT_IN_TOURNAMENT");
+    }
+
+    tournament.teams = tournament.teams.filter((entry) => !entry.team.equals(teamId));
+    await tournament.save();
+
+    return res.status(200).json(new ApiResponse(200, { tournamentId: tournament._id, teamId }, req.t("TEAM_REMOVED_FROM_TOURNAMENT")));
+});
+
 export {
     findAccessibleTournament,
     findOwnedTournament,
@@ -155,4 +170,5 @@ export {
     updateTournament,
     deleteTournament,
     addTournamentTeam,
+    removeTournamentTeam,
 };
