@@ -4,7 +4,9 @@ import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import { Match } from '../models/match.model.js';
 import { Team } from '../models/team.model.js';
-import { canAccessTeam } from '../utils/organizationAccess.js';
+import { canAccessTeam, canAssignScorer, isOrgMember } from '../utils/organizationAccess.js';
+import { Organization } from '../models/organization.model.js';
+import { User } from '../models/user.model.js';
 import { Player } from '../models/player.model.js';
 import { Inning } from '../models/inning.model.js';
 import { Over } from '../models/over.model.js';
@@ -2411,6 +2413,99 @@ const deleteMatch = catchAsync(async (req, res) => {
     }, req.t("MATCH_DELETED")));
 });
 
+// Fetches both teams for the shared assign/candidates authorization check
+// below — neither assignScorer nor getScorerCandidates can decide anything
+// without knowing whether teamA/teamB belong to an organization.
+const loadMatchTeams = async (match) => {
+    const [teamA, teamB] = await Promise.all([
+        Team.findById(match.teamA),
+        Team.findById(match.teamB),
+    ]);
+    return { teamA, teamB };
+};
+
+const assignScorer = catchAsync(async (req, res) => {
+    const { matchId } = req.params;
+    const scorerId = req.body.scorerId ?? null;
+
+    const match = await Match.findOne({ _id: matchId, isDeleted: false });
+    if (!match) {
+        throw new ApiError(404, "MATCH_NOT_FOUND");
+    }
+
+    const { teamA, teamB } = await loadMatchTeams(match);
+
+    if (!(await canAssignScorer(match, teamA, teamB, req.user._id))) {
+        throw new ApiError(403, "MATCH_NOT_OWNED");
+    }
+
+    if (scorerId === null) {
+        match.assignedScorer = null;
+        await match.save();
+        return res.status(200).json(new ApiResponse(200, {
+            matchId: match._id,
+            assignedScorer: null,
+        }, req.t("SCORER_UNASSIGNED")));
+    }
+
+    const orgIds = [teamA.organization, teamB.organization].filter(Boolean);
+    if (orgIds.length === 0) {
+        throw new ApiError(400, "MATCH_NOT_ORG_LINKED");
+    }
+
+    const orgs = await Organization.find({ _id: { $in: orgIds }, isDeleted: false });
+    const isEligible = orgs.some((org) => isOrgMember(org, scorerId));
+    if (!isEligible) {
+        throw new ApiError(400, "INVALID_SCORER");
+    }
+
+    match.assignedScorer = scorerId;
+    await match.save();
+
+    const scorer = await User.findById(scorerId, 'fullName');
+
+    return res.status(200).json(new ApiResponse(200, {
+        matchId: match._id,
+        assignedScorer: { id: scorerId, name: scorer?.fullName ?? null },
+    }, req.t("SCORER_ASSIGNED")));
+});
+
+const getScorerCandidates = catchAsync(async (req, res) => {
+    const { matchId } = req.params;
+
+    const match = await Match.findOne({ _id: matchId, isDeleted: false });
+    if (!match) {
+        throw new ApiError(404, "MATCH_NOT_FOUND");
+    }
+
+    const { teamA, teamB } = await loadMatchTeams(match);
+
+    if (!(await canAssignScorer(match, teamA, teamB, req.user._id))) {
+        throw new ApiError(403, "MATCH_NOT_OWNED");
+    }
+
+    const orgIds = [teamA.organization, teamB.organization].filter(Boolean);
+    if (orgIds.length === 0) {
+        return res.status(200).json(new ApiResponse(200, { candidates: [] }, req.t("SCORER_CANDIDATES_FETCHED")));
+    }
+
+    const orgs = await Organization.find({ _id: { $in: orgIds }, isDeleted: false });
+    await Promise.all(orgs.map((org) => org.populate('members.user', 'fullName')));
+
+    // Deduped by user id — the same person can be a member of both teams'
+    // orgs (or, once one is set, own both) and should appear once.
+    const candidateById = new Map();
+    for (const org of orgs) {
+        for (const member of org.members) {
+            candidateById.set(String(member.user._id), { id: member.user._id, name: member.user.fullName });
+        }
+    }
+
+    return res.status(200).json(new ApiResponse(200, {
+        candidates: [...candidateById.values()],
+    }, req.t("SCORER_CANDIDATES_FETCHED")));
+});
+
 // The first list endpoint in this codebase — see the backend CLAUDE.md's own
 // pagination rule for why `?page`/`?limit` with an enforced max rather than
 // an unbounded `.find()`: Match is exactly the kind of collection this rule
@@ -2463,4 +2558,4 @@ const getMatchHistory = catchAsync(async (req, res) => {
     }, req.t("MATCH_HISTORY_FETCHED")));
 });
 
-export { createMatch, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };
+export { createMatch, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, assignScorer, getScorerCandidates, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };
