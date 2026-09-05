@@ -29,6 +29,12 @@ const matchSchema = new Schema(
     venue:           { type: String, trim: true, maxlength: 100 },
     matchType:       { type: String, default: 'friendly', enum: MATCH_TYPES },
     createdBy:       { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    // The one delegated scorer for this match, distinct from `createdBy` —
+    // see docs/api.md's PATCH /v1/match/:matchId/scorer. Null on every
+    // match that predates this feature and every ad-hoc match since: it is
+    // only ever set via that endpoint, which itself refuses to set it on a
+    // match where neither team belongs to an organization.
+    assignedScorer:  { type: Schema.Types.ObjectId, ref: 'User', default: null },
     // The share code a spectator types. Uppercase on write so lookups can
     // uppercase the input and compare directly — a code read out across a
     // ground comes back in whatever case the typist felt like.
@@ -43,6 +49,9 @@ const matchSchema = new Schema(
 
 // Compound index for history screen: my matches, newest first
 matchSchema.index({ createdBy: 1, createdAt: -1 });
+// Mirrors the createdBy index above — backs GET /v1/match/history's
+// widened $or: [{createdBy}, {assignedScorer}] filter.
+matchSchema.index({ assignedScorer: 1, createdAt: -1 });
 // Also serves equality queries on `status` alone — don't add a separate
 // single-field index on `status`, it would be a redundant prefix of this one.
 matchSchema.index({ status: 1, createdAt: -1 });
