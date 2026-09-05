@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import catchAsync from '../utils/catchAsync.js';
 import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
@@ -150,6 +151,15 @@ const addTournamentTeam = catchAsync(async (req, res) => {
 
 const removeTournamentTeam = catchAsync(async (req, res) => {
     const { tournamentId, teamId } = req.params;
+    // teamId here is only ever compared in-memory against the tournament's
+    // own embedded roster — it never reaches a Mongoose query the way
+    // tournamentId does — so a malformed value would never hit the CastError
+    // path errorHandler.js turns into INVALID_ID. ObjectId#equals returns
+    // false (not a throw) for a non-ObjectId-shaped string, so without this
+    // check a garbage teamId silently falls through to the wrong 404.
+    if (!mongoose.Types.ObjectId.isValid(teamId)) {
+        throw new ApiError(400, "INVALID_ID");
+    }
     const { tournament } = await findOwnedTournament(tournamentId, req.user._id);
 
     const wasEnrolled = tournament.teams.some((entry) => entry.team.equals(teamId));

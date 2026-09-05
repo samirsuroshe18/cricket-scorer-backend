@@ -293,6 +293,18 @@ describe('DELETE /v1/tournament/:tournamentId', () => {
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('TOURNAMENT_NOT_OWNED');
   });
+
+  it("403s when a caller who isn't even a member of the organization tries to delete", async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const orgRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const tournamentRes = await createTournament(ownerToken, orgRes.body.data.id, { name: 'Summer T20', format: 'knockout' });
+    const { token: strangerToken } = await createTestUser({ email: 'stranger@example.com' });
+
+    const res = await deleteTournament(strangerToken, tournamentRes.body.data.id);
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('NOT_ORG_MEMBER');
+  });
 });
 
 describe('POST /v1/tournament/:tournamentId/teams', () => {
@@ -354,6 +366,20 @@ describe('POST /v1/tournament/:tournamentId/teams', () => {
     expect(res.body.code).toBe('TOURNAMENT_NOT_OWNED');
   });
 
+  it("403s when a caller who isn't even a member of the organization tries to enroll a team", async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const orgRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const orgId = orgRes.body.data.id;
+    const tournamentRes = await createTournament(ownerToken, orgId, { name: 'Summer T20', format: 'knockout' });
+    const teamRes = await createOrgTeam(ownerToken, orgId, { name: 'Riverside U19' });
+    const { token: strangerToken } = await createTestUser({ email: 'stranger@example.com' });
+
+    const res = await addTeam(strangerToken, tournamentRes.body.data.id, { teamId: teamRes.body.data.id });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('NOT_ORG_MEMBER');
+  });
+
   it('404s for a nonexistent teamId', async () => {
     const { token } = await createTestUser();
     const orgRes = await createOrg(token, { name: 'Riverside CC' });
@@ -396,6 +422,32 @@ describe('DELETE /v1/tournament/:tournamentId/teams/:teamId', () => {
 
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('TEAM_NOT_IN_TOURNAMENT');
+  });
+
+  it('400s for a malformed teamId, rather than a false "not in tournament"', async () => {
+    const { token } = await createTestUser();
+    const orgRes = await createOrg(token, { name: 'Riverside CC' });
+    const tournamentRes = await createTournament(token, orgRes.body.data.id, { name: 'Summer T20', format: 'knockout' });
+
+    const res = await removeTeam(token, tournamentRes.body.data.id, 'not-a-valid-id');
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INVALID_ID');
+  });
+
+  it("403s when a caller who isn't even a member of the organization tries to remove a team", async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const orgRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const orgId = orgRes.body.data.id;
+    const tournamentRes = await createTournament(ownerToken, orgId, { name: 'Summer T20', format: 'knockout' });
+    const teamRes = await createOrgTeam(ownerToken, orgId, { name: 'Riverside U19' });
+    await addTeam(ownerToken, tournamentRes.body.data.id, { teamId: teamRes.body.data.id });
+    const { token: strangerToken } = await createTestUser({ email: 'stranger@example.com' });
+
+    const res = await removeTeam(strangerToken, tournamentRes.body.data.id, teamRes.body.data.id);
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('NOT_ORG_MEMBER');
   });
 
   it('403s when an org member who is not the owner tries to remove a team', async () => {
