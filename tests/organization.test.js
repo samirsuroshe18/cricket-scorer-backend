@@ -194,3 +194,62 @@ describe('POST /v1/organization/:orgId/members', () => {
     expect(res.body.code).toBe('ALREADY_ORG_MEMBER');
   });
 });
+
+describe('DELETE /v1/organization/:orgId/members/:userId', () => {
+  const addMember = (token, orgId, body) =>
+    request(app).post(`/api/v1/organization/${orgId}/members`).set('Authorization', `Bearer ${token}`).send(body);
+
+  const removeMember = (token, orgId, userId) =>
+    request(app).delete(`/api/v1/organization/${orgId}/members/${userId}`).set('Authorization', `Bearer ${token}`).send();
+
+  it('lets the owner remove a member', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const { user: vikram } = await createTestUser({ email: 'vikram@example.com' });
+    const createRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const orgId = createRes.body.data.id;
+    await addMember(ownerToken, orgId, { email: 'vikram@example.com' });
+
+    const res = await removeMember(ownerToken, orgId, vikram._id);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({ orgId, userId: String(vikram._id) });
+  });
+
+  it('lets a member remove themselves', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const { token: vikramToken, user: vikram } = await createTestUser({ email: 'vikram@example.com' });
+    const createRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const orgId = createRes.body.data.id;
+    await addMember(ownerToken, orgId, { email: 'vikram@example.com' });
+
+    const res = await removeMember(vikramToken, orgId, vikram._id);
+
+    expect(res.status).toBe(200);
+  });
+
+  it('403s when a member (not the owner) tries to remove someone else', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const { token: vikramToken } = await createTestUser({ email: 'vikram@example.com' });
+    const { user: raj } = await createTestUser({ email: 'raj@example.com' });
+    const createRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const orgId = createRes.body.data.id;
+    await addMember(ownerToken, orgId, { email: 'vikram@example.com' });
+    await addMember(ownerToken, orgId, { email: 'raj@example.com' });
+
+    const res = await removeMember(vikramToken, orgId, raj._id);
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('ORG_NOT_OWNED');
+  });
+
+  it('400s when anyone, including the owner, targets the owner', async () => {
+    const { token: ownerToken, user: owner } = await createTestUser({ email: 'owner@example.com' });
+    const createRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const orgId = createRes.body.data.id;
+
+    const res = await removeMember(ownerToken, orgId, owner._id);
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('CANNOT_REMOVE_OWNER');
+  });
+});

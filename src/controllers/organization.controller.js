@@ -126,4 +126,27 @@ const addOrganizationMember = catchAsync(async (req, res) => {
     }, req.t("ORG_MEMBER_ADDED")));
 });
 
-export { createOrganization, listMyOrganizations, getOrganization, addOrganizationMember };
+const removeOrganizationMember = catchAsync(async (req, res) => {
+    const { orgId, userId } = req.params;
+    const org = await Organization.findOne({ _id: orgId, isDeleted: false });
+    if (!org) {
+        throw new ApiError(404, "ORG_NOT_FOUND");
+    }
+    if (org.owner.equals(userId)) {
+        throw new ApiError(400, "CANNOT_REMOVE_OWNER");
+    }
+    const isSelf = req.user._id.equals(userId);
+    if (!org.owner.equals(req.user._id) && !isSelf) {
+        throw new ApiError(403, "ORG_NOT_OWNED");
+    }
+    if (!isOrgMember(org, userId)) {
+        throw new ApiError(404, "NOT_ORG_MEMBER");
+    }
+
+    org.members = org.members.filter((m) => !m.user.equals(userId));
+    await org.save();
+
+    return res.status(200).json(new ApiResponse(200, { orgId: org._id, userId }, req.t("ORG_MEMBER_REMOVED")));
+});
+
+export { createOrganization, listMyOrganizations, getOrganization, addOrganizationMember, removeOrganizationMember };

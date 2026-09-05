@@ -135,6 +135,8 @@
   "ORG_NOT_OWNED": "ती संस्था तुमच्या खात्याची नाही",
   "ALREADY_ORG_MEMBER": "तो वापरकर्ता आधीच या संस्थेचा सदस्य आहे",
   "ORG_MEMBER_ADDED": "सदस्य जोडला गेला",
+  "CANNOT_REMOVE_OWNER": "संस्थेच्या मालकाला काढता येत नाही",
+  "ORG_MEMBER_REMOVED": "सदस्य काढला गेला",
   "BALL_UNDONE": "चेंडू मागे घेतला",
   "BALL_EVENT_ID_REQUIRED": "मागे घ्यायचा चेंडू नमूद करणे आवश्यक आहे",
   "INVALID_BALL_EVENT_ID": "अवैध चेंडू संदर्भ",

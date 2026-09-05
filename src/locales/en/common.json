@@ -135,6 +135,8 @@
   "ORG_NOT_OWNED": "That organization doesn't belong to your account",
   "ALREADY_ORG_MEMBER": "That user is already a member of this organization",
   "ORG_MEMBER_ADDED": "Member added",
+  "CANNOT_REMOVE_OWNER": "The organization's owner cannot be removed",
+  "ORG_MEMBER_REMOVED": "Member removed",
   "BALL_UNDONE": "Ball undone",
   "BALL_EVENT_ID_REQUIRED": "The ball to undo must be specified",
   "INVALID_BALL_EVENT_ID": "Invalid ball reference",
