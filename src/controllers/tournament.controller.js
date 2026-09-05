@@ -3,6 +3,7 @@ import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import { Tournament, TOURNAMENT_FORMATS, TOURNAMENT_STATUS } from '../models/tournament.model.js';
 import { Organization } from '../models/organization.model.js';
+import { Team } from '../models/team.model.js';
 import { isOrgMember } from '../utils/organizationAccess.js';
 
 const asString = (value) => (typeof value === 'string' ? value : '');
@@ -118,10 +119,40 @@ const deleteTournament = catchAsync(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, { tournamentId: tournament._id }, req.t("TOURNAMENT_DELETED")));
 });
 
+const addTournamentTeam = catchAsync(async (req, res) => {
+    const { tournamentId } = req.params;
+    const { tournament, org } = await findOwnedTournament(tournamentId, req.user._id);
+
+    const teamId = asString(req.body.teamId).trim();
+    if (!teamId) {
+        throw new ApiError(400, "TEAM_ID_REQUIRED");
+    }
+
+    const team = await Team.findOne({ _id: teamId, isDeleted: false });
+    if (!team) {
+        throw new ApiError(404, "TEAM_NOT_FOUND");
+    }
+    if (!team.organization?.equals(org._id)) {
+        throw new ApiError(400, "TEAM_NOT_IN_ORGANIZATION");
+    }
+    if (tournament.teams.some((entry) => entry.team.equals(team._id))) {
+        throw new ApiError(409, "TEAM_ALREADY_IN_TOURNAMENT");
+    }
+
+    tournament.teams.push({ team: team._id });
+    await tournament.save();
+
+    return res.status(200).json(new ApiResponse(200, {
+        tournamentId: tournament._id,
+        team: { id: team._id, name: team.name, shortName: team.shortName ?? null },
+    }, req.t("TEAM_ADDED_TO_TOURNAMENT")));
+});
+
 export {
     findAccessibleTournament,
     findOwnedTournament,
     getTournament,
     updateTournament,
     deleteTournament,
+    addTournamentTeam,
 };

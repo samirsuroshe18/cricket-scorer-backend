@@ -41,6 +41,9 @@ const deleteTournament = (token, tournamentId) =>
 const addOrgMember = (token, orgId, email) =>
   request(app).post(`/api/v1/organization/${orgId}/members`).set('Authorization', `Bearer ${token}`).send({ email });
 
+const addTeam = (token, tournamentId, body) =>
+  request(app).post(`/api/v1/tournament/${tournamentId}/teams`).set('Authorization', `Bearer ${token}`).send(body);
+
 describe('POST /v1/organization/:orgId/tournaments', () => {
   it('creates a tournament under the organization', async () => {
     const { token } = await createTestUser();
@@ -286,5 +289,76 @@ describe('DELETE /v1/tournament/:tournamentId', () => {
 
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('TOURNAMENT_NOT_OWNED');
+  });
+});
+
+describe('POST /v1/tournament/:tournamentId/teams', () => {
+  it("enrolls a team already in the tournament's organization", async () => {
+    const { token } = await createTestUser();
+    const orgRes = await createOrg(token, { name: 'Riverside CC' });
+    const orgId = orgRes.body.data.id;
+    const tournamentRes = await createTournament(token, orgId, { name: 'Summer T20', format: 'knockout' });
+    const teamRes = await createOrgTeam(token, orgId, { name: 'Riverside U19' });
+
+    const res = await addTeam(token, tournamentRes.body.data.id, { teamId: teamRes.body.data.id });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({
+      tournamentId: tournamentRes.body.data.id,
+      team: { id: teamRes.body.data.id, name: 'Riverside U19' },
+    });
+  });
+
+  it("400s for a team that doesn't belong to this tournament's organization", async () => {
+    const { token } = await createTestUser();
+    const orgRes = await createOrg(token, { name: 'Riverside CC' });
+    const otherOrgRes = await createOrg(token, { name: 'Downtown CC' });
+    const tournamentRes = await createTournament(token, orgRes.body.data.id, { name: 'Summer T20', format: 'knockout' });
+    const outsideTeamRes = await createOrgTeam(token, otherOrgRes.body.data.id, { name: 'Downtown XI' });
+
+    const res = await addTeam(token, tournamentRes.body.data.id, { teamId: outsideTeamRes.body.data.id });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('TEAM_NOT_IN_ORGANIZATION');
+  });
+
+  it('409s when the team is already enrolled', async () => {
+    const { token } = await createTestUser();
+    const orgRes = await createOrg(token, { name: 'Riverside CC' });
+    const orgId = orgRes.body.data.id;
+    const tournamentRes = await createTournament(token, orgId, { name: 'Summer T20', format: 'knockout' });
+    const teamRes = await createOrgTeam(token, orgId, { name: 'Riverside U19' });
+    await addTeam(token, tournamentRes.body.data.id, { teamId: teamRes.body.data.id });
+
+    const res = await addTeam(token, tournamentRes.body.data.id, { teamId: teamRes.body.data.id });
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('TEAM_ALREADY_IN_TOURNAMENT');
+  });
+
+  it('403s when an org member who is not the owner tries to enroll a team', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const orgRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const orgId = orgRes.body.data.id;
+    const tournamentRes = await createTournament(ownerToken, orgId, { name: 'Summer T20', format: 'knockout' });
+    const teamRes = await createOrgTeam(ownerToken, orgId, { name: 'Riverside U19' });
+    const { token: memberToken } = await createTestUser({ email: 'member@example.com' });
+    await addOrgMember(ownerToken, orgId, 'member@example.com');
+
+    const res = await addTeam(memberToken, tournamentRes.body.data.id, { teamId: teamRes.body.data.id });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('TOURNAMENT_NOT_OWNED');
+  });
+
+  it('404s for a nonexistent teamId', async () => {
+    const { token } = await createTestUser();
+    const orgRes = await createOrg(token, { name: 'Riverside CC' });
+    const tournamentRes = await createTournament(token, orgRes.body.data.id, { name: 'Summer T20', format: 'knockout' });
+
+    const res = await addTeam(token, tournamentRes.body.data.id, { teamId: '665f3b1c2d3e4f5a6b7c8d90' });
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('TEAM_NOT_FOUND');
   });
 });
