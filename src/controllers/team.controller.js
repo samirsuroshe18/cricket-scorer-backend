@@ -4,6 +4,7 @@ import ApiResponse from '../utils/ApiResponse.js';
 import { Team } from '../models/team.model.js';
 import { Match } from '../models/match.model.js';
 import { Organization } from '../models/organization.model.js';
+import { canAccessTeam, getMemberOrgIds } from '../utils/organizationAccess.js';
 import { DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT } from './match.controller.js';
 
 // Shared by getTeamProfile/getTeamMatches: both need the team to exist and
@@ -17,11 +18,17 @@ const findOwnedTeam = async (teamId, requesterId) => {
     if (!team) {
         throw new ApiError(404, "TEAM_NOT_FOUND");
     }
-    if (!team.createdBy?.equals(requesterId)) {
+    if (!(await canAccessTeam(team, requesterId))) {
         throw new ApiError(403, "TEAM_NOT_OWNED");
     }
     return team;
 };
+
+// A team's organization is populated here (name only — no endpoint needs
+// its members/owner) so the response can carry {id, name} per docs/api.md,
+// not the bare ObjectId Team.organization actually stores.
+const toOrganizationSummary = (organization) =>
+    organization ? { id: organization._id, name: organization.name } : null;
 
 // Same ownership pattern as getCareerStats: a malformed teamId throws a raw
 // Mongoose CastError from the query layer itself, which errorHandler already
@@ -32,11 +39,13 @@ const getTeamProfile = catchAsync(async (req, res) => {
 
     const team = await findOwnedTeam(teamId, req.user._id);
     await team.populate('players');
+    await team.populate('organization', 'name');
 
     return res.status(200).json(new ApiResponse(200, {
         teamId: team._id,
         name: team.name,
         shortName: team.shortName ?? null,
+        organization: toOrganizationSummary(team.organization),
         // No feature currently soft-deletes a Player, but the roster
         // shouldn't surface one if that ever changes — same defensive
         // filter as every other isDeleted:false query in this codebase.
@@ -104,13 +113,20 @@ const getTeamMatches = catchAsync(async (req, res) => {
 // scorer's own teams, so they can pass one back as teamAId/teamBId instead
 // of typing a name that createMatch would otherwise treat as brand new.
 const listMyTeams = catchAsync(async (req, res) => {
-    const teams = await Team.find({ createdBy: req.user._id, isDeleted: false }).sort({ createdAt: -1 });
+    const orgIds = await getMemberOrgIds(req.user._id);
+    const teams = await Team.find({
+        isDeleted: false,
+        $or: [{ createdBy: req.user._id }, { organization: { $in: orgIds } }],
+    })
+        .sort({ createdAt: -1 })
+        .populate('organization', 'name');
 
     return res.status(200).json(new ApiResponse(200, {
         teams: teams.map((team) => ({
             id: team._id,
             name: team.name,
             shortName: team.shortName ?? null,
+            organization: toOrganizationSummary(team.organization),
         })),
     }, req.t("MY_TEAMS_FETCHED")));
 });

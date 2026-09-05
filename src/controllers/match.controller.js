@@ -4,6 +4,7 @@ import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import { Match } from '../models/match.model.js';
 import { Team } from '../models/team.model.js';
+import { canAccessTeam } from '../utils/organizationAccess.js';
 import { Player } from '../models/player.model.js';
 import { Inning } from '../models/inning.model.js';
 import { Over } from '../models/over.model.js';
@@ -147,7 +148,7 @@ const resolveTeamSide = async (name, existingTeamId, createdBy) => {
         if (!team) {
             throw new ApiError(404, "TEAM_NOT_FOUND");
         }
-        if (!team.createdBy?.equals(createdBy)) {
+        if (!(await canAccessTeam(team, createdBy))) {
             throw new ApiError(403, "TEAM_NOT_OWNED");
         }
         return { existing: team, resolvedName: team.name };
