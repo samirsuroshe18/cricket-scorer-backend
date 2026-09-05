@@ -3,6 +3,7 @@ import userRouter from '../src/routes/user.routes.js';
 import translationRouter from '../src/routes/translation.routes.js';
 import playerRouter from '../src/routes/player.routes.js';
 import teamRouter from '../src/routes/team.routes.js';
+import organizationRouter from '../src/routes/organization.routes.js';
 import { verifyJwt } from '../src/middlewares/auth.middleware.js';
 
 // Auth in this app is opt-in, per-route and positional: `verifyJwt` is an
@@ -59,14 +60,29 @@ const PUBLIC_ROUTES = {
     // Every team route reads or lists a specific scorer's own teams/rosters,
     // same reasoning as player above.
     team: [],
+    // Every organization route manages or reads a specific org's members/
+    // teams, same reasoning as team above.
+    organization: [],
 };
 
 // `catchAsync` returns an anonymous arrow, so `verifyJwt.name` is the empty
 // string and any name-based check would match every unnamed handler and pass
 // vacuously — proving nothing while looking thorough. Comparing against the
 // imported reference by identity is what actually holds.
-const isProtected = (route) =>
-    (route.stack ?? []).some((layer) => layer.handle === verifyJwt);
+//
+// Method-scoped, not route-scoped: `router.route(path)` shares one `.stack`
+// across every HTTP method chained onto it (`.get(a).delete(verifyJwt, b)`
+// pushes both layers onto the same array), and each layer carries its own
+// `.method`. Checking the whole stack for "any verifyJwt anywhere" lets one
+// protected method mask an unprotected sibling on the same path — a route
+// declared as `.get(getOrganization).delete(verifyJwt, deleteOrganization)`
+// would read as fully protected even though GET carries no auth at all.
+// Filtering to layers whose `.method` matches the one being checked is what
+// makes this actually per-route-per-method instead of per-path.
+const isProtected = (route, method) =>
+    (route.stack ?? [])
+        .filter((layer) => layer.method === method)
+        .some((layer) => layer.handle === verifyJwt);
 
 const routesOf = (router) =>
     router.stack
@@ -77,6 +93,7 @@ const routesOf = (router) =>
                 .map((method) => ({
                     signature: `${method.toUpperCase()} ${layer.route.path}`,
                     route: layer.route,
+                    method,
                 }))
         );
 
@@ -86,6 +103,7 @@ const ROUTERS = {
     translation: translationRouter,
     player: playerRouter,
     team: teamRouter,
+    organization: organizationRouter,
 };
 
 describe('every route is authenticated unless explicitly allowlisted', () => {
@@ -93,7 +111,7 @@ describe('every route is authenticated unless explicitly allowlisted', () => {
         const allowed = PUBLIC_ROUTES[name];
 
         const unprotected = routesOf(ROUTERS[name])
-            .filter(({ route }) => !isProtected(route))
+            .filter(({ route, method }) => !isProtected(route, method))
             .map(({ signature }) => signature)
             .filter((signature) => !allowed.includes(signature));
 
@@ -110,7 +128,7 @@ describe('every route is authenticated unless explicitly allowlisted', () => {
             .find(({ signature }) => signature === 'POST /:matchId/score-ball');
 
         expect(scoreBall).toBeDefined();
-        expect(isProtected(scoreBall.route)).toBe(true);
+        expect(isProtected(scoreBall.route, scoreBall.method)).toBe(true);
     });
 
     // The allowlist must not rot into a list of routes that no longer exist,
@@ -138,8 +156,8 @@ describe('the public spectator route is read-only', () => {
             .filter(({ signature }) => !signature.includes('/public/'));
 
         expect(scoring.length).toBeGreaterThan(0);
-        for (const { signature, route } of scoring) {
-            expect([signature, isProtected(route)]).toEqual([signature, true]);
+        for (const { signature, route, method } of scoring) {
+            expect([signature, isProtected(route, method)]).toEqual([signature, true]);
         }
     });
 });
