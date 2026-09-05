@@ -6,6 +6,7 @@ import matchRouter from '../../src/routes/match.routes.js';
 import translationRouter from '../../src/routes/translation.routes.js';
 import playerRouter from '../../src/routes/player.routes.js';
 import teamRouter from '../../src/routes/team.routes.js';
+import organizationRouter from '../../src/routes/organization.routes.js';
 
 /**
  * A minimal Express app, not the real `src/app.js` — that file initializes
@@ -20,7 +21,7 @@ import teamRouter from '../../src/routes/team.routes.js';
  * same reasoning: every existing caller only exercises `matchRouter` and
  * shouldn't pay for (or accidentally rely on) a router it never asked for.
  */
-export const buildTestApp = ({ withTranslations = false, withPlayer = false, withTeam = false } = {}) => {
+export const buildTestApp = ({ withTranslations = false, withPlayer = false, withTeam = false, withOrganization = false } = {}) => {
   const app = express();
   app.use(express.json());
   app.use(sanitizeMiddleware);
@@ -34,6 +35,9 @@ export const buildTestApp = ({ withTranslations = false, withPlayer = false, wit
   }
   if (withTeam) {
     app.use('/api/v1/team', teamRouter);
+  }
+  if (withOrganization) {
+    app.use('/api/v1/organization', organizationRouter);
   }
   app.use(errorHandler);
   return app;

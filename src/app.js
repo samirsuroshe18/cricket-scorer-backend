@@ -60,6 +60,7 @@ import translationRouter from './routes/translation.routes.js';
 import matchRouter from './routes/match.routes.js';
 import playerRouter from './routes/player.routes.js';
 import teamRouter from './routes/team.routes.js';
+import organizationRouter from './routes/organization.routes.js';
 
 //Routes declaration
 app.use("/api/v1/user", userRouter);
@@ -67,6 +68,7 @@ app.use("/api/v1/translations", translationRouter);
 app.use("/api/v1/match", matchRouter);
 app.use("/api/v1/player", playerRouter);
 app.use("/api/v1/team", teamRouter);
+app.use("/api/v1/organization", organizationRouter);
 
 // Custom error handeling
 app.use(errorHandler)
