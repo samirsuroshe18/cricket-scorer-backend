@@ -236,6 +236,12 @@ const deleteOrganization = catchAsync(async (req, res) => {
         await session.withTransaction(async () => {
             await Organization.updateOne({ _id: org._id }, { $set: { isDeleted: true } }, { session });
             await Team.updateMany({ organization: org._id }, { $set: { organization: null } }, { session });
+            // Unlike Team, a Tournament can't be orphaned back to standalone —
+            // `organization` is required (tournament.model.js) since
+            // tournament hosting has no ad-hoc/standalone case. The only way
+            // to keep "every non-deleted Tournament has a non-deleted
+            // Organization" true is to soft-delete them along with the org.
+            await Tournament.updateMany({ organization: org._id }, { $set: { isDeleted: true } }, { session });
         });
     } finally {
         await session.endSession();

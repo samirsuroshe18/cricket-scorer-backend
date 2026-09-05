@@ -346,6 +346,22 @@ describe('DELETE /v1/organization/:orgId', () => {
     expect(afterDelete.body.code).toBe('ORG_NOT_FOUND');
   });
 
+  it('soft-deletes tournaments under the organization (they cannot be orphaned like teams)', async () => {
+    const { token } = await createTestUser();
+    const orgRes = await createOrg(token, { name: 'Riverside CC' });
+    const orgId = orgRes.body.data.id;
+    const tournamentRes = await request(app)
+      .post(`/api/v1/organization/${orgId}/tournaments`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Summer T20', format: 'knockout' });
+    const tournamentId = tournamentRes.body.data.id;
+
+    await deleteOrg(token, orgId);
+
+    const tournament = await Tournament.findById(tournamentId);
+    expect(tournament.isDeleted).toBe(true);
+  });
+
   it('403s when a non-owner tries to delete', async () => {
     const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
     const orgRes = await createOrg(ownerToken, { name: 'Riverside CC' });
