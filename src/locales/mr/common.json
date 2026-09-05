@@ -138,6 +138,8 @@
   "CANNOT_REMOVE_OWNER": "संस्थेच्या मालकाला काढता येत नाही",
   "ORG_MEMBER_REMOVED": "सदस्य काढला गेला",
   "TEAM_CREATED": "टीम तयार झाली",
+  "TEAM_ALREADY_IN_ORGANIZATION": "ती टीम आधीच एका संस्थेशी जोडलेली आहे",
+  "TEAM_ORGANIZATION_UPDATED": "टीमची संस्था अद्ययावत केली",
   "BALL_UNDONE": "चेंडू मागे घेतला",
   "BALL_EVENT_ID_REQUIRED": "मागे घ्यायचा चेंडू नमूद करणे आवश्यक आहे",
   "INVALID_BALL_EVENT_ID": "अवैध चेंडू संदर्भ",

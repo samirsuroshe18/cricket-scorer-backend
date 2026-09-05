@@ -138,6 +138,8 @@
   "CANNOT_REMOVE_OWNER": "संगठन के स्वामी को हटाया नहीं जा सकता",
   "ORG_MEMBER_REMOVED": "सदस्य हटाया गया",
   "TEAM_CREATED": "टीम बनाई गई",
+  "TEAM_ALREADY_IN_ORGANIZATION": "वह टीम पहले से ही किसी संगठन से जुड़ी है",
+  "TEAM_ORGANIZATION_UPDATED": "टीम का संगठन अपडेट किया गया",
   "BALL_UNDONE": "गेंद वापस ली गई",
   "BALL_EVENT_ID_REQUIRED": "वापस लेने वाली गेंद बतानी आवश्यक है",
   "INVALID_BALL_EVENT_ID": "अमान्य गेंद संदर्भ",

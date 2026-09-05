@@ -3,6 +3,7 @@ import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import { Team } from '../models/team.model.js';
 import { Match } from '../models/match.model.js';
+import { Organization } from '../models/organization.model.js';
 import { DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT } from './match.controller.js';
 
 // Shared by getTeamProfile/getTeamMatches: both need the team to exist and
@@ -114,4 +115,43 @@ const listMyTeams = catchAsync(async (req, res) => {
     }, req.t("MY_TEAMS_FETCHED")));
 });
 
-export { getTeamProfile, getTeamMatches, listMyTeams };
+// Attach an existing standalone team to an organization the caller owns, or
+// detach an org-owned team back to standalone. Detaching only ever needs
+// team ownership; attaching additionally needs ownership of the target org.
+const updateTeamOrganization = catchAsync(async (req, res) => {
+    const { teamId } = req.params;
+    const team = await findOwnedTeam(teamId, req.user._id);
+
+    const organizationId = req.body.organizationId ?? null;
+
+    if (organizationId === null) {
+        team.organization = null;
+        await team.save();
+        return res.status(200).json(new ApiResponse(200, {
+            id: team._id,
+            organization: null,
+        }, req.t("TEAM_ORGANIZATION_UPDATED")));
+    }
+
+    if (team.organization != null) {
+        throw new ApiError(409, "TEAM_ALREADY_IN_ORGANIZATION");
+    }
+
+    const org = await Organization.findOne({ _id: organizationId, isDeleted: false });
+    if (!org) {
+        throw new ApiError(404, "ORG_NOT_FOUND");
+    }
+    if (!org.owner.equals(req.user._id)) {
+        throw new ApiError(403, "ORG_NOT_OWNED");
+    }
+
+    team.organization = org._id;
+    await team.save();
+
+    return res.status(200).json(new ApiResponse(200, {
+        id: team._id,
+        organization: team.organization,
+    }, req.t("TEAM_ORGANIZATION_UPDATED")));
+});
+
+export { getTeamProfile, getTeamMatches, listMyTeams, updateTeamOrganization };
