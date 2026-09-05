@@ -253,3 +253,46 @@ describe('DELETE /v1/organization/:orgId/members/:userId', () => {
     expect(res.body.code).toBe('CANNOT_REMOVE_OWNER');
   });
 });
+
+describe('POST /v1/organization/:orgId/teams', () => {
+  const createOrgTeam = (token, orgId, body) =>
+    request(app).post(`/api/v1/organization/${orgId}/teams`).set('Authorization', `Bearer ${token}`).send(body);
+
+  it('creates a new team directly under the organization', async () => {
+    const { token } = await createTestUser();
+    const createRes = await createOrg(token, { name: 'Riverside CC' });
+    const orgId = createRes.body.data.id;
+
+    const res = await createOrgTeam(token, orgId, { name: 'Riverside U19', shortName: 'ru19' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({
+      name: 'Riverside U19',
+      shortName: 'RU19',
+      organization: orgId,
+    });
+  });
+
+  it('403s when a non-owner tries to create a team under the org', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const createRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const orgId = createRes.body.data.id;
+    const { token: strangerToken } = await createTestUser({ email: 'stranger@example.com' });
+
+    const res = await createOrgTeam(strangerToken, orgId, { name: 'Riverside U19' });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('ORG_NOT_OWNED');
+  });
+
+  it('400s for an empty name', async () => {
+    const { token } = await createTestUser();
+    const createRes = await createOrg(token, { name: 'Riverside CC' });
+    const orgId = createRes.body.data.id;
+
+    const res = await createOrgTeam(token, orgId, { name: '  ' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('TEAM_NAMES_REQUIRED');
+  });
+});

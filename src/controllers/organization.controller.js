@@ -149,4 +149,35 @@ const removeOrganizationMember = catchAsync(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, { orgId: org._id, userId }, req.t("ORG_MEMBER_REMOVED")));
 });
 
-export { createOrganization, listMyOrganizations, getOrganization, addOrganizationMember, removeOrganizationMember };
+const createOrganizationTeam = catchAsync(async (req, res) => {
+    const { orgId } = req.params;
+    const org = await findOwnedOrganization(orgId, req.user._id);
+
+    const name = asString(req.body.name).trim();
+    if (!name) {
+        throw new ApiError(400, "TEAM_NAMES_REQUIRED");
+    }
+
+    const team = await Team.create({
+        name,
+        shortName: req.body.shortName,
+        createdBy: req.user._id,
+        organization: org._id,
+    });
+
+    return res.status(200).json(new ApiResponse(200, {
+        id: team._id,
+        name: team.name,
+        shortName: team.shortName ?? null,
+        organization: team.organization,
+    }, req.t("TEAM_CREATED")));
+});
+
+export {
+    createOrganization,
+    listMyOrganizations,
+    getOrganization,
+    addOrganizationMember,
+    removeOrganizationMember,
+    createOrganizationTeam,
+};
