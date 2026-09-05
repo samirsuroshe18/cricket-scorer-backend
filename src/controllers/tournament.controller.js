@@ -1,7 +1,7 @@
 import catchAsync from '../utils/catchAsync.js';
 import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
-import { Tournament } from '../models/tournament.model.js';
+import { Tournament, TOURNAMENT_FORMATS, TOURNAMENT_STATUS } from '../models/tournament.model.js';
 import { Organization } from '../models/organization.model.js';
 import { isOrgMember } from '../utils/organizationAccess.js';
 
@@ -57,8 +57,60 @@ const getTournament = catchAsync(async (req, res) => {
     }, req.t("TOURNAMENT_FETCHED")));
 });
 
+const updateTournament = catchAsync(async (req, res) => {
+    const { tournamentId } = req.params;
+    const { tournament } = await findOwnedTournament(tournamentId, req.user._id);
+
+    const updates = {};
+
+    if (req.body.name !== undefined) {
+        const name = asString(req.body.name).trim();
+        if (!name) {
+            throw new ApiError(400, "TOURNAMENT_NAME_REQUIRED");
+        }
+        updates.name = name;
+        updates.nameLower = name.toLowerCase();
+    }
+    if (req.body.format !== undefined) {
+        const format = asString(req.body.format);
+        if (!TOURNAMENT_FORMATS.includes(format)) {
+            throw new ApiError(400, "INVALID_TOURNAMENT_FORMAT");
+        }
+        updates.format = format;
+    }
+    if (req.body.status !== undefined) {
+        const status = asString(req.body.status);
+        if (!TOURNAMENT_STATUS.includes(status)) {
+            throw new ApiError(400, "INVALID_TOURNAMENT_STATUS");
+        }
+        updates.status = status;
+    }
+    if (Object.keys(updates).length === 0) {
+        throw new ApiError(400, "TOURNAMENT_UPDATE_FIELDS_REQUIRED");
+    }
+
+    Object.assign(tournament, updates);
+    try {
+        await tournament.save();
+    } catch (err) {
+        const isNameCollision = err.code === 11000 && Object.hasOwn(err.keyPattern ?? {}, 'nameLower');
+        if (isNameCollision) {
+            throw new ApiError(409, "TOURNAMENT_NAME_TAKEN");
+        }
+        throw err;
+    }
+
+    return res.status(200).json(new ApiResponse(200, {
+        id: tournament._id,
+        name: tournament.name,
+        format: tournament.format,
+        status: tournament.status,
+    }, req.t("TOURNAMENT_UPDATED")));
+});
+
 export {
     findAccessibleTournament,
     findOwnedTournament,
     getTournament,
+    updateTournament,
 };

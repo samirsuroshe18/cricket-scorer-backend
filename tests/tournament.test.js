@@ -32,6 +32,9 @@ const createOrgTeam = (token, orgId, body) =>
 const getTournament = (token, tournamentId) =>
   request(app).get(`/api/v1/tournament/${tournamentId}`).set('Authorization', `Bearer ${token}`).send();
 
+const updateTournament = (token, tournamentId, body) =>
+  request(app).patch(`/api/v1/tournament/${tournamentId}`).set('Authorization', `Bearer ${token}`).send(body);
+
 describe('POST /v1/organization/:orgId/tournaments', () => {
   it('creates a tournament under the organization', async () => {
     const { token } = await createTestUser();
@@ -167,5 +170,83 @@ describe('GET /v1/tournament/:tournamentId', () => {
       organization: { id: orgId, name: 'Riverside CC' },
       teams: [],
     });
+  });
+});
+
+describe('PATCH /v1/tournament/:tournamentId', () => {
+  it('updates name, format, and status together', async () => {
+    const { token } = await createTestUser();
+    const orgRes = await createOrg(token, { name: 'Riverside CC' });
+    const tournamentRes = await createTournament(token, orgRes.body.data.id, { name: 'Summer T20', format: 'knockout' });
+    const tournamentId = tournamentRes.body.data.id;
+
+    const res = await updateTournament(token, tournamentId, { name: 'Winter T20', format: 'league', status: 'ongoing' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({ name: 'Winter T20', format: 'league', status: 'ongoing' });
+  });
+
+  it('403s when an org member who is not the owner tries to update', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const orgRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const orgId = orgRes.body.data.id;
+    const tournamentRes = await createTournament(ownerToken, orgId, { name: 'Summer T20', format: 'knockout' });
+    const { token: memberToken } = await createTestUser({ email: 'member@example.com' });
+    await request(app)
+      .post(`/api/v1/organization/${orgId}/members`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ email: 'member@example.com' });
+
+    const res = await updateTournament(memberToken, tournamentRes.body.data.id, { name: 'Winter T20' });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('TOURNAMENT_NOT_OWNED');
+  });
+
+  it("403s when a caller who isn't even a member of the organization tries to update", async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const orgRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const tournamentRes = await createTournament(ownerToken, orgRes.body.data.id, { name: 'Summer T20', format: 'knockout' });
+    const { token: strangerToken } = await createTestUser({ email: 'stranger@example.com' });
+
+    const res = await updateTournament(strangerToken, tournamentRes.body.data.id, { name: 'Winter T20' });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('NOT_ORG_MEMBER');
+  });
+
+  it('400s when no field is provided', async () => {
+    const { token } = await createTestUser();
+    const orgRes = await createOrg(token, { name: 'Riverside CC' });
+    const tournamentRes = await createTournament(token, orgRes.body.data.id, { name: 'Summer T20', format: 'knockout' });
+
+    const res = await updateTournament(token, tournamentRes.body.data.id, {});
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('TOURNAMENT_UPDATE_FIELDS_REQUIRED');
+  });
+
+  it('400s for an invalid status', async () => {
+    const { token } = await createTestUser();
+    const orgRes = await createOrg(token, { name: 'Riverside CC' });
+    const tournamentRes = await createTournament(token, orgRes.body.data.id, { name: 'Summer T20', format: 'knockout' });
+
+    const res = await updateTournament(token, tournamentRes.body.data.id, { status: 'finished' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INVALID_TOURNAMENT_STATUS');
+  });
+
+  it('409s when renaming into a name collision within the same organization', async () => {
+    const { token } = await createTestUser();
+    const orgRes = await createOrg(token, { name: 'Riverside CC' });
+    const orgId = orgRes.body.data.id;
+    await createTournament(token, orgId, { name: 'Winter T20', format: 'knockout' });
+    const tournamentRes = await createTournament(token, orgId, { name: 'Summer T20', format: 'knockout' });
+
+    const res = await updateTournament(token, tournamentRes.body.data.id, { name: 'winter t20' });
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('TOURNAMENT_NAME_TAKEN');
   });
 });
