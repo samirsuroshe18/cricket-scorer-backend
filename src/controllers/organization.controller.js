@@ -3,6 +3,7 @@ import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import { Organization } from '../models/organization.model.js';
 import { Team } from '../models/team.model.js';
+import { isOrgMember } from '../utils/organizationAccess.js';
 
 const asString = (value) => (typeof value === 'string' ? value : '');
 
@@ -59,4 +60,46 @@ const listMyOrganizations = catchAsync(async (req, res) => {
     }, req.t("ORGANIZATIONS_FETCHED")));
 });
 
-export { createOrganization, listMyOrganizations };
+// Shared by every remaining org endpoint in this file — mirrors
+// team.controller.js's findOwnedTeam shape, but with two variants: "any
+// member can view" vs "only the owner can act."
+const findAccessibleOrganization = async (orgId, userId) => {
+    const org = await Organization.findOne({ _id: orgId, isDeleted: false });
+    if (!org) {
+        throw new ApiError(404, "ORG_NOT_FOUND");
+    }
+    if (!isOrgMember(org, userId)) {
+        throw new ApiError(403, "NOT_ORG_MEMBER");
+    }
+    return org;
+};
+
+const findOwnedOrganization = async (orgId, userId) => {
+    const org = await Organization.findOne({ _id: orgId, isDeleted: false });
+    if (!org) {
+        throw new ApiError(404, "ORG_NOT_FOUND");
+    }
+    if (!org.owner.equals(userId)) {
+        throw new ApiError(403, "ORG_NOT_OWNED");
+    }
+    return org;
+};
+
+const getOrganization = catchAsync(async (req, res) => {
+    const { orgId } = req.params;
+    const org = await findAccessibleOrganization(orgId, req.user._id);
+    await org.populate('owner', 'fullName');
+    await org.populate('members.user', 'fullName');
+
+    const teams = await Team.find({ organization: org._id, isDeleted: false });
+
+    return res.status(200).json(new ApiResponse(200, {
+        id: org._id,
+        name: org.name,
+        owner: { id: org.owner._id, name: org.owner.fullName },
+        members: org.members.map((m) => ({ id: m.user._id, name: m.user.fullName, role: m.role })),
+        teams: teams.map((team) => ({ id: team._id, name: team.name, shortName: team.shortName ?? null })),
+    }, req.t("ORGANIZATION_FETCHED")));
+});
+
+export { createOrganization, listMyOrganizations, getOrganization };

@@ -98,3 +98,45 @@ describe('GET /v1/organization', () => {
     expect(res.body.data.organizations).toEqual([]);
   });
 });
+
+describe('GET /v1/organization/:orgId', () => {
+  const getOrg = (token, orgId) =>
+    request(app).get(`/api/v1/organization/${orgId}`).set('Authorization', `Bearer ${token}`).send();
+
+  it("404s for an orgId that doesn't exist", async () => {
+    const { token } = await createTestUser();
+
+    const res = await getOrg(token, '665f3b1c2d3e4f5a6b7c8d90');
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('ORG_NOT_FOUND');
+  });
+
+  it('403s for a caller who is not a member', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const createRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const orgId = createRes.body.data.id;
+
+    const { token: strangerToken } = await createTestUser({ email: 'stranger@example.com' });
+    const res = await getOrg(strangerToken, orgId);
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('NOT_ORG_MEMBER');
+  });
+
+  it('returns members and teams for the owner', async () => {
+    const { token } = await createTestUser({ fullName: 'Asha' });
+    const createRes = await createOrg(token, { name: 'Riverside CC' });
+    const orgId = createRes.body.data.id;
+
+    const res = await getOrg(token, orgId);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({
+      name: 'Riverside CC',
+      owner: { name: 'Asha' },
+      members: [{ name: 'Asha', role: 'owner' }],
+      teams: [],
+    });
+  });
+});
