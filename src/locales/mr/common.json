@@ -157,6 +157,7 @@
   "TOURNAMENT_UPDATE_FIELDS_REQUIRED": "अद्ययावत करण्यासाठी किमान एक फील्ड द्या",
   "INVALID_TOURNAMENT_STATUS": "ही वैध स्पर्धा स्थिती नाही",
   "TOURNAMENT_UPDATED": "स्पर्धा अद्ययावत केली",
+  "TOURNAMENT_DELETED": "स्पर्धा हटवली",
   "BALL_UNDONE": "चेंडू मागे घेतला",
   "BALL_EVENT_ID_REQUIRED": "मागे घ्यायचा चेंडू नमूद करणे आवश्यक आहे",
   "INVALID_BALL_EVENT_ID": "अवैध चेंडू संदर्भ",

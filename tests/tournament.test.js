@@ -35,6 +35,12 @@ const getTournament = (token, tournamentId) =>
 const updateTournament = (token, tournamentId, body) =>
   request(app).patch(`/api/v1/tournament/${tournamentId}`).set('Authorization', `Bearer ${token}`).send(body);
 
+const deleteTournament = (token, tournamentId) =>
+  request(app).delete(`/api/v1/tournament/${tournamentId}`).set('Authorization', `Bearer ${token}`).send();
+
+const addOrgMember = (token, orgId, email) =>
+  request(app).post(`/api/v1/organization/${orgId}/members`).set('Authorization', `Bearer ${token}`).send({ email });
+
 describe('POST /v1/organization/:orgId/tournaments', () => {
   it('creates a tournament under the organization', async () => {
     const { token } = await createTestUser();
@@ -248,5 +254,37 @@ describe('PATCH /v1/tournament/:tournamentId', () => {
 
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('TOURNAMENT_NAME_TAKEN');
+  });
+});
+
+describe('DELETE /v1/tournament/:tournamentId', () => {
+  it('soft-deletes the tournament', async () => {
+    const { token } = await createTestUser();
+    const orgRes = await createOrg(token, { name: 'Riverside CC' });
+    const tournamentRes = await createTournament(token, orgRes.body.data.id, { name: 'Summer T20', format: 'knockout' });
+    const tournamentId = tournamentRes.body.data.id;
+
+    const res = await deleteTournament(token, tournamentId);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({ tournamentId });
+
+    const after = await getTournament(token, tournamentId);
+    expect(after.status).toBe(404);
+    expect(after.body.code).toBe('TOURNAMENT_NOT_FOUND');
+  });
+
+  it('403s when an org member who is not the owner tries to delete', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const orgRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const orgId = orgRes.body.data.id;
+    const tournamentRes = await createTournament(ownerToken, orgId, { name: 'Summer T20', format: 'knockout' });
+    const { token: memberToken } = await createTestUser({ email: 'member@example.com' });
+    await addOrgMember(ownerToken, orgId, 'member@example.com');
+
+    const res = await deleteTournament(memberToken, tournamentRes.body.data.id);
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('TOURNAMENT_NOT_OWNED');
   });
 });

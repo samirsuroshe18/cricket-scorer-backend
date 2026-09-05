@@ -157,6 +157,7 @@
   "TOURNAMENT_UPDATE_FIELDS_REQUIRED": "अपडेट करने के लिए कम से कम एक फ़ील्ड दर्ज करें",
   "INVALID_TOURNAMENT_STATUS": "यह एक मान्य टूर्नामेंट स्थिति नहीं है",
   "TOURNAMENT_UPDATED": "टूर्नामेंट अपडेट किया गया",
+  "TOURNAMENT_DELETED": "टूर्नामेंट हटाया गया",
   "BALL_UNDONE": "गेंद वापस ली गई",
   "BALL_EVENT_ID_REQUIRED": "वापस लेने वाली गेंद बतानी आवश्यक है",
   "INVALID_BALL_EVENT_ID": "अमान्य गेंद संदर्भ",

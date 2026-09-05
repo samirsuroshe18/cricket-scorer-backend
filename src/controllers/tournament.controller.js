@@ -108,9 +108,20 @@ const updateTournament = catchAsync(async (req, res) => {
     }, req.t("TOURNAMENT_UPDATED")));
 });
 
+const deleteTournament = catchAsync(async (req, res) => {
+    const { tournamentId } = req.params;
+    const { tournament } = await findOwnedTournament(tournamentId, req.user._id);
+
+    tournament.isDeleted = true;
+    await tournament.save();
+
+    return res.status(200).json(new ApiResponse(200, { tournamentId: tournament._id }, req.t("TOURNAMENT_DELETED")));
+});
+
 export {
     findAccessibleTournament,
     findOwnedTournament,
     getTournament,
     updateTournament,
+    deleteTournament,
 };

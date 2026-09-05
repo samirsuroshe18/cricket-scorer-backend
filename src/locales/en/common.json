@@ -157,6 +157,7 @@
   "TOURNAMENT_UPDATE_FIELDS_REQUIRED": "Provide at least one field to update",
   "INVALID_TOURNAMENT_STATUS": "That isn't a valid tournament status",
   "TOURNAMENT_UPDATED": "Tournament updated",
+  "TOURNAMENT_DELETED": "Tournament deleted",
   "BALL_UNDONE": "Ball undone",
   "BALL_EVENT_ID_REQUIRED": "The ball to undo must be specified",
   "INVALID_BALL_EVENT_ID": "Invalid ball reference",
