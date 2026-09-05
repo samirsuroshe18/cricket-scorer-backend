@@ -140,3 +140,57 @@ describe('GET /v1/organization/:orgId', () => {
     });
   });
 });
+
+describe('POST /v1/organization/:orgId/members', () => {
+  const addMember = (token, orgId, body) =>
+    request(app).post(`/api/v1/organization/${orgId}/members`).set('Authorization', `Bearer ${token}`).send(body);
+
+  it('adds an existing user as a member', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const { user: vikram } = await createTestUser({ email: 'vikram@example.com', fullName: 'Vikram' });
+    const createRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const orgId = createRes.body.data.id;
+
+    const res = await addMember(ownerToken, orgId, { email: 'vikram@example.com' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({ id: String(vikram._id), name: 'Vikram', role: 'member' });
+  });
+
+  it('403s when a non-owner tries to add a member', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    await createTestUser({ email: 'vikram@example.com' });
+    const createRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const orgId = createRes.body.data.id;
+    const { token: strangerToken } = await createTestUser({ email: 'stranger@example.com' });
+
+    const res = await addMember(strangerToken, orgId, { email: 'vikram@example.com' });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('ORG_NOT_OWNED');
+  });
+
+  it("404s for an email with no matching account", async () => {
+    const { token } = await createTestUser();
+    const createRes = await createOrg(token, { name: 'Riverside CC' });
+    const orgId = createRes.body.data.id;
+
+    const res = await addMember(token, orgId, { email: 'nobody@example.com' });
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('USER_NOT_FOUND');
+  });
+
+  it('409s when adding someone already a member', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    await createTestUser({ email: 'vikram@example.com' });
+    const createRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const orgId = createRes.body.data.id;
+    await addMember(ownerToken, orgId, { email: 'vikram@example.com' });
+
+    const res = await addMember(ownerToken, orgId, { email: 'vikram@example.com' });
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('ALREADY_ORG_MEMBER');
+  });
+});

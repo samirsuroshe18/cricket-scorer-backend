@@ -4,6 +4,7 @@ import ApiResponse from '../utils/ApiResponse.js';
 import { Organization } from '../models/organization.model.js';
 import { Team } from '../models/team.model.js';
 import { isOrgMember } from '../utils/organizationAccess.js';
+import { User } from '../models/user.model.js';
 
 const asString = (value) => (typeof value === 'string' ? value : '');
 
@@ -102,4 +103,27 @@ const getOrganization = catchAsync(async (req, res) => {
     }, req.t("ORGANIZATION_FETCHED")));
 });
 
-export { createOrganization, listMyOrganizations, getOrganization };
+const addOrganizationMember = catchAsync(async (req, res) => {
+    const { orgId } = req.params;
+    const org = await findOwnedOrganization(orgId, req.user._id);
+
+    const email = asString(req.body.email).trim().toLowerCase();
+    const user = await User.findOne({ email });
+    if (!user) {
+        throw new ApiError(404, "USER_NOT_FOUND");
+    }
+    if (isOrgMember(org, user._id)) {
+        throw new ApiError(409, "ALREADY_ORG_MEMBER");
+    }
+
+    org.members.push({ user: user._id, role: 'member' });
+    await org.save();
+
+    return res.status(200).json(new ApiResponse(200, {
+        id: user._id,
+        name: user.fullName,
+        role: 'member',
+    }, req.t("ORG_MEMBER_ADDED")));
+});
+
+export { createOrganization, listMyOrganizations, getOrganization, addOrganizationMember };
