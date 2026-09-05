@@ -4,6 +4,7 @@ import { createTestUser } from './helpers/authTestUser.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 import { Organization } from '../src/models/organization.model.js';
 import { Team } from '../src/models/team.model.js';
+import { Tournament } from '../src/models/tournament.model.js';
 
 // DB connect/disconnect is shared across every describe block below — Jest
 // runs describe blocks in the same file sequentially, but a describe's own
@@ -139,6 +140,23 @@ describe('GET /v1/organization/:orgId', () => {
       members: [{ name: 'Asha', role: 'owner' }],
       teams: [],
     });
+  });
+
+  it("includes the organization's tournaments", async () => {
+    const { token } = await createTestUser();
+    const createRes = await createOrg(token, { name: 'Riverside CC' });
+    const orgId = createRes.body.data.id;
+    await request(app)
+      .post(`/api/v1/organization/${orgId}/tournaments`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Summer T20', format: 'knockout' });
+
+    const res = await getOrg(token, orgId);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.tournaments).toMatchObject([
+      { name: 'Summer T20', format: 'knockout', status: 'upcoming', teamCount: 0 },
+    ]);
   });
 });
 

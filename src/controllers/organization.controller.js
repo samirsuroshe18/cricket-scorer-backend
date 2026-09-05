@@ -95,6 +95,7 @@ const getOrganization = catchAsync(async (req, res) => {
     await org.populate('members.user', 'fullName');
 
     const teams = await Team.find({ organization: org._id, isDeleted: false });
+    const tournaments = await Tournament.find({ organization: org._id, isDeleted: false }).sort({ createdAt: -1 });
 
     return res.status(200).json(new ApiResponse(200, {
         id: org._id,
@@ -102,6 +103,13 @@ const getOrganization = catchAsync(async (req, res) => {
         owner: { id: org.owner._id, name: org.owner.fullName },
         members: org.members.map((m) => ({ id: m.user._id, name: m.user.fullName, role: m.role })),
         teams: teams.map((team) => ({ id: team._id, name: team.name, shortName: team.shortName ?? null })),
+        tournaments: tournaments.map((t) => ({
+            id: t._id,
+            name: t.name,
+            format: t.format,
+            status: t.status,
+            teamCount: t.teams.length,
+        })),
     }, req.t("ORGANIZATION_FETCHED")));
 });
 
