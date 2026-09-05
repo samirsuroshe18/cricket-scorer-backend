@@ -6,6 +6,7 @@ import { Organization } from '../models/organization.model.js';
 import { Team } from '../models/team.model.js';
 import { isOrgMember } from '../utils/organizationAccess.js';
 import { User } from '../models/user.model.js';
+import { Tournament, TOURNAMENT_FORMATS } from '../models/tournament.model.js';
 
 const asString = (value) => (typeof value === 'string' ? value : '');
 
@@ -174,6 +175,50 @@ const createOrganizationTeam = catchAsync(async (req, res) => {
     }, req.t("TEAM_CREATED")));
 });
 
+const createOrgTournament = catchAsync(async (req, res) => {
+    const { orgId } = req.params;
+    const org = await findOwnedOrganization(orgId, req.user._id);
+
+    const name = asString(req.body.name).trim();
+    if (!name) {
+        throw new ApiError(400, "TOURNAMENT_NAME_REQUIRED");
+    }
+    const format = asString(req.body.format);
+    if (!format) {
+        throw new ApiError(400, "TOURNAMENT_FORMAT_REQUIRED");
+    }
+    if (!TOURNAMENT_FORMATS.includes(format)) {
+        throw new ApiError(400, "INVALID_TOURNAMENT_FORMAT");
+    }
+
+    let tournament;
+    try {
+        tournament = await Tournament.create({
+            name,
+            nameLower: name.toLowerCase(),
+            organization: org._id,
+            format,
+            createdBy: req.user._id,
+        });
+    } catch (err) {
+        const isNameCollision = err.code === 11000 && Object.hasOwn(err.keyPattern ?? {}, 'nameLower');
+        if (isNameCollision) {
+            throw new ApiError(409, "TOURNAMENT_NAME_TAKEN");
+        }
+        throw err;
+    }
+
+    return res.status(200).json(new ApiResponse(200, {
+        id: tournament._id,
+        name: tournament.name,
+        organization: tournament.organization,
+        format: tournament.format,
+        status: tournament.status,
+        teams: [],
+        createdAt: tournament.createdAt,
+    }, req.t("TOURNAMENT_CREATED")));
+});
+
 const deleteOrganization = catchAsync(async (req, res) => {
     const { orgId } = req.params;
     const org = await findOwnedOrganization(orgId, req.user._id);
@@ -198,5 +243,6 @@ export {
     addOrganizationMember,
     removeOrganizationMember,
     createOrganizationTeam,
+    createOrgTournament,
     deleteOrganization,
 };

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createOrganization, listMyOrganizations, getOrganization, addOrganizationMember, removeOrganizationMember, createOrganizationTeam, deleteOrganization } from "../controllers/organization.controller.js";
+import { createOrganization, listMyOrganizations, getOrganization, addOrganizationMember, removeOrganizationMember, createOrganizationTeam, createOrgTournament, deleteOrganization } from "../controllers/organization.controller.js";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
 
 const router = Router();
@@ -13,5 +13,6 @@ router.route('/:orgId')
 router.route('/:orgId/members').post(verifyJwt, addOrganizationMember);
 router.route('/:orgId/members/:userId').delete(verifyJwt, removeOrganizationMember);
 router.route('/:orgId/teams').post(verifyJwt, createOrganizationTeam);
+router.route('/:orgId/tournaments').post(verifyJwt, createOrgTournament);
 
 export default router;

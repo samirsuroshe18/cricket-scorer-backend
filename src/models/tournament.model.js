@@ -1,7 +1,7 @@
 import mongoose, { Schema } from "mongoose";
 
-const TOURNAMENT_FORMATS = ['knockout', 'round_robin', 'league'];
-const TOURNAMENT_STATUS  = ['upcoming', 'ongoing', 'completed'];
+export const TOURNAMENT_FORMATS = ['knockout', 'round_robin', 'league'];
+export const TOURNAMENT_STATUS  = ['upcoming', 'ongoing', 'completed'];
 
 const tournamentSchema = new Schema(
   {
