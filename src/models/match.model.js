@@ -29,6 +29,12 @@ const matchSchema = new Schema(
     venue:           { type: String, trim: true, maxlength: 100 },
     matchType:       { type: String, default: 'friendly', enum: MATCH_TYPES },
     createdBy:       { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    // Both null on every match not created via
+    // POST /v1/tournament/:tournamentId/fixtures/:fixtureId/start-match,
+    // including every match that predates this feature. Set together,
+    // only by that endpoint — see docs/api.md's Fixture section.
+    tournament:      { type: Schema.Types.ObjectId, ref: 'Tournament', default: null },
+    fixture:         { type: Schema.Types.ObjectId, ref: 'Fixture', default: null },
     // The one delegated scorer for this match, distinct from `createdBy` —
     // see docs/api.md's PATCH /v1/match/:matchId/scorer. Null on every
     // match that predates this feature and every ad-hoc match since: it is
