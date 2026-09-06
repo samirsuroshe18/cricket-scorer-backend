@@ -101,7 +101,12 @@ const getOrganization = catchAsync(async (req, res) => {
         id: org._id,
         name: org.name,
         owner: { id: org.owner._id, name: org.owner.fullName },
-        members: org.members.map((m) => ({ id: m.user._id, name: m.user.fullName, role: m.role })),
+        // m.user is null when that user account has since been deleted —
+        // nothing today cascades a User deletion into every org's members
+        // array, so a stale reference is expected data, not corruption.
+        members: org.members
+            .filter((m) => m.user)
+            .map((m) => ({ id: m.user._id, name: m.user.fullName, role: m.role })),
         teams: teams.map((team) => ({ id: team._id, name: team.name, shortName: team.shortName ?? null })),
         tournaments: tournaments.map((t) => ({
             id: t._id,

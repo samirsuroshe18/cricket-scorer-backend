@@ -5,6 +5,7 @@ import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js'
 import { Organization } from '../src/models/organization.model.js';
 import { Team } from '../src/models/team.model.js';
 import { Tournament } from '../src/models/tournament.model.js';
+import { User } from '../src/models/user.model.js';
 
 // DB connect/disconnect is shared across every describe block below — Jest
 // runs describe blocks in the same file sequentially, but a describe's own
@@ -157,6 +158,23 @@ describe('GET /v1/organization/:orgId', () => {
     expect(res.body.data.tournaments).toMatchObject([
       { name: 'Summer T20', format: 'knockout', status: 'upcoming', teamCount: 0 },
     ]);
+  });
+
+  it('omits a member whose user account no longer exists instead of 500ing', async () => {
+    const { token, user: owner } = await createTestUser({ fullName: 'Asha', email: 'owner@example.com' });
+    const createRes = await createOrg(token, { name: 'Riverside CC' });
+    const orgId = createRes.body.data.id;
+    const { user: gone } = await createTestUser({ fullName: 'Gone', email: 'gone@example.com' });
+    await request(app)
+      .post(`/api/v1/organization/${orgId}/members`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ email: 'gone@example.com' });
+    await User.findByIdAndDelete(gone._id);
+
+    const res = await getOrg(token, orgId);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.members).toMatchObject([{ name: 'Asha', role: 'owner' }]);
   });
 });
 
