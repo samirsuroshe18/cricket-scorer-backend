@@ -5,6 +5,7 @@ import ApiResponse from '../utils/ApiResponse.js';
 import { Tournament, TOURNAMENT_FORMATS, TOURNAMENT_STATUS } from '../models/tournament.model.js';
 import { Organization } from '../models/organization.model.js';
 import { Team } from '../models/team.model.js';
+import { Fixture } from '../models/fixture.model.js';
 import { isOrgMember } from '../utils/organizationAccess.js';
 
 const asString = (value) => (typeof value === 'string' ? value : '');
@@ -124,6 +125,10 @@ const addTournamentTeam = catchAsync(async (req, res) => {
     const { tournamentId } = req.params;
     const { tournament, org } = await findOwnedTournament(tournamentId, req.user._id);
 
+    if (await Fixture.exists({ tournament: tournament._id })) {
+        throw new ApiError(409, "TOURNAMENT_FIXTURES_LOCKED");
+    }
+
     const teamId = asString(req.body.teamId).trim();
     if (!teamId) {
         throw new ApiError(400, "TEAM_ID_REQUIRED");
@@ -161,6 +166,10 @@ const removeTournamentTeam = catchAsync(async (req, res) => {
         throw new ApiError(400, "INVALID_ID");
     }
     const { tournament } = await findOwnedTournament(tournamentId, req.user._id);
+
+    if (await Fixture.exists({ tournament: tournament._id })) {
+        throw new ApiError(409, "TOURNAMENT_FIXTURES_LOCKED");
+    }
 
     const wasEnrolled = tournament.teams.some((entry) => entry.team.equals(teamId));
     if (!wasEnrolled) {
