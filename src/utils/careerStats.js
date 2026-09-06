@@ -95,7 +95,7 @@ export const buildMatchContributions = (scorecards) => {
 // reads from. `matchesPlayed` isn't here: it increments on the row's own
 // presence transition (null -> non-null), computed separately in
 // applyCareerStatsIncrement, not from either line's own fields.
-const BATTING_SUM_FIELDS = [
+export const BATTING_SUM_FIELDS = [
     ['runs', 'runs'],
     ['ballsFaced', 'balls'],
     ['fours', 'fours'],
@@ -104,14 +104,14 @@ const BATTING_SUM_FIELDS = [
     ['hundreds', 'wasHundred'],
 ];
 
-const BOWLING_SUM_FIELDS = [
+export const BOWLING_SUM_FIELDS = [
     ['legalDeliveries', 'legalDeliveries'],
     ['runsConceded', 'runs'],
     ['wickets', 'wickets'],
     ['maidens', 'maidens'],
 ];
 
-const num = (v) => (typeof v === 'boolean' ? (v ? 1 : 0) : (v ?? 0));
+export const num = (v) => (typeof v === 'boolean' ? (v ? 1 : 0) : (v ?? 0));
 
 /**
  * The `$inc` object to move CareerStats from `before` (a PlayerMatchStats
@@ -145,10 +145,10 @@ export const computeDelta = (before, after) => {
     return delta;
 };
 
-const isBetterHighScore = (candidate, current) =>
+export const isBetterHighScore = (candidate, current) =>
     !current || candidate.runs > current.runs;
 
-const isBetterBowling = (candidate, current) =>
+export const isBetterBowling = (candidate, current) =>
     !current || candidate.wickets > current.wickets
         || (candidate.wickets === current.wickets && candidate.runs < current.runs);
 
