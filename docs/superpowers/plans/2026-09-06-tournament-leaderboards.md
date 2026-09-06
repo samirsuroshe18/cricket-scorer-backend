@@ -883,6 +883,12 @@ done
 
 call POST "/v1/tournament/$TOURNAMENT_ID/fixtures" ""
 expect "generate fixtures" 200
+
+# The POST response only carries round 1 — the full multi-round schedule
+# (a 3-team round-robin spans 3 rounds, one bye + one real match each) only
+# comes back from a separate GET.
+call GET "/v1/tournament/$TOURNAMENT_ID/fixtures"
+expect "list fixtures" 200
 FIXTURES_JSON="$BODY"
 
 fixtureBetween() { # fixtureBetween <teamId> <teamId>
