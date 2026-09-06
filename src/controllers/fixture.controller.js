@@ -75,68 +75,89 @@ export const generateFixtures = catchAsync(async (req, res) => {
         throw new ApiError(409, "TOURNAMENT_ALREADY_COMPLETE");
     }
 
-    const existingFixtures = await Fixture.find({ tournament: tournament._id }).sort({ round: 1, order: 1 });
+    // The "does a fixture already exist" check and the insert it gates
+    // must be atomic, or two concurrent requests (a network retry, a
+    // double-tap) can both read "no fixtures yet" before either commits
+    // and each insertMany a full duplicate schedule — the unique
+    // {tournament, round, order} index alone only guarantees the *loser's*
+    // insert fails, not that it fails cleanly as a whole, since a bare
+    // insertMany's individual document writes aren't atomic as a batch.
+    // Wrapping both the check and the insert in one transaction — the same
+    // pattern scoreBall/undoBall/syncMatch already use for multi-document
+    // writes — makes the loser's entire batch roll back together instead
+    // of interleaving partial rounds with the winner's.
+    const session = await mongoose.startSession();
+    let generatedRound;
+    try {
+        await session.withTransaction(async () => {
+            const existingFixtures = await Fixture.find({ tournament: tournament._id })
+                .sort({ round: 1, order: 1 })
+                .session(session);
 
-    if (existingFixtures.length === 0) {
-        const minTeams = MIN_TEAMS[tournament.format];
-        if (tournament.teams.length < minTeams) {
-            throw new ApiError(400, "INSUFFICIENT_TEAMS_FOR_FORMAT");
+            if (existingFixtures.length === 0) {
+                const minTeams = MIN_TEAMS[tournament.format];
+                if (tournament.teams.length < minTeams) {
+                    throw new ApiError(400, "INSUFFICIENT_TEAMS_FOR_FORMAT");
+                }
+
+                const teamIds = tournament.teams.map((entry) => entry.team);
+                const roundsOfSlots =
+                    tournament.format === 'knockout' ? [buildKnockoutRound1(teamIds)]
+                    : tournament.format === 'league' ? buildLeagueRounds(teamIds)
+                    : buildRoundRobinRounds(teamIds);
+
+                const docs = roundsOfSlots.flatMap((slots, i) => slotsToDocs(tournament._id, i + 1, slots));
+                await Fixture.insertMany(docs, { session });
+                generatedRound = 1;
+                return;
+            }
+
+            if (tournament.format !== 'knockout') {
+                throw new ApiError(409, "FIXTURES_ALREADY_GENERATED");
+            }
+
+            const maxRound = Math.max(...existingFixtures.map((f) => f.round));
+            const latestRound = existingFixtures.filter((f) => f.round === maxRound);
+
+            // Order matters: a not-yet-played or tied/no-result final is
+            // still a single-fixture round, so checking length before
+            // status would report TOURNAMENT_ALREADY_COMPLETE for a final
+            // that hasn't actually resolved yet. checkTournamentCompletion
+            // already flips Tournament.status the moment the final's
+            // fixture reaches 'completed' (caught by this function's own
+            // top-of-function status check above), so by the time
+            // execution reaches here a lone final fixture is, by
+            // construction, still scheduled or unresolved — length === 1
+            // below is a defensive fallback, not the expected path.
+            if (latestRound.some((f) => f.status === 'scheduled' || f.status === 'unresolved')) {
+                throw new ApiError(400, "ROUND_NOT_COMPLETE");
+            }
+            if (latestRound.length === 1) {
+                throw new ApiError(409, "TOURNAMENT_ALREADY_COMPLETE");
+            }
+
+            const winnerIds = latestRound.map((f) => f.winner);
+            const slots = buildKnockoutNextRound(winnerIds);
+            const docs = slotsToDocs(tournament._id, maxRound + 1, slots);
+            await Fixture.insertMany(docs, { session });
+            generatedRound = maxRound + 1;
+        });
+    } catch (err) {
+        if (err.code === 11000) {
+            throw new ApiError(409, "FIXTURES_ALREADY_GENERATED");
         }
-
-        const teamIds = tournament.teams.map((entry) => entry.team);
-        const roundsOfSlots =
-            tournament.format === 'knockout' ? [buildKnockoutRound1(teamIds)]
-            : tournament.format === 'league' ? buildLeagueRounds(teamIds)
-            : buildRoundRobinRounds(teamIds);
-
-        const docs = roundsOfSlots.flatMap((slots, i) => slotsToDocs(tournament._id, i + 1, slots));
-        await Fixture.insertMany(docs);
-
-        const round1 = await Fixture.find({ tournament: tournament._id, round: 1 }).sort({ order: 1 });
-        await populateFixtures(round1);
-
-        return res.status(200).json(new ApiResponse(200, {
-            tournamentId: tournament._id,
-            round: 1,
-            fixtures: round1.map(serializeFixture),
-        }, req.t("FIXTURES_GENERATED")));
+        throw err;
+    } finally {
+        await session.endSession();
     }
 
-    if (tournament.format !== 'knockout') {
-        throw new ApiError(409, "FIXTURES_ALREADY_GENERATED");
-    }
-
-    const maxRound = Math.max(...existingFixtures.map((f) => f.round));
-    const latestRound = existingFixtures.filter((f) => f.round === maxRound);
-
-    // Order matters: a not-yet-played or tied/no-result final is still a
-    // single-fixture round, so checking length before status would report
-    // TOURNAMENT_ALREADY_COMPLETE for a final that hasn't actually resolved
-    // yet. checkTournamentCompletion already flips Tournament.status the
-    // moment the final's fixture reaches 'completed' (caught by this
-    // function's own top-of-function status check above), so by the time
-    // execution reaches here a lone final fixture is, by construction,
-    // still scheduled or unresolved — length === 1 below is a defensive
-    // fallback, not the expected path.
-    if (latestRound.some((f) => f.status === 'scheduled' || f.status === 'unresolved')) {
-        throw new ApiError(400, "ROUND_NOT_COMPLETE");
-    }
-    if (latestRound.length === 1) {
-        throw new ApiError(409, "TOURNAMENT_ALREADY_COMPLETE");
-    }
-
-    const winnerIds = latestRound.map((f) => f.winner);
-    const slots = buildKnockoutNextRound(winnerIds);
-    const docs = slotsToDocs(tournament._id, maxRound + 1, slots);
-    await Fixture.insertMany(docs);
-
-    const nextRound = await Fixture.find({ tournament: tournament._id, round: maxRound + 1 }).sort({ order: 1 });
-    await populateFixtures(nextRound);
+    const generated = await Fixture.find({ tournament: tournament._id, round: generatedRound }).sort({ order: 1 });
+    await populateFixtures(generated);
 
     return res.status(200).json(new ApiResponse(200, {
         tournamentId: tournament._id,
-        round: maxRound + 1,
-        fixtures: nextRound.map(serializeFixture),
+        round: generatedRound,
+        fixtures: generated.map(serializeFixture),
     }, req.t("FIXTURES_GENERATED")));
 });
 

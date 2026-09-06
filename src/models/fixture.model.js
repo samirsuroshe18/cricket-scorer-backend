@@ -32,7 +32,12 @@ const fixtureSchema = new Schema(
 );
 
 // The schedule's own natural read order — every fixture list in this
-// feature reads round-by-round, ordered within a round.
-fixtureSchema.index({ tournament: 1, round: 1, order: 1 });
+// feature reads round-by-round, ordered within a round. UNIQUE so two
+// concurrent POST .../fixtures calls (a network retry, a double-tap) can't
+// both pass the "no fixtures exist yet" check and each insertMany a full
+// duplicate schedule: the second batch's insert now fails with E11000,
+// which the controller catches and turns into 409 FIXTURES_ALREADY_GENERATED
+// instead of silently doubling (or worse) every round's fixtures.
+fixtureSchema.index({ tournament: 1, round: 1, order: 1 }, { unique: true });
 
 export const Fixture = mongoose.model('Fixture', fixtureSchema);
