@@ -23,6 +23,7 @@ import { generateScorecard, liveStrikeFigures } from '../utils/scorecard.js';
 import { applyCareerStatsIncrement } from '../utils/careerStats.js';
 import { generateJoinCode } from '../utils/joinCode.js';
 import { findMatchByIdOrCode } from '../utils/matchLookup.js';
+import { resolveFixtureAfterMatch } from './fixture.controller.js';
 import { resolveBallOutcome, isSameBowler, LEGAL_DELIVERIES_PER_OVER } from '../utils/resolveOver.js';
 import {
     resolveStrike,
@@ -1344,6 +1345,10 @@ const applyDelivery = async ({ match, inning, session, req, delivery }) => {
         }
 
         await match.save({ session });
+
+        if (matchJustCompleted) {
+            await resolveFixtureAfterMatch(match, { session });
+        }
     }
 
     await inning.save({ session });
@@ -2363,6 +2368,14 @@ const abandonMatch = catchAsync(async (req, res) => {
         await Promise.all(innings.map((inning) => generateScorecard(updated._id, inning)));
     } catch (err) {
         console.error('scorecard generation failed on abandon', err);
+    }
+
+    if (updated.fixture) {
+        try {
+            await resolveFixtureAfterMatch(updated);
+        } catch (err) {
+            console.error('fixture resolution failed on abandon', err);
+        }
     }
 
     const io = req.app.get('io');

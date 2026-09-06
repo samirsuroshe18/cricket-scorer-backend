@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import catchAsync from '../utils/catchAsync.js';
 import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
@@ -12,7 +13,9 @@ import {
     buildKnockoutRound1,
     buildKnockoutNextRound,
 } from '../utils/generateFixtures.js';
-import { isTournamentComplete } from '../utils/resolveFixtureOutcome.js';
+import { isTournamentComplete, decideFixtureOutcome } from '../utils/resolveFixtureOutcome.js';
+
+const asString = (value) => (typeof value === 'string' ? value : '');
 
 const MIN_TEAMS = { knockout: 2, round_robin: 3, league: 3 };
 
@@ -210,4 +213,64 @@ export const startFixtureMatch = catchAsync(async (req, res) => {
         syncStatus: match.syncStatus,
         createdAt: match.createdAt,
     }, req.t("MATCH_CREATED")));
+});
+
+// Called once a Match tied to a fixture reaches a terminal state
+// ('completed' with a result, or 'abandoned'). Shared by the scoreBall/
+// syncMatch completion path (inside a transaction, via `session`) and
+// abandonMatch (best-effort, no transaction — same tolerance this codebase
+// already gives generateScorecard's own post-abandon call).
+export const resolveFixtureAfterMatch = async (match, { session } = {}) => {
+    if (!match.fixture) return;
+
+    const fixture = await Fixture.findById(match.fixture).session(session ?? null);
+    if (!fixture) return;
+
+    const outcome = decideFixtureOutcome(fixture, match);
+    if (!outcome) return;
+
+    fixture.status = outcome.status;
+    fixture.winner = outcome.winner;
+    await fixture.save({ session });
+
+    const tournament = await Tournament.findById(fixture.tournament).session(session ?? null);
+    if (!tournament) return;
+    await checkTournamentCompletion(tournament, { session });
+};
+
+export const resolveFixture = catchAsync(async (req, res) => {
+    const { tournamentId, fixtureId } = req.params;
+    const { tournament } = await findOwnedTournament(tournamentId, req.user._id);
+
+    const fixture = await Fixture.findOne({ _id: fixtureId, tournament: tournament._id });
+    if (!fixture) {
+        throw new ApiError(404, "FIXTURE_NOT_FOUND");
+    }
+    if (fixture.status !== 'unresolved') {
+        throw new ApiError(400, "FIXTURE_NOT_UNRESOLVED");
+    }
+
+    const winnerId = asString(req.body.winner).trim();
+    if (!winnerId) {
+        throw new ApiError(400, "FIXTURE_WINNER_REQUIRED");
+    }
+    if (!mongoose.Types.ObjectId.isValid(winnerId)) {
+        throw new ApiError(400, "INVALID_ID");
+    }
+    if (![String(fixture.teamA), String(fixture.teamB)].includes(winnerId)) {
+        throw new ApiError(400, "INVALID_FIXTURE_WINNER");
+    }
+
+    fixture.status = 'completed';
+    fixture.winner = winnerId;
+    await fixture.save();
+
+    await checkTournamentCompletion(tournament);
+
+    await fixture.populate('winner', 'name');
+    return res.status(200).json(new ApiResponse(200, {
+        fixtureId: fixture._id,
+        status: fixture.status,
+        winner: { id: fixture.winner._id, name: fixture.winner.name },
+    }, req.t("FIXTURE_RESOLVED")));
 });

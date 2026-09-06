@@ -4,6 +4,7 @@ import { createTestUser } from './helpers/authTestUser.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 import { Tournament } from '../src/models/tournament.model.js';
 import { Fixture } from '../src/models/fixture.model.js';
+import { startLiveInnings, scoreDotBall } from './helpers/matchSetup.js';
 
 let app;
 
@@ -258,5 +259,151 @@ describe('POST /v1/tournament/:tournamentId/fixtures/:fixtureId/start-match', ()
 
         expect(res.status).toBe(400);
         expect(res.body.code).toBe('INVALID_OVERS_FORMAT');
+    });
+});
+
+const abandonMatch = (token, matchId) =>
+    request(app).post(`/api/v1/match/${matchId}/abandon`).set('Authorization', `Bearer ${token}`).send();
+
+const resolveFixture = (token, tournamentId, fixtureId, body) =>
+    request(app)
+        .patch(`/api/v1/tournament/${tournamentId}/fixtures/${fixtureId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send(body);
+
+// Plays out a 1-over-per-side match: 6 balls at 1 run each for the team
+// batting first (total 6), then 6 dot balls for the team batting second
+// (total 0) — deterministic win for whichever team the fixture set as
+// battingFirst, no wickets, no extras, so the match completes cleanly with
+// a real winner rather than a tie.
+// Player identity is scorer-scoped (createdBy + nameLower), not match-scoped
+// — a name reused across two matches created by the same token resolves to
+// the same Player document, and rosterPlayer refuses to add a Player who is
+// already on the opposing side's roster in another match. Each match this
+// helper plays needs its own unique names, so a bracket-progression test
+// that plays several matches with the same token doesn't collide once two
+// fixtures' winners meet in a later round. `matchId` is unique per call and
+// makes a convenient, deterministic per-match name suffix.
+const playOutMatch = async (token, matchId) => {
+    const suffix = matchId.slice(-6);
+    await startLiveInnings(app, token, matchId, {
+        strikerName: `A1-${suffix}`, nonStrikerName: `A2-${suffix}`, bowlerName: `B1-${suffix}`,
+    });
+    for (let i = 0; i < 6; i += 1) {
+        const res = await scoreDotBall(app, token, matchId, { runs: 1 });
+        expect(res.status).toBe(200);
+    }
+    await startLiveInnings(app, token, matchId, {
+        strikerName: `B1-${suffix}`, nonStrikerName: `B2-${suffix}`, bowlerName: `A1-${suffix}`,
+    });
+    for (let i = 0; i < 6; i += 1) {
+        const res = await scoreDotBall(app, token, matchId);
+        expect(res.status).toBe(200);
+    }
+};
+
+describe('match completion resolves the linked fixture', () => {
+    it('marks the fixture completed with the winning team once the match finishes', async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('round_robin', 3);
+        await generateFixtures(token, tournamentId);
+        const scheduled = (await listFixtures(token, tournamentId)).body.data.fixtures
+            .find((f) => f.status === 'scheduled');
+        const started = await startFixtureMatch(token, tournamentId, scheduled.id, { totalOvers: 1 });
+
+        await playOutMatch(token, started.body.data.matchId);
+
+        const updated = (await listFixtures(token, tournamentId)).body.data.fixtures
+            .find((f) => f.id === scheduled.id);
+        expect(updated.status).toBe('completed');
+        expect(updated.winner).not.toBeNull();
+    });
+
+    it('marks the fixture unresolved when the match is abandoned', async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('round_robin', 3);
+        await generateFixtures(token, tournamentId);
+        const scheduled = (await listFixtures(token, tournamentId)).body.data.fixtures
+            .find((f) => f.status === 'scheduled');
+        const started = await startFixtureMatch(token, tournamentId, scheduled.id, { totalOvers: 20 });
+
+        await abandonMatch(token, started.body.data.matchId);
+
+        const updated = (await listFixtures(token, tournamentId)).body.data.fixtures
+            .find((f) => f.id === scheduled.id);
+        expect(updated.status).toBe('unresolved');
+        expect(updated.winner).toBeNull();
+    });
+});
+
+describe('PATCH /v1/tournament/:tournamentId/fixtures/:fixtureId', () => {
+    it('lets the owner manually resolve an unresolved fixture', async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('round_robin', 3);
+        await generateFixtures(token, tournamentId);
+        const scheduled = (await listFixtures(token, tournamentId)).body.data.fixtures
+            .find((f) => f.status === 'scheduled');
+        const started = await startFixtureMatch(token, tournamentId, scheduled.id, { totalOvers: 20 });
+        await abandonMatch(token, started.body.data.matchId);
+
+        const res = await resolveFixture(token, tournamentId, scheduled.id, { winner: scheduled.teamA.id });
+
+        expect(res.status).toBe(200);
+        expect(res.body.data.status).toBe('completed');
+        expect(res.body.data.winner.id).toBe(scheduled.teamA.id);
+    });
+
+    it("400s resolving a fixture that isn't unresolved", async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('round_robin', 3);
+        await generateFixtures(token, tournamentId);
+        const scheduled = (await listFixtures(token, tournamentId)).body.data.fixtures
+            .find((f) => f.status === 'scheduled');
+
+        const res = await resolveFixture(token, tournamentId, scheduled.id, { winner: scheduled.teamA.id });
+
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('FIXTURE_NOT_UNRESOLVED');
+    });
+
+    it("400s a winner that isn't one of the fixture's two teams", async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('round_robin', 3);
+        await generateFixtures(token, tournamentId);
+        const scheduled = (await listFixtures(token, tournamentId)).body.data.fixtures
+            .find((f) => f.status === 'scheduled');
+        const started = await startFixtureMatch(token, tournamentId, scheduled.id, { totalOvers: 20 });
+        await abandonMatch(token, started.body.data.matchId);
+
+        const res = await resolveFixture(token, tournamentId, scheduled.id, { winner: '665f1a2b3c4d5e6f7a8b9c99' });
+
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('INVALID_FIXTURE_WINNER');
+    });
+});
+
+describe('knockout bracket progression end-to-end', () => {
+    it('advances a 4-team knockout through both rounds and auto-completes the tournament', async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('knockout', 4);
+        await generateFixtures(token, tournamentId); // round 1: 2 matches, no byes
+
+        let round1 = (await listFixtures(token, tournamentId)).body.data.fixtures
+            .filter((f) => f.round === 1);
+        for (const fixture of round1) {
+            const started = await startFixtureMatch(token, tournamentId, fixture.id, { totalOvers: 1 });
+            await playOutMatch(token, started.body.data.matchId);
+        }
+
+        const round2Res = await generateFixtures(token, tournamentId);
+        expect(round2Res.status).toBe(200);
+        expect(round2Res.body.data.round).toBe(2);
+        expect(round2Res.body.data.fixtures).toHaveLength(1); // the final
+
+        const final = round2Res.body.data.fixtures[0];
+        const startedFinal = await startFixtureMatch(token, tournamentId, final.id, { totalOvers: 1 });
+        await playOutMatch(token, startedFinal.body.data.matchId);
+
+        const tournament = await Tournament.findById(tournamentId);
+        expect(tournament.status).toBe('completed');
+
+        // No further round to generate.
+        const afterFinal = await generateFixtures(token, tournamentId);
+        expect(afterFinal.status).toBe(409);
+        expect(afterFinal.body.code).toBe('TOURNAMENT_ALREADY_COMPLETE');
     });
 });
