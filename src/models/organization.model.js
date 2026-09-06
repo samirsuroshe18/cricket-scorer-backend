@@ -29,5 +29,9 @@ organizationSchema.index({ owner: 1, nameLower: 1 }, { unique: true });
 // Supports "which organizations am I a member of" — GET /v1/organization
 // and getMemberOrgIds (used by the widened GET /v1/team query).
 organizationSchema.index({ 'members.user': 1 });
+// Backs GET /v1/search — every organization is searchable by name
+// regardless of membership; there is no visibility/privacy concept on this
+// model. See docs/api.md's search section.
+organizationSchema.index({ name: 'text' });
 
 export const Organization = mongoose.model('Organization', organizationSchema);

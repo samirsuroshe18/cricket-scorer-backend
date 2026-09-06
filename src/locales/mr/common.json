@@ -198,6 +198,8 @@
   "MATCH_CODE_REQUIRED": "सामना कोड आवश्यक आहे",
   "SCORECARD_FETCHED": "स्कोअरकार्ड मिळाले",
   "SCORECARD_NOT_READY": "सामना संपल्यानंतर स्कोअरकार्ड उपलब्ध होईल",
+  "SEARCH_QUERY_REQUIRED": "शोध शब्द आवश्यक आहे",
+  "SEARCH_FETCHED": "शोध निकाल मिळाले",
   "INTERNAL_SERVER_ERROR": "काहीतरी चूक झाली. कृपया नंतर पुन्हा प्रयत्न करा",
   "INVALID_ID": "तो संदर्भ वैध नाही"
 }
