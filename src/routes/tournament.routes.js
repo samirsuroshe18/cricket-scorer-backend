@@ -2,6 +2,7 @@ import { Router } from "express";
 import { getTournament, updateTournament, deleteTournament, addTournamentTeam, removeTournamentTeam } from "../controllers/tournament.controller.js";
 import { generateFixtures, listFixtures, startFixtureMatch, resolveFixture } from "../controllers/fixture.controller.js";
 import { getStandings } from "../controllers/standings.controller.js";
+import { getLeaderboards } from "../controllers/leaderboard.controller.js";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
 
 const router = Router();
@@ -19,5 +20,6 @@ router.route('/:tournamentId/fixtures/:fixtureId')
     .patch(verifyJwt, resolveFixture);
 router.route('/:tournamentId/fixtures/:fixtureId/start-match').post(verifyJwt, startFixtureMatch);
 router.route('/:tournamentId/standings').get(verifyJwt, getStandings);
+router.route('/:tournamentId/leaderboards').get(verifyJwt, getLeaderboards);
 
 export default router;
