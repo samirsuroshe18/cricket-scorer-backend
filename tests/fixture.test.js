@@ -160,6 +160,24 @@ describe('POST /v1/tournament/:tournamentId/fixtures', () => {
         expect(res.status).toBe(403);
         expect(res.body.code).toBe('TOURNAMENT_NOT_OWNED');
     });
+
+    it('two concurrent calls never both insert a schedule — exactly one round-robin schedule survives', async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('round_robin', 3);
+
+        const [first, second] = await Promise.all([
+            generateFixtures(token, tournamentId),
+            generateFixtures(token, tournamentId),
+        ]);
+
+        const statuses = [first.status, second.status].sort();
+        expect(statuses).toEqual([200, 409]);
+        const failed = first.status === 409 ? first : second;
+        expect(failed.body.code).toBe('FIXTURES_ALREADY_GENERATED');
+
+        // 3 teams round-robin: 3 rounds x 2 slots = 6 fixtures total, not 12.
+        const all = await listFixtures(token, tournamentId);
+        expect(all.body.data.fixtures).toHaveLength(6);
+    });
 });
 
 describe('GET /v1/tournament/:tournamentId/fixtures', () => {
