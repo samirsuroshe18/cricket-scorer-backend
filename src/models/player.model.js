@@ -1,6 +1,7 @@
 import mongoose, { Schema } from "mongoose";
+import { BATTING_STYLES, BOWLING_STYLES } from "./user.model.js";
 
-const PLAYER_ROLES = ['batsman', 'bowler', 'allrounder', 'wicketkeeper', 'unknown'];
+export const PLAYER_ROLES = ['batsman', 'bowler', 'allrounder', 'wicketkeeper', 'unknown'];
 
 const playerSchema = new Schema(
   {
@@ -13,6 +14,14 @@ const playerSchema = new Schema(
     nameLower:    { type: String, required: true, trim: true },
     jerseyNumber: { type: Number, min: 0, max: 999 },
     role:         { type: String, enum: PLAYER_ROLES, default: 'unknown' },
+    // Profile fields, settable by the scorer who created this Player (see
+    // PATCH /v1/player/:playerId) — independent of whether that person has
+    // an app account at all, which most named players never will. Reuses
+    // User's own BATTING_STYLES/BOWLING_STYLES enums rather than duplicating
+    // them: same real-world vocabulary either way.
+    bio:          { type: String, trim: true, maxlength: 300 },
+    battingStyle: { type: String, enum: BATTING_STYLES },
+    bowlingStyle: { type: String, enum: BOWLING_STYLES },
     // No `teamId`. A Player used to belong to exactly one (match-scoped) Team
     // — see the player-identity rework in docs/api.md for why that made every
     // "career" span exactly one match. A Player now persists across every

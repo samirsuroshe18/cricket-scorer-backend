@@ -1,8 +1,9 @@
 import catchAsync from '../utils/catchAsync.js';
 import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
-import { Player } from '../models/player.model.js';
+import { Player, PLAYER_ROLES } from '../models/player.model.js';
 import { CareerStats } from '../models/careerStats.model.js';
+import { BATTING_STYLES, BOWLING_STYLES } from '../models/user.model.js';
 import { battingAverage, strikeRate, economy } from '../utils/careerStats.js';
 
 // A Player with no CareerStats row (never finished a match) is not an error
@@ -45,6 +46,11 @@ const getCareerStats = catchAsync(async (req, res) => {
     const data = {
         playerId: player._id,
         playerName: player.name,
+        role: player.role,
+        jerseyNumber: player.jerseyNumber ?? null,
+        bio: player.bio ?? null,
+        battingStyle: player.battingStyle ?? null,
+        bowlingStyle: player.bowlingStyle ?? null,
         ...(career
             ? {
                 matchesPlayed: career.matchesPlayed,
@@ -80,4 +86,75 @@ const getCareerStats = catchAsync(async (req, res) => {
     );
 });
 
-export { getCareerStats };
+// Owner-only, same ownership rule as getCareerStats — a Player is
+// scorer-scoped, so only the scorer who created it may edit its profile.
+// Every field is optional and independent: a caller sends whichever fields
+// changed, same `!== undefined` per-field pattern as updateTournament.
+const updatePlayer = catchAsync(async (req, res) => {
+    const { playerId } = req.params;
+
+    const player = await Player.findOne({ _id: playerId, isDeleted: false });
+    if (!player) {
+        throw new ApiError(404, "PLAYER_NOT_FOUND");
+    }
+
+    if (!player.createdBy?.equals(req.user._id)) {
+        throw new ApiError(403, "PLAYER_NOT_OWNED");
+    }
+
+    const { role, jerseyNumber, bio, battingStyle, bowlingStyle } = req.body;
+
+    // Validated against the schema's own enums before any write happens,
+    // same reasoning as updateProfile's own battingStyle/bowlingStyle check
+    // — errorHandler only turns an ApiError into a matchable `code`; a bare
+    // ValidationError falls through to a 500.
+    if (role !== undefined) {
+        const trimmedRole = typeof role === "string" ? role.trim() : "";
+        if (!PLAYER_ROLES.includes(trimmedRole)) {
+            throw new ApiError(400, "INVALID_PLAYER_ROLE");
+        }
+        player.role = trimmedRole;
+    }
+
+    if (jerseyNumber !== undefined) {
+        const num = Number(jerseyNumber);
+        if (!Number.isInteger(num) || num < 0 || num > 999) {
+            throw new ApiError(400, "INVALID_JERSEY_NUMBER");
+        }
+        player.jerseyNumber = num;
+    }
+
+    if (typeof bio === "string") {
+        player.bio = bio.trim();
+    }
+
+    if (battingStyle !== undefined) {
+        const trimmedBattingStyle = typeof battingStyle === "string" ? battingStyle.trim() : "";
+        if (trimmedBattingStyle && !BATTING_STYLES.includes(trimmedBattingStyle)) {
+            throw new ApiError(400, "INVALID_BATTING_STYLE");
+        }
+        if (trimmedBattingStyle) player.battingStyle = trimmedBattingStyle;
+    }
+
+    if (bowlingStyle !== undefined) {
+        const trimmedBowlingStyle = typeof bowlingStyle === "string" ? bowlingStyle.trim() : "";
+        if (trimmedBowlingStyle && !BOWLING_STYLES.includes(trimmedBowlingStyle)) {
+            throw new ApiError(400, "INVALID_BOWLING_STYLE");
+        }
+        if (trimmedBowlingStyle) player.bowlingStyle = trimmedBowlingStyle;
+    }
+
+    await player.save();
+
+    return res.status(200).json(new ApiResponse(200, {
+        playerId: player._id,
+        playerName: player.name,
+        role: player.role,
+        jerseyNumber: player.jerseyNumber ?? null,
+        bio: player.bio ?? null,
+        battingStyle: player.battingStyle ?? null,
+        bowlingStyle: player.bowlingStyle ?? null,
+    }, req.t("PLAYER_UPDATED")));
+});
+
+export { getCareerStats, updatePlayer };
