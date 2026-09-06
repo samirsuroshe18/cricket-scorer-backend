@@ -44,5 +44,8 @@ tournamentSchema.index({ organization: 1, nameLower: 1 }, { unique: true });
 tournamentSchema.index({ organization: 1, createdAt: -1 });
 // Supports "which tournaments is this team entered in."
 tournamentSchema.index({ 'teams.team': 1 });
+// Backs GET /v1/search — every tournament is searchable by name regardless
+// of the caller's organization membership. See docs/api.md's search section.
+tournamentSchema.index({ name: 'text' });
 
 export const Tournament = mongoose.model('Tournament', tournamentSchema);
