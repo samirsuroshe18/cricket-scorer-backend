@@ -195,7 +195,7 @@ describe('computeLeaderboards — summation across multiple matches', () => {
         expect(row.sixes).toBe(3);
         expect(row.fifties).toBe(1);
         expect(row.average).toBeCloseTo(100, 10); // runs / timesOut = 100 / 1
-        expect(row.strikeRate).toBeCloseTo((100 / 70) * 100, 5);
+        expect(row.strikeRate).toBeCloseTo((100 / 70) * 100, 2); // 2dp, same rounding contract as career stats
     });
 
     it('sums bowling fields across two matches for the same player, recomputing economy from the sums', () => {
@@ -209,7 +209,7 @@ describe('computeLeaderboards — summation across multiple matches', () => {
         expect(row.legalDeliveries).toBe(42);
         expect(row.runsConceded).toBe(36);
         expect(row.wickets).toBe(3);
-        expect(row.economy).toBeCloseTo(36 / (42 / 6), 10);
+        expect(row.economy).toBeCloseTo(36 / (42 / 6), 2); // 2dp, same rounding contract as career stats
     });
 });
 
