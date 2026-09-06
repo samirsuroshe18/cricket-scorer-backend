@@ -33,3 +33,35 @@ describe('computeStandings — win/loss points', () => {
         expect(result.map((r) => r.teamId)).toEqual(['t1', 't2']);
     });
 });
+
+describe('computeStandings — tie and no-result points', () => {
+    it('awards 1 point each and a tied result for a tie, no win/loss on either side', () => {
+        const teams = [{ id: 't1', name: 'Alpha' }, { id: 't2', name: 'Bravo' }];
+        const matches = [{
+            teamAId: 't1', teamBId: 't2', status: 'completed', resultWinner: 'tie',
+            totalOvers: 20, innings: [],
+        }];
+        const result = computeStandings({ teams, matches });
+        expect(result.find((r) => r.teamId === 't1')).toEqual(
+            { teamId: 't1', teamName: 'Alpha', played: 1, won: 0, lost: 0, tied: 1, noResult: 0, points: 1, nrr: 0 },
+        );
+        expect(result.find((r) => r.teamId === 't2')).toEqual(
+            { teamId: 't2', teamName: 'Bravo', played: 1, won: 0, lost: 0, tied: 1, noResult: 0, points: 1, nrr: 0 },
+        );
+    });
+
+    it('awards 1 point each and a no-result for an abandoned match, not a win/loss/tie', () => {
+        const teams = [{ id: 't1', name: 'Alpha' }, { id: 't2', name: 'Bravo' }];
+        const matches = [{
+            teamAId: 't1', teamBId: 't2', status: 'abandoned', resultWinner: null,
+            totalOvers: 20, innings: [],
+        }];
+        const result = computeStandings({ teams, matches });
+        expect(result.find((r) => r.teamId === 't1')).toEqual(
+            { teamId: 't1', teamName: 'Alpha', played: 1, won: 0, lost: 0, tied: 0, noResult: 1, points: 1, nrr: 0 },
+        );
+        expect(result.find((r) => r.teamId === 't2')).toEqual(
+            { teamId: 't2', teamName: 'Bravo', played: 1, won: 0, lost: 0, tied: 0, noResult: 1, points: 1, nrr: 0 },
+        );
+    });
+});
