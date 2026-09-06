@@ -7,6 +7,8 @@ import { Team } from '../models/team.model.js';
 import { isOrgMember } from '../utils/organizationAccess.js';
 import { User } from '../models/user.model.js';
 import { Tournament, TOURNAMENT_FORMATS } from '../models/tournament.model.js';
+import { Match } from '../models/match.model.js';
+import { buildLeaderboardsForMatchIds } from '../utils/leaderboardQuery.js';
 
 const asString = (value) => (typeof value === 'string' ? value : '');
 
@@ -255,6 +257,35 @@ const deleteOrganization = catchAsync(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, { orgId: org._id }, req.t("ORGANIZATION_DELETED")));
 });
 
+// Every tournament run by this org, across every one of its matches —
+// deliberately not "every match any of the org's teams ever played," which
+// would pull in ad-hoc/friendly matches outside any tournament and raise an
+// unanswerable question about a match between teams from two different
+// orgs. Tournament matches only, same reliable signal
+// computeStandings/getLeaderboards already use.
+const getOrganizationLeaderboards = catchAsync(async (req, res) => {
+    const { orgId } = req.params;
+    const org = await findAccessibleOrganization(orgId, req.user._id);
+
+    const tournaments = await Tournament.find(
+        { organization: org._id, isDeleted: false },
+        '_id',
+    );
+    const matches = await Match.find(
+        { tournament: { $in: tournaments.map((t) => t._id) }, isDeleted: false, status: 'completed' },
+        '_id',
+    );
+
+    const { battingLeaderboard, bowlingLeaderboard } =
+        await buildLeaderboardsForMatchIds(matches.map((m) => m._id));
+
+    return res.status(200).json(new ApiResponse(200, {
+        organizationId: org._id,
+        battingLeaderboard,
+        bowlingLeaderboard,
+    }, req.t("LEADERBOARDS_FETCHED")));
+});
+
 export {
     createOrganization,
     listMyOrganizations,
@@ -264,4 +295,5 @@ export {
     createOrganizationTeam,
     createOrgTournament,
     deleteOrganization,
+    getOrganizationLeaderboards,
 };
