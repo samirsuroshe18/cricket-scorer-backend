@@ -1274,10 +1274,11 @@ git commit -m "feat: wire GetLeaderboardsUseCase through the tournament reposito
 - Modify: `cricket-scrorer/test/features/tournament/presentation/widget/enroll_team_sheet_test.dart`
 - Modify: `cricket-scrorer/test/features/tournament/presentation/widget/resolve_fixture_sheet_test.dart`
 - Modify: `cricket-scrorer/test/features/tournament/presentation/widget/start_fixture_match_sheet_test.dart`
+- Modify: `cricket-scrorer/test/features/tournament/presentation/pages/tournament_standings_screen_test.dart` (discovered during execution — this file also constructs `TournamentDetailController` directly via `Get.put`, which the original task list missed)
 
 **Interfaces:**
 - Consumes (from Task 6): `GetLeaderboardsUseCase`, `GetLeaderboardsParams`.
-- Produces: `TournamentDetailController.loadLeaderboards()`, `.battingLeaderboard`, `.bowlingLeaderboard`, `.leaderboardsLoading`, `.leaderboardsError` — consumed by Task 8's screen. `TournamentDetailController`'s constructor now requires `getLeaderboardsUseCase` — every direct constructor call anywhere in the test suite must supply one, which is why the four widget test files above are touched in this task (their compile breaks the moment the constructor param is added, exactly like the standings work's own history with these same four files).
+- Produces: `TournamentDetailController.loadLeaderboards()`, `.battingLeaderboard`, `.bowlingLeaderboard`, `.leaderboardsLoading`, `.leaderboardsError` — consumed by Task 8's screen. `TournamentDetailController`'s constructor now requires `getLeaderboardsUseCase` — every direct constructor call anywhere in the test suite must supply one, which is why the widget/page test files above are touched in this task (their compile breaks the moment the constructor param is added, exactly like the standings work's own history with these files — `flutter test` (not just `flutter analyze`) is what actually surfaces every one of them, since `flutter analyze` alone did not catch `tournament_standings_screen_test.dart`'s break).
 
 - [ ] **Step 1: Write the failing controller tests**
 
