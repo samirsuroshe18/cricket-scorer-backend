@@ -86,3 +86,27 @@ describe('computeStandings — NRR from normal overs', () => {
         expect(result.find((r) => r.teamId === 't2').nrr).toBeCloseTo(-1.0, 10);
     });
 });
+
+describe('computeStandings — NRR all-out overs-entitled substitution', () => {
+    it('uses the match totalOvers, not legalBalls, for an all-out innings', () => {
+        const teams = [{ id: 't1', name: 'Alpha' }, { id: 't2', name: 'Bravo' }];
+        // Alpha is bowled out for 60 off just 10 overs (60 legal balls) of a
+        // 20-over match — NRR must charge Alpha with facing the full 20
+        // overs it was entitled to, not the 10 it actually used. Without the
+        // substitution Alpha's for-rate would be 60/10=6.0; with it, 60/20=3.0.
+        // Bravo chases: 61 off 20 overs, not bowled out.
+        // Alpha: for 60/20=3.0, against 61/20=3.05 -> NRR = -0.05
+        // Bravo: for 61/20=3.05, against 60/20=3.0 -> NRR = 0.05
+        const matches = [{
+            teamAId: 't1', teamBId: 't2', status: 'completed', resultWinner: 'teamB',
+            totalOvers: 20,
+            innings: [
+                { battingSide: 'teamA', runs: 60, legalBalls: 60, allOut: true },
+                { battingSide: 'teamB', runs: 61, legalBalls: 120, allOut: false },
+            ],
+        }];
+        const result = computeStandings({ teams, matches });
+        expect(result.find((r) => r.teamId === 't1').nrr).toBeCloseTo(-0.05, 10);
+        expect(result.find((r) => r.teamId === 't2').nrr).toBeCloseTo(0.05, 10);
+    });
+});
