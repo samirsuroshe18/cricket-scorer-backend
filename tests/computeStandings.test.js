@@ -65,3 +65,24 @@ describe('computeStandings — tie and no-result points', () => {
         );
     });
 });
+
+describe('computeStandings — NRR from normal overs', () => {
+    it('computes NRR from runs and overs faced/bowled across a completed match', () => {
+        const teams = [{ id: 't1', name: 'Alpha' }, { id: 't2', name: 'Bravo' }];
+        // Alpha bats first: 120 runs off 20 overs (all legal, no all-out).
+        // Bravo chases: 100 runs off 20 overs (all legal, no all-out).
+        // Alpha: for 120/20=6.0, against 100/20=5.0 -> NRR = 1.0
+        // Bravo: for 100/20=5.0, against 120/20=6.0 -> NRR = -1.0
+        const matches = [{
+            teamAId: 't1', teamBId: 't2', status: 'completed', resultWinner: 'teamA',
+            totalOvers: 20,
+            innings: [
+                { battingSide: 'teamA', runs: 120, legalBalls: 120, allOut: false },
+                { battingSide: 'teamB', runs: 100, legalBalls: 120, allOut: false },
+            ],
+        }];
+        const result = computeStandings({ teams, matches });
+        expect(result.find((r) => r.teamId === 't1').nrr).toBeCloseTo(1.0, 10);
+        expect(result.find((r) => r.teamId === 't2').nrr).toBeCloseTo(-1.0, 10);
+    });
+});
