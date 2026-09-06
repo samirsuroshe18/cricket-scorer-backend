@@ -109,11 +109,20 @@ export const generateFixtures = catchAsync(async (req, res) => {
     const maxRound = Math.max(...existingFixtures.map((f) => f.round));
     const latestRound = existingFixtures.filter((f) => f.round === maxRound);
 
-    if (latestRound.length === 1) {
-        throw new ApiError(409, "TOURNAMENT_ALREADY_COMPLETE");
-    }
+    // Order matters: a not-yet-played or tied/no-result final is still a
+    // single-fixture round, so checking length before status would report
+    // TOURNAMENT_ALREADY_COMPLETE for a final that hasn't actually resolved
+    // yet. checkTournamentCompletion already flips Tournament.status the
+    // moment the final's fixture reaches 'completed' (caught by this
+    // function's own top-of-function status check above), so by the time
+    // execution reaches here a lone final fixture is, by construction,
+    // still scheduled or unresolved — length === 1 below is a defensive
+    // fallback, not the expected path.
     if (latestRound.some((f) => f.status === 'scheduled' || f.status === 'unresolved')) {
         throw new ApiError(400, "ROUND_NOT_COMPLETE");
+    }
+    if (latestRound.length === 1) {
+        throw new ApiError(409, "TOURNAMENT_ALREADY_COMPLETE");
     }
 
     const winnerIds = latestRound.map((f) => f.winner);

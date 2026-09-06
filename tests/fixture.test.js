@@ -406,4 +406,134 @@ describe('knockout bracket progression end-to-end', () => {
         expect(afterFinal.status).toBe(409);
         expect(afterFinal.body.code).toBe('TOURNAMENT_ALREADY_COMPLETE');
     });
+
+    it('400s ROUND_NOT_COMPLETE (not TOURNAMENT_ALREADY_COMPLETE) when the sole final fixture has not resolved yet', async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('knockout', 2);
+        await generateFixtures(token, tournamentId); // round 1 IS the final: 1 fixture, still scheduled
+
+        const res = await generateFixtures(token, tournamentId);
+
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('ROUND_NOT_COMPLETE');
+    });
+
+    it('400s ROUND_NOT_COMPLETE (not TOURNAMENT_ALREADY_COMPLETE) when the sole final fixture is unresolved (abandoned, no winner yet)', async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('knockout', 2);
+        await generateFixtures(token, tournamentId);
+        const final = (await listFixtures(token, tournamentId)).body.data.fixtures[0];
+        const started = await startFixtureMatch(token, tournamentId, final.id, { totalOvers: 20 });
+
+        await abandonMatch(token, started.body.data.matchId);
+
+        const res = await generateFixtures(token, tournamentId);
+
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('ROUND_NOT_COMPLETE');
+    });
+
+    it('409s TOURNAMENT_ALREADY_COMPLETE calling generate again once a round_robin tournament is fully resolved', async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('round_robin', 3);
+        await generateFixtures(token, tournamentId);
+        const all = (await listFixtures(token, tournamentId)).body.data.fixtures;
+        for (const fixture of all.filter((f) => f.status === 'scheduled')) {
+            const started = await startFixtureMatch(token, tournamentId, fixture.id, { totalOvers: 1 });
+            await playOutMatch(token, started.body.data.matchId);
+        }
+
+        const tournament = await Tournament.findById(tournamentId);
+        expect(tournament.status).toBe('completed');
+
+        const res = await generateFixtures(token, tournamentId);
+        expect(res.status).toBe(409);
+        expect(res.body.code).toBe('TOURNAMENT_ALREADY_COMPLETE');
+    });
+
+    it('400s INSUFFICIENT_TEAMS_FOR_FORMAT for a knockout with fewer than 2 teams', async () => {
+        const { token } = await createTestUser();
+        const orgRes = await createOrg(token, { name: 'Solo Club' });
+        const orgId = orgRes.body.data.id;
+        const tournamentRes = await createTournament(token, orgId, { name: 'Lonely Cup', format: 'knockout' });
+        const tournamentId = tournamentRes.body.data.id;
+        const teamRes = await createOrgTeam(token, orgId, { name: 'Only Team' });
+        await addTeamToTournament(token, tournamentId, teamRes.body.data.id);
+
+        const res = await generateFixtures(token, tournamentId);
+
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('INSUFFICIENT_TEAMS_FOR_FORMAT');
+    });
+
+    it('400s INSUFFICIENT_TEAMS_FOR_FORMAT for a league with fewer than 3 teams', async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('league', 2);
+
+        const res = await generateFixtures(token, tournamentId);
+
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('INSUFFICIENT_TEAMS_FOR_FORMAT');
+    });
+});
+
+describe('start-match and resolve: not-found and validation edges', () => {
+    it("404s FIXTURE_NOT_FOUND starting a fixture id that doesn't belong to the tournament", async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('round_robin', 3);
+        await generateFixtures(token, tournamentId);
+
+        const res = await startFixtureMatch(token, tournamentId, '665f1a2b3c4d5e6f7a8b9c99', { totalOvers: 20 });
+
+        expect(res.status).toBe(404);
+        expect(res.body.code).toBe('FIXTURE_NOT_FOUND');
+    });
+
+    it("404s FIXTURE_NOT_FOUND resolving a fixture id that doesn't belong to the tournament", async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('round_robin', 3);
+        await generateFixtures(token, tournamentId);
+
+        const res = await resolveFixture(token, tournamentId, '665f1a2b3c4d5e6f7a8b9c99', { winner: '665f1a2b3c4d5e6f7a8b9c05' });
+
+        expect(res.status).toBe(404);
+        expect(res.body.code).toBe('FIXTURE_NOT_FOUND');
+    });
+
+    it('400s INVALID_TOSS_RESULT starting a match with a toss winner but no decision', async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('round_robin', 3);
+        await generateFixtures(token, tournamentId);
+        const scheduled = (await listFixtures(token, tournamentId)).body.data.fixtures
+            .find((f) => f.status === 'scheduled');
+
+        const res = await startFixtureMatch(token, tournamentId, scheduled.id, { totalOvers: 20, tossWinner: 'teamA' });
+
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('INVALID_TOSS_RESULT');
+    });
+
+    it('400s FIXTURE_WINNER_REQUIRED resolving an unresolved fixture with no winner in the body', async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('round_robin', 3);
+        await generateFixtures(token, tournamentId);
+        const scheduled = (await listFixtures(token, tournamentId)).body.data.fixtures
+            .find((f) => f.status === 'scheduled');
+        const started = await startFixtureMatch(token, tournamentId, scheduled.id, { totalOvers: 20 });
+        await abandonMatch(token, started.body.data.matchId);
+
+        const res = await resolveFixture(token, tournamentId, scheduled.id, {});
+
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('FIXTURE_WINNER_REQUIRED');
+    });
+
+    it('only one of two concurrent start-match calls for the same fixture succeeds', async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('round_robin', 3);
+        await generateFixtures(token, tournamentId);
+        const scheduled = (await listFixtures(token, tournamentId)).body.data.fixtures
+            .find((f) => f.status === 'scheduled');
+
+        const [first, second] = await Promise.all([
+            startFixtureMatch(token, tournamentId, scheduled.id, { totalOvers: 20 }),
+            startFixtureMatch(token, tournamentId, scheduled.id, { totalOvers: 20 }),
+        ]);
+
+        const statuses = [first.status, second.status].sort();
+        expect(statuses).toEqual([200, 409]);
+        const failed = first.status === 409 ? first : second;
+        expect(failed.body.code).toBe('FIXTURE_ALREADY_STARTED');
+    });
 });
