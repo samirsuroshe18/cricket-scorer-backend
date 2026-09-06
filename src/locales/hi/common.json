@@ -178,6 +178,8 @@
   "FIXTURE_WINNER_REQUIRED": "आगे बढ़ने वाली टीम बतानी आवश्यक है",
   "INVALID_FIXTURE_WINNER": "वह टीम इस फिक्स्चर की दोनों टीमों में से एक नहीं है",
   "FIXTURE_RESOLVED": "फिक्स्चर तय किया गया",
+  "STANDINGS_NOT_APPLICABLE": "नॉकआउट टूर्नामेंट के लिए स्टैंडिंग उपलब्ध नहीं है",
+  "STANDINGS_FETCHED": "स्टैंडिंग प्राप्त की गई",
   "BALL_UNDONE": "गेंद वापस ली गई",
   "BALL_EVENT_ID_REQUIRED": "वापस लेने वाली गेंद बतानी आवश्यक है",
   "INVALID_BALL_EVENT_ID": "अमान्य गेंद संदर्भ",

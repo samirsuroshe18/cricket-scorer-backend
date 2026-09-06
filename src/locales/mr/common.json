@@ -178,6 +178,8 @@
   "FIXTURE_WINNER_REQUIRED": "पुढे जाणारा संघ नमूद करणे आवश्यक आहे",
   "INVALID_FIXTURE_WINNER": "तो संघ या फिक्स्चरच्या दोन संघांपैकी एक नाही",
   "FIXTURE_RESOLVED": "फिक्स्चर निकाली काढला",
+  "STANDINGS_NOT_APPLICABLE": "नॉकआउट स्पर्धेसाठी गुणतालिका उपलब्ध नाही",
+  "STANDINGS_FETCHED": "गुणतालिका मिळाली",
   "BALL_UNDONE": "चेंडू मागे घेतला",
   "BALL_EVENT_ID_REQUIRED": "मागे घ्यायचा चेंडू नमूद करणे आवश्यक आहे",
   "INVALID_BALL_EVENT_ID": "अवैध चेंडू संदर्भ",

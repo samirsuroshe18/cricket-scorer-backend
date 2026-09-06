@@ -178,6 +178,8 @@
   "FIXTURE_WINNER_REQUIRED": "The advancing team must be specified",
   "INVALID_FIXTURE_WINNER": "That team isn't one of this fixture's two teams",
   "FIXTURE_RESOLVED": "Fixture resolved",
+  "STANDINGS_NOT_APPLICABLE": "Standings aren't available for a knockout tournament",
+  "STANDINGS_FETCHED": "Standings fetched",
   "BALL_UNDONE": "Ball undone",
   "BALL_EVENT_ID_REQUIRED": "The ball to undo must be specified",
   "INVALID_BALL_EVENT_ID": "Invalid ball reference",
