@@ -198,3 +198,65 @@ describe('tournament roster lock', () => {
         expect(res.body.code).toBe('TOURNAMENT_FIXTURES_LOCKED');
     });
 });
+
+const startFixtureMatch = (token, tournamentId, fixtureId, body) =>
+    request(app)
+        .post(`/api/v1/tournament/${tournamentId}/fixtures/${fixtureId}/start-match`)
+        .set('Authorization', `Bearer ${token}`)
+        .send(body);
+
+describe('POST /v1/tournament/:tournamentId/fixtures/:fixtureId/start-match', () => {
+    it('creates a real match for a scheduled fixture', async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('round_robin', 3);
+        await generateFixtures(token, tournamentId);
+        const fixtures = (await listFixtures(token, tournamentId)).body.data.fixtures;
+        const scheduled = fixtures.find((f) => f.status === 'scheduled');
+
+        const res = await startFixtureMatch(token, tournamentId, scheduled.id, { totalOvers: 20 });
+
+        expect(res.status).toBe(200);
+        expect(res.body.data.matchId).toEqual(expect.any(String));
+        expect(res.body.data.fixtureId).toBe(scheduled.id);
+        expect(res.body.data.joinCode).toHaveLength(6);
+
+        const updatedFixture = (await listFixtures(token, tournamentId)).body.data.fixtures
+            .find((f) => f.id === scheduled.id);
+        expect(updatedFixture.matchId).toBe(res.body.data.matchId);
+    });
+
+    it('409s starting a fixture that already has a match', async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('round_robin', 3);
+        await generateFixtures(token, tournamentId);
+        const scheduled = (await listFixtures(token, tournamentId)).body.data.fixtures
+            .find((f) => f.status === 'scheduled');
+        await startFixtureMatch(token, tournamentId, scheduled.id, { totalOvers: 20 });
+
+        const res = await startFixtureMatch(token, tournamentId, scheduled.id, { totalOvers: 20 });
+
+        expect(res.status).toBe(409);
+        expect(res.body.code).toBe('FIXTURE_ALREADY_STARTED');
+    });
+
+    it('400s starting a bye fixture', async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('knockout', 3);
+        await generateFixtures(token, tournamentId);
+        const bye = (await listFixtures(token, tournamentId)).body.data.fixtures.find((f) => f.isBye);
+
+        const res = await startFixtureMatch(token, tournamentId, bye.id, { totalOvers: 20 });
+
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('FIXTURE_NOT_SCHEDULED');
+    });
+
+    it('400s an invalid overs value, same rule as POST /v1/match', async () => {
+        const { token, tournamentId } = await setupTournamentWithTeams('round_robin', 3);
+        await generateFixtures(token, tournamentId);
+        const scheduled = (await listFixtures(token, tournamentId)).body.data.fixtures
+            .find((f) => f.status === 'scheduled');
+
+        const res = await startFixtureMatch(token, tournamentId, scheduled.id, { totalOvers: 0 });
+
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('INVALID_OVERS_FORMAT');
+    });
+});

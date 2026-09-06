@@ -4,6 +4,8 @@ import ApiResponse from '../utils/ApiResponse.js';
 import { Fixture } from '../models/fixture.model.js';
 import { Tournament } from '../models/tournament.model.js';
 import { findAccessibleTournament, findOwnedTournament } from './tournament.controller.js';
+import { createMatchWithJoinCode } from './match.controller.js';
+import { resolveToss } from '../utils/resolveToss.js';
 import {
     buildRoundRobinRounds,
     buildLeagueRounds,
@@ -137,4 +139,75 @@ export const listFixtures = catchAsync(async (req, res) => {
         tournamentId: tournament._id,
         fixtures: fixtures.map(serializeFixture),
     }, req.t("FIXTURES_FETCHED")));
+});
+
+const MIN_OVERS = 1;
+const MAX_OVERS = 50;
+
+export const startFixtureMatch = catchAsync(async (req, res) => {
+    const { tournamentId, fixtureId } = req.params;
+    const { tournament } = await findAccessibleTournament(tournamentId, req.user._id);
+
+    const fixture = await Fixture.findOne({ _id: fixtureId, tournament: tournament._id })
+        .populate('teamA', 'name')
+        .populate('teamB', 'name');
+    if (!fixture) {
+        throw new ApiError(404, "FIXTURE_NOT_FOUND");
+    }
+    if (fixture.isBye || fixture.status !== 'scheduled') {
+        throw new ApiError(400, "FIXTURE_NOT_SCHEDULED");
+    }
+    if (fixture.match) {
+        throw new ApiError(409, "FIXTURE_ALREADY_STARTED");
+    }
+
+    const { totalOvers, tossWinner, tossDecision } = req.body;
+    if (!Number.isInteger(totalOvers) || totalOvers < MIN_OVERS || totalOvers > MAX_OVERS) {
+        throw new ApiError(400, "INVALID_OVERS_FORMAT");
+    }
+    const toss = resolveToss({ tossWinner, tossDecision });
+    if (!toss.valid) {
+        throw new ApiError(400, "INVALID_TOSS_RESULT");
+    }
+
+    const match = await createMatchWithJoinCode({
+        teamA: fixture.teamA._id,
+        teamB: fixture.teamB._id,
+        totalOvers,
+        tossWinner: toss.tossWinner ?? undefined,
+        tossDecision: toss.tossDecision ?? undefined,
+        battingFirst: toss.battingFirst,
+        createdBy: req.user._id,
+        matchType: 'tournament',
+        tournament: tournament._id,
+        fixture: fixture._id,
+    });
+
+    // Atomic claim: a filter requiring `match: null` means a concurrent
+    // second call loses the race here rather than both succeeding — the
+    // Match this call already created is a harmless orphan in that case,
+    // same tolerance this codebase already extends to an orphan Team/Player
+    // from a losing findOneAndUpdate race elsewhere.
+    const claimed = await Fixture.findOneAndUpdate(
+        { _id: fixture._id, match: null },
+        { $set: { match: match._id } }
+    );
+    if (!claimed) {
+        throw new ApiError(409, "FIXTURE_ALREADY_STARTED");
+    }
+
+    return res.status(200).json(new ApiResponse(200, {
+        matchId: match._id,
+        fixtureId: fixture._id,
+        tournamentId: tournament._id,
+        joinCode: match.joinCode,
+        teamA: { id: fixture.teamA._id, name: fixture.teamA.name },
+        teamB: { id: fixture.teamB._id, name: fixture.teamB.name },
+        totalOvers: match.totalOvers,
+        tossWinner: match.tossWinner ?? null,
+        tossDecision: match.tossDecision ?? null,
+        status: match.status,
+        syncStatus: match.syncStatus,
+        createdAt: match.createdAt,
+    }, req.t("MATCH_CREATED")));
 });
