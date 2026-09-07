@@ -134,6 +134,8 @@
   "PLAYER_ALREADY_IN_POOL": "This player is already registered in this tournament's pool",
   "PLAYER_REGISTERED_IN_POOL": "Player registered in pool",
   "POOL_FETCHED": "Pool fetched",
+  "POOL_ENTRY_NOT_FOUND": "That player isn't registered in this tournament's pool",
+  "POOL_ENTRY_UPDATED": "Pool entry updated",
   "PLAYER_UPDATED": "Player updated",
   "TEAM_NOT_FOUND": "That team couldn't be found",
   "TEAM_NOT_OWNED": "That team doesn't belong to your account",

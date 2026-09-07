@@ -112,4 +112,26 @@ const listPoolEntries = catchAsync(async (req, res) => {
     }, req.t("POOL_FETCHED")));
 });
 
-export { registerPoolPlayer, listPoolEntries, formatPoolEntry, validateBasePrice, MIN_BASE_PRICE, MAX_BASE_PRICE };
+const updatePoolEntry = catchAsync(async (req, res) => {
+    const { tournamentId, playerId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(playerId)) {
+        throw new ApiError(400, "INVALID_ID");
+    }
+    const { tournament } = await findOwnedTournament(tournamentId, req.user._id);
+
+    validateBasePrice(req.body.basePrice);
+
+    const entry = await PlayerPoolEntry.findOneAndUpdate(
+        { tournament: tournament._id, player: playerId },
+        { $set: { basePrice: req.body.basePrice } },
+        { new: true }
+    ).populate('player', 'name role jerseyNumber battingStyle bowlingStyle bio');
+
+    if (!entry) {
+        throw new ApiError(404, "POOL_ENTRY_NOT_FOUND");
+    }
+
+    return res.status(200).json(new ApiResponse(200, formatPoolEntry(entry, entry.player), req.t("POOL_ENTRY_UPDATED")));
+});
+
+export { registerPoolPlayer, listPoolEntries, updatePoolEntry, formatPoolEntry, validateBasePrice, MIN_BASE_PRICE, MAX_BASE_PRICE };

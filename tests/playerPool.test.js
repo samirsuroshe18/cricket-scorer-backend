@@ -203,3 +203,62 @@ describe('GET /:tournamentId/pool', () => {
     expect(res.body.code).toBe('TOURNAMENT_NOT_FOUND');
   });
 });
+
+const updateEntry = (token, tournamentId, playerId, body) =>
+  request(app)
+    .patch(`/api/v1/tournament/${tournamentId}/pool/${playerId}`)
+    .set('Authorization', `Bearer ${token}`)
+    .send(body);
+
+describe('PATCH /:tournamentId/pool/:playerId', () => {
+  it('lets the org owner change basePrice', async () => {
+    const { ownerToken, tournamentId } = await setupOwnedTournament();
+    const registerRes = await registerPlayer(ownerToken, tournamentId, { playerName: 'Rohit Sharma', basePrice: 5000 });
+    const playerId = registerRes.body.data.playerId;
+
+    const res = await updateEntry(ownerToken, tournamentId, playerId, { basePrice: 8000 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.basePrice).toBe(8000);
+    const entry = await PlayerPoolEntry.findOne({ tournament: tournamentId, player: playerId });
+    expect(entry.basePrice).toBe(8000);
+  });
+
+  it('rejects a plain org member (not owner)', async () => {
+    const { ownerToken, memberToken, tournamentId } = await setupOwnedTournament();
+    const registerRes = await registerPlayer(ownerToken, tournamentId, { playerName: 'Rohit Sharma', basePrice: 5000 });
+
+    const res = await updateEntry(memberToken, tournamentId, registerRes.body.data.playerId, { basePrice: 8000 });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('TOURNAMENT_NOT_OWNED');
+  });
+
+  it('rejects an invalid basePrice', async () => {
+    const { ownerToken, tournamentId } = await setupOwnedTournament();
+    const registerRes = await registerPlayer(ownerToken, tournamentId, { playerName: 'Rohit Sharma', basePrice: 5000 });
+
+    const res = await updateEntry(ownerToken, tournamentId, registerRes.body.data.playerId, { basePrice: -1 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INVALID_BASE_PRICE');
+  });
+
+  it('fails with POOL_ENTRY_NOT_FOUND for a playerId never registered here', async () => {
+    const { ownerToken, tournamentId } = await setupOwnedTournament();
+
+    const res = await updateEntry(ownerToken, tournamentId, '000000000000000000000000', { basePrice: 8000 });
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('POOL_ENTRY_NOT_FOUND');
+  });
+
+  it('rejects with INVALID_ID for a malformed playerId', async () => {
+    const { ownerToken, tournamentId } = await setupOwnedTournament();
+
+    const res = await updateEntry(ownerToken, tournamentId, 'not-an-id', { basePrice: 8000 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INVALID_ID');
+  });
+});
