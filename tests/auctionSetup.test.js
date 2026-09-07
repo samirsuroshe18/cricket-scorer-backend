@@ -159,3 +159,172 @@ describe('PATCH /:tournamentId/auction-setup — squad rules', () => {
     expect(res.body.code).toBe('TOURNAMENT_NOT_FOUND');
   });
 });
+
+describe('PATCH /:tournamentId/auction-setup — owners', () => {
+  it('assigns owners and budgets to enrolled teams', async () => {
+    const { ownerToken, member, tournamentId, teamAId } = await setupOwnedTournament();
+
+    const res = await patchSetup(ownerToken, tournamentId, {
+      owners: [{ teamId: teamAId, userId: String(member._id), budget: 100000 }],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.owners).toHaveLength(1);
+    expect(res.body.data.owners[0]).toMatchObject({
+      teamId: teamAId, userId: String(member._id), budget: 100000,
+    });
+    const stored = await AuctionTeamOwner.findOne({ tournament: tournamentId });
+    expect(stored.budget).toBe(100000);
+  });
+
+  it('setting owners does not touch previously-set squad rules', async () => {
+    const { ownerToken, member, tournamentId, teamAId } = await setupOwnedTournament();
+    await patchSetup(ownerToken, tournamentId, { minSquadSize: 15 });
+
+    const res = await patchSetup(ownerToken, tournamentId, {
+      owners: [{ teamId: teamAId, userId: String(member._id), budget: 100000 }],
+    });
+
+    expect(res.body.data.minSquadSize).toBe(15);
+  });
+
+  it('setting squad rules does not touch previously-set owners', async () => {
+    const { ownerToken, member, tournamentId, teamAId } = await setupOwnedTournament();
+    await patchSetup(ownerToken, tournamentId, {
+      owners: [{ teamId: teamAId, userId: String(member._id), budget: 100000 }],
+    });
+
+    const res = await patchSetup(ownerToken, tournamentId, { minSquadSize: 15 });
+
+    expect(res.body.data.owners).toHaveLength(1);
+  });
+
+  it('an empty owners array clears every existing owner', async () => {
+    const { ownerToken, member, tournamentId, teamAId } = await setupOwnedTournament();
+    await patchSetup(ownerToken, tournamentId, {
+      owners: [{ teamId: teamAId, userId: String(member._id), budget: 100000 }],
+    });
+
+    const res = await patchSetup(ownerToken, tournamentId, { owners: [] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.owners).toEqual([]);
+    const count = await AuctionTeamOwner.countDocuments({ tournament: tournamentId });
+    expect(count).toBe(0);
+  });
+
+  it('resubmitting the owners array replaces the previous set entirely', async () => {
+    const { ownerToken, member, owner, tournamentId, teamAId, teamBId } = await setupOwnedTournament();
+    await patchSetup(ownerToken, tournamentId, {
+      owners: [{ teamId: teamAId, userId: String(member._id), budget: 100000 }],
+    });
+
+    const res = await patchSetup(ownerToken, tournamentId, {
+      owners: [{ teamId: teamBId, userId: String(owner._id), budget: 50000 }],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.owners).toHaveLength(1);
+    expect(res.body.data.owners[0].teamId).toBe(teamBId);
+    const count = await AuctionTeamOwner.countDocuments({ tournament: tournamentId });
+    expect(count).toBe(1);
+  });
+
+  it('rejects a teamId not enrolled in this tournament', async () => {
+    const { ownerToken, member, tournamentId } = await setupOwnedTournament();
+
+    const res = await patchSetup(ownerToken, tournamentId, {
+      owners: [{ teamId: '000000000000000000000000', userId: String(member._id), budget: 100000 }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('AUCTION_SETUP_TEAM_NOT_IN_TOURNAMENT');
+  });
+
+  it('rejects the same team appearing twice in one request', async () => {
+    const { ownerToken, member, owner, tournamentId, teamAId } = await setupOwnedTournament();
+
+    const res = await patchSetup(ownerToken, tournamentId, {
+      owners: [
+        { teamId: teamAId, userId: String(member._id), budget: 100000 },
+        { teamId: teamAId, userId: String(owner._id), budget: 50000 },
+      ],
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('AUCTION_SETUP_DUPLICATE_TEAM');
+  });
+
+  it('rejects the same owner appearing twice in one request', async () => {
+    const { ownerToken, member, tournamentId, teamAId, teamBId } = await setupOwnedTournament();
+
+    const res = await patchSetup(ownerToken, tournamentId, {
+      owners: [
+        { teamId: teamAId, userId: String(member._id), budget: 100000 },
+        { teamId: teamBId, userId: String(member._id), budget: 50000 },
+      ],
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('AUCTION_SETUP_DUPLICATE_OWNER');
+  });
+
+  it('rejects a userId who is not a member of the organization', async () => {
+    const { ownerToken, tournamentId, teamAId } = await setupOwnedTournament();
+    const { user: outsider } = await createTestUser({ email: 'outsider@example.com' });
+
+    const res = await patchSetup(ownerToken, tournamentId, {
+      owners: [{ teamId: teamAId, userId: String(outsider._id), budget: 100000 }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('AUCTION_SETUP_INVALID_OWNER');
+  });
+
+  it('rejects a missing budget', async () => {
+    const { ownerToken, member, tournamentId, teamAId } = await setupOwnedTournament();
+
+    const res = await patchSetup(ownerToken, tournamentId, {
+      owners: [{ teamId: teamAId, userId: String(member._id) }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('BUDGET_REQUIRED');
+  });
+
+  it.each([0, -100, 1.5, 100000001])('rejects an invalid budget of %p', async (budget) => {
+    const { ownerToken, member, tournamentId, teamAId } = await setupOwnedTournament();
+
+    const res = await patchSetup(ownerToken, tournamentId, {
+      owners: [{ teamId: teamAId, userId: String(member._id), budget }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INVALID_BUDGET');
+  });
+
+  it('rejects owners that is present but not an array', async () => {
+    const { ownerToken, tournamentId } = await setupOwnedTournament();
+
+    const res = await patchSetup(ownerToken, tournamentId, { owners: 'not-an-array' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INVALID_OWNERS_LIST');
+  });
+
+  it('rolls back the whole request when one owners entry is invalid — no partial application', async () => {
+    const { ownerToken, member, tournamentId, teamAId, teamBId } = await setupOwnedTournament();
+    const { user: outsider } = await createTestUser({ email: 'outsider2@example.com' });
+
+    const res = await patchSetup(ownerToken, tournamentId, {
+      owners: [
+        { teamId: teamAId, userId: String(member._id), budget: 100000 },
+        { teamId: teamBId, userId: String(outsider._id), budget: 50000 },
+      ],
+    });
+
+    expect(res.status).toBe(400);
+    const count = await AuctionTeamOwner.countDocuments({ tournament: tournamentId });
+    expect(count).toBe(0);
+  });
+});

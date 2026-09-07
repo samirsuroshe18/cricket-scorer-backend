@@ -4,7 +4,11 @@ import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import { AuctionSettings, CATEGORY_CAP_ROLES } from '../models/auctionSettings.model.js';
 import { AuctionTeamOwner } from '../models/auctionTeamOwner.model.js';
+import { Organization } from '../models/organization.model.js';
+import { isOrgMember } from '../utils/organizationAccess.js';
 import { findOwnedTournament, findAccessibleTournament } from './tournament.controller.js';
+
+const asString = (value) => (typeof value === 'string' ? value : '');
 
 // The paid-tier half of the roadmap's settled auction-access-control
 // decision — "does this auction's tournament belong to a paid
@@ -36,8 +40,66 @@ const validateCategoryCaps = (categoryCaps) => {
     }
 };
 
-// Shared response shape for PATCH/GET — see the owners half added in the
-// next task.
+const validateBudgetField = (budget) => {
+    if (budget === undefined || budget === null) {
+        throw new ApiError(400, "BUDGET_REQUIRED");
+    }
+    if (!Number.isInteger(budget) || budget < 1 || budget > 100000000) {
+        throw new ApiError(400, "INVALID_BUDGET");
+    }
+};
+
+// team must already be enrolled; owner must be a member of the tournament's
+// own organization; no team or owner repeated within the same request —
+// this is what turns a duplicate into a specific 400 instead of a generic
+// 500 from a caught E11000 at the storage layer.
+const validateOwners = async (owners, tournament) => {
+    if (!Array.isArray(owners)) {
+        throw new ApiError(400, "INVALID_OWNERS_LIST");
+    }
+
+    const enrolledTeamIds = new Set(tournament.teams.map((t) => String(t.team)));
+    const seenTeams = new Set();
+    const seenOwnerIds = new Set();
+    const resolved = [];
+
+    for (const entry of owners) {
+        const teamId = asString(entry?.teamId).trim();
+        const userId = asString(entry?.userId).trim();
+
+        if (!mongoose.Types.ObjectId.isValid(teamId) || !enrolledTeamIds.has(teamId)) {
+            throw new ApiError(400, "AUCTION_SETUP_TEAM_NOT_IN_TOURNAMENT");
+        }
+        if (seenTeams.has(teamId)) {
+            throw new ApiError(400, "AUCTION_SETUP_DUPLICATE_TEAM");
+        }
+        seenTeams.add(teamId);
+
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            throw new ApiError(400, "AUCTION_SETUP_INVALID_OWNER");
+        }
+        if (seenOwnerIds.has(userId)) {
+            throw new ApiError(400, "AUCTION_SETUP_DUPLICATE_OWNER");
+        }
+        seenOwnerIds.add(userId);
+
+        validateBudgetField(entry?.budget);
+        resolved.push({ teamId, userId, budget: entry.budget });
+    }
+
+    if (resolved.length > 0) {
+        const org = await Organization.findOne({ _id: tournament.organization, isDeleted: false });
+        for (const { userId } of resolved) {
+            if (!isOrgMember(org, userId)) {
+                throw new ApiError(400, "AUCTION_SETUP_INVALID_OWNER");
+            }
+        }
+    }
+
+    return resolved;
+};
+
+// Shared response shape for PATCH/GET.
 const formatAuctionSetup = async (tournamentId) => {
     const [settings, owners] = await Promise.all([
         AuctionSettings.findOne({ tournament: tournamentId }),
@@ -92,6 +154,11 @@ const setAuctionSetup = catchAsync(async (req, res) => {
         settingsUpdate.categoryCaps = req.body.categoryCaps;
     }
 
+    const ownersProvided = req.body.owners !== undefined;
+    const resolvedOwners = ownersProvided
+        ? await validateOwners(req.body.owners, tournament)
+        : null;
+
     const session = await mongoose.startSession();
     try {
         await session.withTransaction(async () => {
@@ -102,6 +169,18 @@ const setAuctionSetup = catchAsync(async (req, res) => {
                     { $set: settingsUpdate },
                     { upsert: true, session }
                 );
+            }
+            if (ownersProvided) {
+                await AuctionTeamOwner.deleteMany({ tournament: tournament._id }, { session });
+                if (resolvedOwners.length > 0) {
+                    await AuctionTeamOwner.insertMany(
+                        resolvedOwners.map((o) => ({
+                            tournament: tournament._id, team: o.teamId, owner: o.userId,
+                            budget: o.budget, createdBy: req.user._id,
+                        })),
+                        { session }
+                    );
+                }
             }
         });
     } finally {
