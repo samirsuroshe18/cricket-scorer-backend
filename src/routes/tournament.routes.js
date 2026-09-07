@@ -3,7 +3,7 @@ import { getTournament, updateTournament, deleteTournament, addTournamentTeam, r
 import { generateFixtures, listFixtures, startFixtureMatch, resolveFixture } from "../controllers/fixture.controller.js";
 import { getStandings } from "../controllers/standings.controller.js";
 import { getLeaderboards } from "../controllers/leaderboard.controller.js";
-import { registerPoolPlayer, listPoolEntries, updatePoolEntry } from "../controllers/playerPool.controller.js";
+import { registerPoolPlayer, listPoolEntries, updatePoolEntry, removePoolEntry } from "../controllers/playerPool.controller.js";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
 
 const router = Router();
@@ -25,6 +25,8 @@ router.route('/:tournamentId/leaderboards').get(verifyJwt, getLeaderboards);
 router.route('/:tournamentId/pool')
     .post(verifyJwt, registerPoolPlayer)
     .get(verifyJwt, listPoolEntries);
-router.route('/:tournamentId/pool/:playerId').patch(verifyJwt, updatePoolEntry);
+router.route('/:tournamentId/pool/:playerId')
+    .patch(verifyJwt, updatePoolEntry)
+    .delete(verifyJwt, removePoolEntry);
 
 export default router;

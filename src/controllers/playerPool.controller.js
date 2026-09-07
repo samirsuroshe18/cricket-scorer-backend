@@ -134,4 +134,19 @@ const updatePoolEntry = catchAsync(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, formatPoolEntry(entry, entry.player), req.t("POOL_ENTRY_UPDATED")));
 });
 
-export { registerPoolPlayer, listPoolEntries, updatePoolEntry, formatPoolEntry, validateBasePrice, MIN_BASE_PRICE, MAX_BASE_PRICE };
+const removePoolEntry = catchAsync(async (req, res) => {
+    const { tournamentId, playerId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(playerId)) {
+        throw new ApiError(400, "INVALID_ID");
+    }
+    const { tournament } = await findOwnedTournament(tournamentId, req.user._id);
+
+    const entry = await PlayerPoolEntry.findOneAndDelete({ tournament: tournament._id, player: playerId });
+    if (!entry) {
+        throw new ApiError(404, "POOL_ENTRY_NOT_FOUND");
+    }
+
+    return res.status(200).json(new ApiResponse(200, { tournamentId: tournament._id, playerId }, req.t("POOL_ENTRY_REMOVED")));
+});
+
+export { registerPoolPlayer, listPoolEntries, updatePoolEntry, removePoolEntry, formatPoolEntry, validateBasePrice, MIN_BASE_PRICE, MAX_BASE_PRICE };

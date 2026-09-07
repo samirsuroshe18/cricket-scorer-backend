@@ -262,3 +262,62 @@ describe('PATCH /:tournamentId/pool/:playerId', () => {
     expect(res.body.code).toBe('INVALID_ID');
   });
 });
+
+const removeEntry = (token, tournamentId, playerId) =>
+  request(app)
+    .delete(`/api/v1/tournament/${tournamentId}/pool/${playerId}`)
+    .set('Authorization', `Bearer ${token}`);
+
+describe('DELETE /:tournamentId/pool/:playerId', () => {
+  it('lets the org owner withdraw a registered player', async () => {
+    const { ownerToken, tournamentId } = await setupOwnedTournament();
+    const registerRes = await registerPlayer(ownerToken, tournamentId, { playerName: 'Rohit Sharma', basePrice: 5000 });
+    const playerId = registerRes.body.data.playerId;
+
+    const res = await removeEntry(ownerToken, tournamentId, playerId);
+
+    expect(res.status).toBe(200);
+    const entry = await PlayerPoolEntry.findOne({ tournament: tournamentId, player: playerId });
+    expect(entry).toBeNull();
+  });
+
+  it('leaves the underlying Player document untouched', async () => {
+    const { ownerToken, tournamentId } = await setupOwnedTournament();
+    const registerRes = await registerPlayer(ownerToken, tournamentId, { playerName: 'Rohit Sharma', basePrice: 5000 });
+    const playerId = registerRes.body.data.playerId;
+
+    await removeEntry(ownerToken, tournamentId, playerId);
+
+    const player = await Player.findById(playerId);
+    expect(player).not.toBeNull();
+    expect(player.isDeleted).toBe(false);
+  });
+
+  it('rejects a plain org member (not owner)', async () => {
+    const { ownerToken, memberToken, tournamentId } = await setupOwnedTournament();
+    const registerRes = await registerPlayer(ownerToken, tournamentId, { playerName: 'Rohit Sharma', basePrice: 5000 });
+
+    const res = await removeEntry(memberToken, tournamentId, registerRes.body.data.playerId);
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('TOURNAMENT_NOT_OWNED');
+  });
+
+  it('fails with POOL_ENTRY_NOT_FOUND for a playerId never registered here', async () => {
+    const { ownerToken, tournamentId } = await setupOwnedTournament();
+
+    const res = await removeEntry(ownerToken, tournamentId, '000000000000000000000000');
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('POOL_ENTRY_NOT_FOUND');
+  });
+
+  it('rejects with INVALID_ID for a malformed playerId', async () => {
+    const { ownerToken, tournamentId } = await setupOwnedTournament();
+
+    const res = await removeEntry(ownerToken, tournamentId, 'not-an-id');
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INVALID_ID');
+  });
+});

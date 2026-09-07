@@ -136,6 +136,7 @@
   "POOL_FETCHED": "पूल मिळाला",
   "POOL_ENTRY_NOT_FOUND": "तो खेळाडू या स्पर्धेच्या पूलमध्ये नोंदणीकृत नाही",
   "POOL_ENTRY_UPDATED": "पूल एंट्री अपडेट केली",
+  "POOL_ENTRY_REMOVED": "पूल एंट्री काढली",
   "PLAYER_UPDATED": "खेळाडू अद्ययावत केला",
   "TEAM_NOT_FOUND": "ती टीम सापडली नाही",
   "TEAM_NOT_OWNED": "ती टीम तुमच्या खात्याची नाही",

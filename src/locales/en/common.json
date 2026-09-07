@@ -136,6 +136,7 @@
   "POOL_FETCHED": "Pool fetched",
   "POOL_ENTRY_NOT_FOUND": "That player isn't registered in this tournament's pool",
   "POOL_ENTRY_UPDATED": "Pool entry updated",
+  "POOL_ENTRY_REMOVED": "Pool entry removed",
   "PLAYER_UPDATED": "Player updated",
   "TEAM_NOT_FOUND": "That team couldn't be found",
   "TEAM_NOT_OWNED": "That team doesn't belong to your account",
