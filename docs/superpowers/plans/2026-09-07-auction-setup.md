@@ -31,7 +31,7 @@
 **Files:**
 - Modify: `docs/api.md` (workspace root — not version-controlled by either repo)
 
-- [ ] **Step 1: Insert a new `## Auction setup` section, right after the Player pool section's "Still out of scope" list and before the `---` separator to `## GET /v1/search`**
+- [x] **Step 1: Insert a new `## Auction setup` section, right after the Player pool section's "Still out of scope" list and before the `---` separator to `## GET /v1/search`**
 
 Find the end of the `## Player pool` section (search for `- Any client-side (\`cricket-scrorer\`) model, endpoint, or UI — built in the same change as the backend,` followed by its closing sentence, then `---` then `## GET /v1/search`) and insert:
 
@@ -153,7 +153,7 @@ ever set: `minSquadSize`/`maxSquadSize`/`categoryCaps` are `null` and `owners` i
 ---
 ````
 
-- [ ] **Step 2: Add to `## Schema state`**
+- [x] **Step 2: Add to `## Schema state`**
 
 Append, after the player-pool contract's entry:
 ```markdown
@@ -169,7 +169,7 @@ Append, after the player-pool contract's entry:
 New collections, no prior writer — nothing to migrate.
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd cricket-scorer-workspace
@@ -188,7 +188,7 @@ The workspace root isn't a git repo — `docs/api.md` has no commit of its own. 
 **Interfaces:**
 - Produces: `AuctionSettings`, `CATEGORY_CAP_ROLES` (both named exports). Tasks 4/6 import both.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```js
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
@@ -253,12 +253,12 @@ describe('AuctionSettings', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx jest tests/auctionSettings.model.test.js -v`
 Expected: FAIL — `Cannot find module '../src/models/auctionSettings.model.js'`.
 
-- [ ] **Step 3: Create the model**
+- [x] **Step 3: Create the model**
 
 ```js
 import mongoose, { Schema } from "mongoose";
@@ -286,12 +286,12 @@ const auctionSettingsSchema = new Schema(
 export const AuctionSettings = mongoose.model('AuctionSettings', auctionSettingsSchema);
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx jest tests/auctionSettings.model.test.js -v`
 Expected: PASS (3/3)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd cricket-scorer-backend
@@ -319,7 +319,7 @@ EOF
 **Interfaces:**
 - Produces: `AuctionTeamOwner` (named export). Tasks 5/6 import it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```js
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
@@ -412,12 +412,12 @@ describe('AuctionTeamOwner', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx jest tests/auctionTeamOwner.model.test.js -v`
 Expected: FAIL — `Cannot find module '../src/models/auctionTeamOwner.model.js'`.
 
-- [ ] **Step 3: Create the model**
+- [x] **Step 3: Create the model**
 
 ```js
 import mongoose, { Schema } from "mongoose";
@@ -444,12 +444,12 @@ auctionTeamOwnerSchema.index({ tournament: 1, owner: 1 }, { unique: true });
 export const AuctionTeamOwner = mongoose.model('AuctionTeamOwner', auctionTeamOwnerSchema);
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx jest tests/auctionTeamOwner.model.test.js -v`
 Expected: PASS (4/4)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/models/auctionTeamOwner.model.js tests/auctionTeamOwner.model.test.js
@@ -485,7 +485,7 @@ path is layered on.
 - Produces: `setAuctionSetup`, `formatAuctionSetup` (both exported — Task 6 reuses `formatAuctionSetup`),
   mounted as `PATCH /v1/tournament/:tournamentId/auction-setup`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/auctionSetup.test.js`:
 ```js
@@ -652,12 +652,12 @@ describe('PATCH /:tournamentId/auction-setup — squad rules', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx jest tests/auctionSetup.test.js -v`
 Expected: FAIL — `PATCH /api/v1/tournament/:tournamentId/auction-setup` 404s (route doesn't exist yet).
 
-- [ ] **Step 3: Add locale keys**
+- [x] **Step 3: Add locale keys**
 
 `src/locales/en/common.json`:
 ```json
@@ -678,7 +678,7 @@ Expected: FAIL — `PATCH /api/v1/tournament/:tournamentId/auction-setup` 404s (
   "AUCTION_SETUP_SAVED": "लिलाव सेटअप जतन केले",
 ```
 
-- [ ] **Step 4: Create `auctionSetup.controller.js`**
+- [x] **Step 4: Create `auctionSetup.controller.js`**
 
 ```js
 import mongoose from 'mongoose';
@@ -798,7 +798,7 @@ const setAuctionSetup = catchAsync(async (req, res) => {
 export { setAuctionSetup, formatAuctionSetup, canConfigureAuction, canViewAuctionSetup, validateSquadSizeField, validateCategoryCaps };
 ```
 
-- [ ] **Step 5: Add the route**
+- [x] **Step 5: Add the route**
 
 In `src/routes/tournament.routes.js`, add an import and the route. Widen the top imports:
 ```js
@@ -809,17 +809,17 @@ Add, after the `pool/:playerId` routes:
 router.route('/:tournamentId/auction-setup').patch(verifyJwt, setAuctionSetup);
 ```
 
-- [ ] **Step 6: Run test to verify it passes**
+- [x] **Step 6: Run test to verify it passes**
 
 Run: `npx jest tests/auctionSetup.test.js -v`
 Expected: PASS (all tests in the file)
 
-- [ ] **Step 7: Run the locale parity test**
+- [x] **Step 7: Run the locale parity test**
 
 Run: `npx jest tests/locales.test.js -v`
 Expected: PASS
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/controllers/auctionSetup.controller.js src/routes/tournament.routes.js src/locales tests/auctionSetup.test.js
@@ -850,7 +850,7 @@ EOF
 - Consumes: `Organization` model, `isOrgMember` (existing, from `organizationAccess.js`).
 - Produces: widened `setAuctionSetup` handling `owners`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/auctionSetup.test.js`:
 ```js
@@ -1024,13 +1024,13 @@ describe('PATCH /:tournamentId/auction-setup — owners', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx jest tests/auctionSetup.test.js -v`
 Expected: FAIL — every new test in this describe block fails, since `owners` is not yet read by the
 handler (requests silently succeed with `owners` ignored, or fail assertions expecting it to be applied).
 
-- [ ] **Step 3: Add locale keys**
+- [x] **Step 3: Add locale keys**
 
 `src/locales/en/common.json`:
 ```json
@@ -1063,7 +1063,7 @@ handler (requests silently succeed with `owners` ignored, or fail assertions exp
   "INVALID_BUDGET": "बजेट 1 ते 100000000 दरम्यान पूर्ण संख्या असावी",
 ```
 
-- [ ] **Step 4: Add `validateOwners` and widen `setAuctionSetup`**
+- [x] **Step 4: Add `validateOwners` and widen `setAuctionSetup`**
 
 In `src/controllers/auctionSetup.controller.js`, add the imports:
 ```js
@@ -1167,12 +1167,12 @@ Then widen the transaction body:
         });
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `npx jest tests/auctionSetup.test.js -v`
 Expected: PASS (all tests in the file, both describe blocks)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/controllers/auctionSetup.controller.js src/locales tests/auctionSetup.test.js
@@ -1204,7 +1204,7 @@ EOF
 - Consumes: `canViewAuctionSetup`, `formatAuctionSetup` (Task 4, same file).
 - Produces: `getAuctionSetup`, mounted as `GET /v1/tournament/:tournamentId/auction-setup`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/auctionSetup.test.js`:
 ```js
@@ -1260,18 +1260,18 @@ describe('GET /:tournamentId/auction-setup', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx jest tests/auctionSetup.test.js -v`
 Expected: FAIL — `GET /api/v1/tournament/:tournamentId/auction-setup` 404s.
 
-- [ ] **Step 3: Add the locale key**
+- [x] **Step 3: Add the locale key**
 
 `src/locales/en/common.json`: `"AUCTION_SETUP_FETCHED": "Auction setup fetched",`
 `src/locales/hi/common.json`: `"AUCTION_SETUP_FETCHED": "नीलामी सेटअप प्राप्त हुआ",`
 `src/locales/mr/common.json`: `"AUCTION_SETUP_FETCHED": "लिलाव सेटअप मिळाले",`
 
-- [ ] **Step 4: Add the handler**
+- [x] **Step 4: Add the handler**
 
 In `src/controllers/auctionSetup.controller.js`, add:
 ```js
@@ -1286,7 +1286,7 @@ const getAuctionSetup = catchAsync(async (req, res) => {
 ```
 Add `getAuctionSetup` to the file's `export { ... }` line.
 
-- [ ] **Step 5: Add the route**
+- [x] **Step 5: Add the route**
 
 In `src/routes/tournament.routes.js`, widen the import and route:
 ```js
@@ -1298,12 +1298,12 @@ router.route('/:tournamentId/auction-setup')
     .get(verifyJwt, getAuctionSetup);
 ```
 
-- [ ] **Step 6: Run test to verify it passes**
+- [x] **Step 6: Run test to verify it passes**
 
 Run: `npx jest tests/auctionSetup.test.js -v`
 Expected: PASS (all tests in the file — this is now the full backend test suite for this feature)
 
-- [ ] **Step 7: Run the full backend suite**
+- [x] **Step 7: Run the full backend suite**
 
 Run: `npm test`
 Expected: no new *deterministic* failures versus the pre-existing baseline. This backend's DB-heavy
@@ -1313,7 +1313,7 @@ tests/auctionSetup.test.js tests/auctionSettings.model.test.js tests/auctionTeam
 in isolation to confirm it's clean there, and re-run the full suite once more to confirm the failing set
 isn't stable (same method used to clear the bowler-roster and player-pool features earlier this project).
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/controllers/auctionSetup.controller.js src/routes/tournament.routes.js src/locales tests/auctionSetup.test.js
@@ -1328,7 +1328,7 @@ EOF
 )"
 ```
 
-- [ ] **Step 9: Verify live against the dev server**
+- [x] **Step 9: Verify live against the dev server**
 
 ```bash
 curl -s -m 3 http://localhost:9000/api/v1/tournament/000000000000000000000000/auction-setup -H "Authorization: Bearer bad" -o /dev/null -w "%{http_code}\n"
