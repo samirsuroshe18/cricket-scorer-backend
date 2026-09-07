@@ -133,6 +133,7 @@
   "INVALID_BASE_PRICE": "Base price must be a whole number between 1 and 100000000",
   "PLAYER_ALREADY_IN_POOL": "This player is already registered in this tournament's pool",
   "PLAYER_REGISTERED_IN_POOL": "Player registered in pool",
+  "POOL_FETCHED": "Pool fetched",
   "PLAYER_UPDATED": "Player updated",
   "TEAM_NOT_FOUND": "That team couldn't be found",
   "TEAM_NOT_OWNED": "That team doesn't belong to your account",

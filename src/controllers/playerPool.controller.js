@@ -4,7 +4,7 @@ import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import { Player } from '../models/player.model.js';
 import { PlayerPoolEntry } from '../models/playerPoolEntry.model.js';
-import { findOwnedTournament } from './tournament.controller.js';
+import { findOwnedTournament, findAccessibleTournament } from './tournament.controller.js';
 
 const asString = (value) => (typeof value === 'string' ? value : '');
 
@@ -98,4 +98,18 @@ const registerPoolPlayer = catchAsync(async (req, res) => {
     return res.status(201).json(new ApiResponse(201, formatPoolEntry(entry, player), req.t("PLAYER_REGISTERED_IN_POOL")));
 });
 
-export { registerPoolPlayer, formatPoolEntry, validateBasePrice, MIN_BASE_PRICE, MAX_BASE_PRICE };
+const listPoolEntries = catchAsync(async (req, res) => {
+    const { tournamentId } = req.params;
+    const { tournament } = await findAccessibleTournament(tournamentId, req.user._id);
+
+    const entries = await PlayerPoolEntry.find({ tournament: tournament._id })
+        .sort({ createdAt: 1 })
+        .populate('player', 'name role jerseyNumber battingStyle bowlingStyle bio');
+
+    return res.status(200).json(new ApiResponse(200, {
+        tournamentId: tournament._id,
+        entries: entries.map((entry) => formatPoolEntry(entry, entry.player)),
+    }, req.t("POOL_FETCHED")));
+});
+
+export { registerPoolPlayer, listPoolEntries, formatPoolEntry, validateBasePrice, MIN_BASE_PRICE, MAX_BASE_PRICE };

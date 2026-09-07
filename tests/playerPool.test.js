@@ -159,3 +159,47 @@ describe('POST /:tournamentId/pool', () => {
     expect(res.body.code).toBe('TOURNAMENT_NOT_FOUND');
   });
 });
+
+const listPool = (token, tournamentId) =>
+  request(app).get(`/api/v1/tournament/${tournamentId}/pool`).set('Authorization', `Bearer ${token}`);
+
+describe('GET /:tournamentId/pool', () => {
+  it('lists registered players in registration order for any org member', async () => {
+    const { ownerToken, memberToken, tournamentId } = await setupOwnedTournament();
+    await registerPlayer(ownerToken, tournamentId, { playerName: 'Rohit Sharma', basePrice: 5000 });
+    await registerPlayer(ownerToken, tournamentId, { playerName: 'Virat Kohli', basePrice: 9000 });
+
+    const res = await listPool(memberToken, tournamentId);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.entries.map((e) => e.playerName)).toEqual(['Rohit Sharma', 'Virat Kohli']);
+    expect(res.body.data.entries[1].basePrice).toBe(9000);
+  });
+
+  it('returns an empty list, not an error, for a tournament with nothing registered', async () => {
+    const { ownerToken, tournamentId } = await setupOwnedTournament();
+
+    const res = await listPool(ownerToken, tournamentId);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.entries).toEqual([]);
+  });
+
+  it('rejects a non-member of the owning organization', async () => {
+    const { strangerToken, tournamentId } = await setupOwnedTournament();
+
+    const res = await listPool(strangerToken, tournamentId);
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('NOT_ORG_MEMBER');
+  });
+
+  it('rejects with TOURNAMENT_NOT_FOUND for an unknown tournamentId', async () => {
+    const { token } = await createTestUser();
+
+    const res = await listPool(token, '000000000000000000000000');
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('TOURNAMENT_NOT_FOUND');
+  });
+});
