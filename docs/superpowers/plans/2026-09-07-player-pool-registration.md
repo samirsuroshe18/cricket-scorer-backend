@@ -32,7 +32,7 @@
 **Interfaces:**
 - Produces: the exact request/response/error shapes every later task implements against. No code in this task.
 
-- [ ] **Step 1: Insert a new `## Player pool` section, right after the Tournament section's "What this pass does NOT cover" list and before the `---` separator to `## GET /v1/search`**
+- [x] **Step 1: Insert a new `## Player pool` section, right after the Tournament section's "What this pass does NOT cover" list and before the `---` separator to `## GET /v1/search`**
 
 Find this existing text (search for `Any client-side (`cricket-scrorer`) model, endpoint, or UI.` followed by `---` then `## GET /v1/search`) and insert the new section between them:
 
@@ -209,7 +209,7 @@ document is untouched — only the pool entry is removed.
 ---
 ````
 
-- [ ] **Step 2: Add to `## Schema state`**
+- [x] **Step 2: Add to `## Schema state`**
 
 Append, under the most recent `**Applied by ... contract:**` heading (add a new one if the tournament
 contract's is currently last):
@@ -223,7 +223,7 @@ contract's is currently last):
 New collection, no prior writer — nothing to migrate.
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd cricket-scorer-workspace
@@ -244,7 +244,7 @@ the backend commit's message references this doc update.
 - Produces: `PlayerPoolEntry` (named export), a Mongoose model with a unique `{tournament, player}`
   index. Task 3 imports it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```js
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
@@ -322,12 +322,12 @@ describe('PlayerPoolEntry', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx jest tests/playerPoolEntry.model.test.js -v`
 Expected: FAIL — `Cannot find module '../src/models/playerPoolEntry.model.js'`.
 
-- [ ] **Step 3: Create the model**
+- [x] **Step 3: Create the model**
 
 ```js
 import mongoose, { Schema } from "mongoose";
@@ -355,12 +355,12 @@ playerPoolEntrySchema.index({ tournament: 1, createdAt: 1 });
 export const PlayerPoolEntry = mongoose.model('PlayerPoolEntry', playerPoolEntrySchema);
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx jest tests/playerPoolEntry.model.test.js -v`
 Expected: PASS (3/3)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd cricket-scorer-backend
@@ -392,7 +392,7 @@ EOF
 - Produces: `registerPoolPlayer` and `formatPoolEntry` (both exported from `playerPool.controller.js`
   — Tasks 4–6 reuse `formatPoolEntry`), mounted as `POST /v1/tournament/:tournamentId/pool`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/playerPool.test.js`:
 ```js
@@ -559,12 +559,12 @@ describe('POST /:tournamentId/pool', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx jest tests/playerPool.test.js -v`
 Expected: FAIL — `POST /api/v1/tournament/:tournamentId/pool` 404s (route doesn't exist yet).
 
-- [ ] **Step 3: Add locale keys**
+- [x] **Step 3: Add locale keys**
 
 `src/locales/en/common.json`:
 ```json
@@ -597,7 +597,7 @@ Expected: FAIL — `POST /api/v1/tournament/:tournamentId/pool` 404s (route does
 *(Insert these anywhere alongside the other tournament/player keys — order doesn't matter, just valid
 JSON. Keep all three files in the same relative order so a future diff between them stays readable.)*
 
-- [ ] **Step 4: Create `playerPool.controller.js`**
+- [x] **Step 4: Create `playerPool.controller.js`**
 
 ```js
 import mongoose from 'mongoose';
@@ -703,7 +703,7 @@ const registerPoolPlayer = catchAsync(async (req, res) => {
 export { registerPoolPlayer, formatPoolEntry, validateBasePrice, MIN_BASE_PRICE, MAX_BASE_PRICE };
 ```
 
-- [ ] **Step 5: Add the route**
+- [x] **Step 5: Add the route**
 
 In `src/routes/tournament.routes.js`, add an import and the route. Widen the top imports:
 ```js
@@ -714,17 +714,17 @@ Add, after the existing `fixtures/:fixtureId` routes and before `standings`:
 router.route('/:tournamentId/pool').post(verifyJwt, registerPoolPlayer);
 ```
 
-- [ ] **Step 6: Run test to verify it passes**
+- [x] **Step 6: Run test to verify it passes**
 
 Run: `npx jest tests/playerPool.test.js -v`
 Expected: PASS (all `describe('POST /:tournamentId/pool', ...)` tests)
 
-- [ ] **Step 7: Run the locale parity test**
+- [x] **Step 7: Run the locale parity test**
 
 Run: `npx jest tests/locales.test.js -v`
 Expected: PASS
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/controllers/playerPool.controller.js src/routes/tournament.routes.js src/locales tests/playerPool.test.js
@@ -756,7 +756,7 @@ EOF
   `formatPoolEntry` (Task 3, same file).
 - Produces: `listPoolEntries`, mounted as `GET /v1/tournament/:tournamentId/pool`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/playerPool.test.js`, after the closing `});` of `describe('POST /:tournamentId/pool', ...)`:
 ```js
@@ -805,18 +805,18 @@ describe('GET /:tournamentId/pool', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx jest tests/playerPool.test.js -v`
 Expected: FAIL — `GET /api/v1/tournament/:tournamentId/pool` 404s.
 
-- [ ] **Step 3: Add the locale key**
+- [x] **Step 3: Add the locale key**
 
 `src/locales/en/common.json`: `"POOL_FETCHED": "Pool fetched",`
 `src/locales/hi/common.json`: `"POOL_FETCHED": "पूल प्राप्त हुआ",`
 `src/locales/mr/common.json`: `"POOL_FETCHED": "पूल मिळाला",`
 
-- [ ] **Step 4: Add the handler**
+- [x] **Step 4: Add the handler**
 
 In `src/controllers/playerPool.controller.js`, add the import and handler:
 ```js
@@ -840,7 +840,7 @@ const listPoolEntries = catchAsync(async (req, res) => {
 ```
 Add `listPoolEntries` to the file's `export { ... }` line.
 
-- [ ] **Step 5: Add the route**
+- [x] **Step 5: Add the route**
 
 In `src/routes/tournament.routes.js`, widen the import and the route:
 ```js
@@ -852,12 +852,12 @@ router.route('/:tournamentId/pool')
     .get(verifyJwt, listPoolEntries);
 ```
 
-- [ ] **Step 6: Run test to verify it passes**
+- [x] **Step 6: Run test to verify it passes**
 
 Run: `npx jest tests/playerPool.test.js -v`
 Expected: PASS (all tests in the file, both describe blocks)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/controllers/playerPool.controller.js src/routes/tournament.routes.js src/locales tests/playerPool.test.js
@@ -886,7 +886,7 @@ EOF
 - Consumes: `findOwnedTournament`, `formatPoolEntry`, `validateBasePrice` (Task 3, same file).
 - Produces: `updatePoolEntry`, mounted as `PATCH /v1/tournament/:tournamentId/pool/:playerId`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/playerPool.test.js`:
 ```js
@@ -950,12 +950,12 @@ describe('PATCH /:tournamentId/pool/:playerId', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx jest tests/playerPool.test.js -v`
 Expected: FAIL — `PATCH /api/v1/tournament/:tournamentId/pool/:playerId` 404s.
 
-- [ ] **Step 3: Add locale keys**
+- [x] **Step 3: Add locale keys**
 
 `src/locales/en/common.json`:
 ```json
@@ -973,7 +973,7 @@ Expected: FAIL — `PATCH /api/v1/tournament/:tournamentId/pool/:playerId` 404s.
   "POOL_ENTRY_UPDATED": "पूल एंट्री अपडेट केली",
 ```
 
-- [ ] **Step 4: Add the handler**
+- [x] **Step 4: Add the handler**
 
 In `src/controllers/playerPool.controller.js`:
 ```js
@@ -1001,7 +1001,7 @@ const updatePoolEntry = catchAsync(async (req, res) => {
 ```
 Add `updatePoolEntry` to the file's `export { ... }` line.
 
-- [ ] **Step 5: Add the route**
+- [x] **Step 5: Add the route**
 
 In `src/routes/tournament.routes.js`, widen the import and add:
 ```js
@@ -1011,12 +1011,12 @@ import { registerPoolPlayer, listPoolEntries, updatePoolEntry } from "../control
 router.route('/:tournamentId/pool/:playerId').patch(verifyJwt, updatePoolEntry);
 ```
 
-- [ ] **Step 6: Run test to verify it passes**
+- [x] **Step 6: Run test to verify it passes**
 
 Run: `npx jest tests/playerPool.test.js -v`
 Expected: PASS (all tests in the file)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/controllers/playerPool.controller.js src/routes/tournament.routes.js src/locales tests/playerPool.test.js
@@ -1044,7 +1044,7 @@ EOF
 - Consumes: `findOwnedTournament` (Task 3, same file).
 - Produces: `removePoolEntry`, mounted as `DELETE /v1/tournament/:tournamentId/pool/:playerId`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/playerPool.test.js`:
 ```js
@@ -1108,18 +1108,18 @@ describe('DELETE /:tournamentId/pool/:playerId', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx jest tests/playerPool.test.js -v`
 Expected: FAIL — `DELETE /api/v1/tournament/:tournamentId/pool/:playerId` 404s.
 
-- [ ] **Step 3: Add the locale key**
+- [x] **Step 3: Add the locale key**
 
 `src/locales/en/common.json`: `"POOL_ENTRY_REMOVED": "Pool entry removed",`
 `src/locales/hi/common.json`: `"POOL_ENTRY_REMOVED": "पूल एंट्री हटाई गई",`
 `src/locales/mr/common.json`: `"POOL_ENTRY_REMOVED": "पूल एंट्री काढली",`
 
-- [ ] **Step 4: Add the handler**
+- [x] **Step 4: Add the handler**
 
 In `src/controllers/playerPool.controller.js`:
 ```js
@@ -1140,7 +1140,7 @@ const removePoolEntry = catchAsync(async (req, res) => {
 ```
 Add `removePoolEntry` to the file's `export { ... }` line.
 
-- [ ] **Step 5: Add the route**
+- [x] **Step 5: Add the route**
 
 In `src/routes/tournament.routes.js`, widen the import and add:
 ```js
@@ -1152,19 +1152,19 @@ router.route('/:tournamentId/pool/:playerId')
     .delete(verifyJwt, removePoolEntry);
 ```
 
-- [ ] **Step 6: Run test to verify it passes**
+- [x] **Step 6: Run test to verify it passes**
 
 Run: `npx jest tests/playerPool.test.js -v`
 Expected: PASS (all tests in the file — this is now the full backend test suite for this feature)
 
-- [ ] **Step 7: Run the full backend suite**
+- [x] **Step 7: Run the full backend suite**
 
 Run: `npm test`
 Expected: no new failures versus the pre-existing baseline (check `git stash` + re-run if any fail, to
 confirm they're pre-existing/flaky-under-load, same as the bowler-roster feature's own verification
 earlier this project — do not assume, verify).
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/controllers/playerPool.controller.js src/routes/tournament.routes.js src/locales tests/playerPool.test.js
@@ -1180,7 +1180,7 @@ EOF
 )"
 ```
 
-- [ ] **Step 9: Verify live against the dev server**
+- [x] **Step 9: Verify live against the dev server**
 
 ```bash
 curl -s -m 3 http://localhost:9000/api/v1/tournament/000000000000000000000000/pool -H "Authorization: Bearer bad" -o /dev/null -w "%{http_code}\n"
