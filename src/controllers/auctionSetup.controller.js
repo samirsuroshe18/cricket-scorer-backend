@@ -1,0 +1,116 @@
+import mongoose from 'mongoose';
+import catchAsync from '../utils/catchAsync.js';
+import ApiError from '../utils/ApiError.js';
+import ApiResponse from '../utils/ApiResponse.js';
+import { AuctionSettings, CATEGORY_CAP_ROLES } from '../models/auctionSettings.model.js';
+import { AuctionTeamOwner } from '../models/auctionTeamOwner.model.js';
+import { findOwnedTournament, findAccessibleTournament } from './tournament.controller.js';
+
+// The paid-tier half of the roadmap's settled auction-access-control
+// decision — "does this auction's tournament belong to a paid
+// Organization" — cannot be checked yet: Organization carries no
+// tier/subscription field at all (Phase 6 is unbuilt). These seams are
+// where that check attaches once it exists; today they are identical to
+// findOwnedTournament/findAccessibleTournament. Not stubbed with a
+// speculative field — see the design spec's §5.
+const canConfigureAuction = (tournamentId, userId) => findOwnedTournament(tournamentId, userId);
+const canViewAuctionSetup = (tournamentId, userId) => findAccessibleTournament(tournamentId, userId);
+
+const validateSquadSizeField = (value) => {
+    if (!Number.isInteger(value) || value < 1 || value > 100) {
+        throw new ApiError(400, "INVALID_SQUAD_SIZE");
+    }
+};
+
+const validateCategoryCaps = (categoryCaps) => {
+    if (categoryCaps === null || typeof categoryCaps !== 'object' || Array.isArray(categoryCaps)) {
+        throw new ApiError(400, "INVALID_CATEGORY_CAP");
+    }
+    for (const [role, cap] of Object.entries(categoryCaps)) {
+        if (!CATEGORY_CAP_ROLES.includes(role)) {
+            throw new ApiError(400, "INVALID_CATEGORY_CAP");
+        }
+        if (!Number.isInteger(cap) || cap < 1 || cap > 100) {
+            throw new ApiError(400, "INVALID_CATEGORY_CAP");
+        }
+    }
+};
+
+// Shared response shape for PATCH/GET — see the owners half added in the
+// next task.
+const formatAuctionSetup = async (tournamentId) => {
+    const [settings, owners] = await Promise.all([
+        AuctionSettings.findOne({ tournament: tournamentId }),
+        AuctionTeamOwner.find({ tournament: tournamentId })
+            .populate('team', 'name shortName')
+            .populate('owner', 'fullName'),
+    ]);
+
+    return {
+        tournamentId,
+        minSquadSize: settings?.minSquadSize ?? null,
+        maxSquadSize: settings?.maxSquadSize ?? null,
+        categoryCaps: settings?.categoryCaps ?? null,
+        owners: owners.map((o) => ({
+            teamId: o.team._id, teamName: o.team.name,
+            userId: o.owner._id, userName: o.owner.fullName,
+            budget: o.budget,
+        })),
+    };
+};
+
+const setAuctionSetup = catchAsync(async (req, res) => {
+    const { tournamentId } = req.params;
+    const { tournament } = await canConfigureAuction(tournamentId, req.user._id);
+
+    const settingsUpdate = {};
+    if (req.body.minSquadSize !== undefined) {
+        validateSquadSizeField(req.body.minSquadSize);
+        settingsUpdate.minSquadSize = req.body.minSquadSize;
+    }
+    if (req.body.maxSquadSize !== undefined) {
+        validateSquadSizeField(req.body.maxSquadSize);
+        settingsUpdate.maxSquadSize = req.body.maxSquadSize;
+    }
+    // The cross-check must hold against the *effective* pair after this
+    // update applies, not just the two fields present in this request —
+    // otherwise a request that only lowers maxSquadSize (leaving an
+    // already-stored, now-larger minSquadSize untouched) would sail
+    // through and leave min > max stored.
+    if (settingsUpdate.minSquadSize !== undefined || settingsUpdate.maxSquadSize !== undefined) {
+        const existing = await AuctionSettings.findOne({ tournament: tournament._id });
+        const effectiveMin = settingsUpdate.minSquadSize !== undefined
+            ? settingsUpdate.minSquadSize : existing?.minSquadSize;
+        const effectiveMax = settingsUpdate.maxSquadSize !== undefined
+            ? settingsUpdate.maxSquadSize : existing?.maxSquadSize;
+        if (effectiveMin != null && effectiveMax != null && effectiveMin > effectiveMax) {
+            throw new ApiError(400, "INVALID_SQUAD_SIZE");
+        }
+    }
+    if (req.body.categoryCaps !== undefined) {
+        validateCategoryCaps(req.body.categoryCaps);
+        settingsUpdate.categoryCaps = req.body.categoryCaps;
+    }
+
+    const session = await mongoose.startSession();
+    try {
+        await session.withTransaction(async () => {
+            if (Object.keys(settingsUpdate).length > 0) {
+                settingsUpdate.createdBy = req.user._id;
+                await AuctionSettings.findOneAndUpdate(
+                    { tournament: tournament._id },
+                    { $set: settingsUpdate },
+                    { upsert: true, session }
+                );
+            }
+        });
+    } finally {
+        await session.endSession();
+    }
+
+    return res.status(200).json(
+        new ApiResponse(200, await formatAuctionSetup(tournament._id), req.t("AUCTION_SETUP_SAVED"))
+    );
+});
+
+export { setAuctionSetup, formatAuctionSetup, canConfigureAuction, canViewAuctionSetup, validateSquadSizeField, validateCategoryCaps };
