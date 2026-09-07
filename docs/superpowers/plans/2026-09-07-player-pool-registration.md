@@ -1205,7 +1205,7 @@ Do not start or restart the dev server yourself; if it isn't already running, as
   methods (`registerPoolPlayer`, `getPool`, `updatePoolEntry`, `removePoolEntry`). Task 8 consumes all
   of these.
 
-- [ ] **Step 1: Add endpoint constants**
+- [x] **Step 1: Add endpoint constants**
 
 In `lib/features/tournament/data/tournament_endpoint.dart`, add, after `leaderboards`:
 ```dart
@@ -1215,7 +1215,7 @@ In `lib/features/tournament/data/tournament_endpoint.dart`, add, after `leaderbo
       '/v1/tournament/$tournamentId/pool/$playerId';
 ```
 
-- [ ] **Step 2: Create the request models**
+- [x] **Step 2: Create the request models**
 
 `lib/features/tournament/data/models/request/register_pool_player_req.dart`:
 ```dart
@@ -1263,7 +1263,7 @@ class UpdatePoolEntryReq {
 }
 ```
 
-- [ ] **Step 3: Create the response model**
+- [x] **Step 3: Create the response model**
 
 `lib/features/tournament/data/models/response/pool_entry_res.dart`:
 ```dart
@@ -1307,7 +1307,7 @@ class PoolEntryRes {
 }
 ```
 
-- [ ] **Step 4: Add the four api-service methods**
+- [x] **Step 4: Add the four api-service methods**
 
 In `lib/features/tournament/data/data_sources/remote/tournament_api_service.dart`, add the two new
 request-model imports alongside the existing `tournament/data/models/request/*` imports:
@@ -1354,7 +1354,7 @@ Then add, after `getLeaderboards`:
   }
 ```
 
-- [ ] **Step 5: Generate the `.g.dart` files**
+- [x] **Step 5: Generate the `.g.dart` files**
 
 Run: `dart run build_runner build --delete-conflicting-outputs`
 
@@ -1366,12 +1366,12 @@ ask, or hand-write the two small generated files by mirroring an existing simple
 shape, `lib/features/tournament/data/models/request/enroll_tournament_team_req.g.dart` for a request
 model's).
 
-- [ ] **Step 6: Verify**
+- [x] **Step 6: Verify**
 
 Run: `flutter analyze`
 Expected: no new errors.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd cricket-scrorer
@@ -1401,7 +1401,7 @@ EOF
 - Produces: `TournamentRepository.registerPoolPlayer`/`getPool`/`updatePoolEntry`/`removePoolEntry`.
   Task 9's usecases consume all four.
 
-- [ ] **Step 1: Add to the repository interface**
+- [x] **Step 1: Add to the repository interface**
 
 In `lib/features/tournament/domain/repositories/tournament_repository.dart`, add the two new imports
 alongside the existing `tournament/data/models/request/*` imports:
@@ -1441,7 +1441,7 @@ Then add, after `getLeaderboards`:
   });
 ```
 
-- [ ] **Step 2: Implement in `TournamentRepositoryImpl`**
+- [x] **Step 2: Implement in `TournamentRepositoryImpl`**
 
 In `lib/features/tournament/data/repositories/tournament_repository_impl.dart`, add the same three
 imports as Step 1:
@@ -1539,12 +1539,12 @@ Then add, after `getLeaderboards`:
   }
 ```
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run: `flutter analyze`
 Expected: no new errors.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add lib/features/tournament/domain/repositories/tournament_repository.dart lib/features/tournament/data/repositories/tournament_repository_impl.dart
@@ -1575,7 +1575,7 @@ EOF
 - Produces: `RegisterPoolPlayerUseCase`, `GetPoolUseCase`, `UpdatePoolEntryUseCase`,
   `RemovePoolEntryUseCase`, all registered in DI. Task 10's controller consumes all four.
 
-- [ ] **Step 1: Create the four usecases**
+- [x] **Step 1: Create the four usecases**
 
 `lib/features/tournament/domain/usecases/register_pool_player.dart`:
 ```dart
@@ -1735,7 +1735,7 @@ class RemovePoolEntryUseCase
 }
 ```
 
-- [ ] **Step 2: Register all four in DI**
+- [x] **Step 2: Register all four in DI**
 
 In `lib/core/di/injection/tournament_injection.dart`, add the four imports alongside the existing
 `tournament/domain/usecases/*` imports:
@@ -1776,12 +1776,12 @@ Then add, after `GetLeaderboardsUseCase`'s registration:
     );
 ```
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run: `flutter analyze`
 Expected: no new errors.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add lib/features/tournament/domain/usecases/register_pool_player.dart lib/features/tournament/domain/usecases/get_pool.dart lib/features/tournament/domain/usecases/update_pool_entry.dart lib/features/tournament/domain/usecases/remove_pool_entry.dart lib/core/di/injection/tournament_injection.dart
@@ -1815,7 +1815,7 @@ this task's code, grep for every other place that constructs `TournamentDetailCo
 done for the org-controller widening earlier in this project, to catch every call site before running
 `flutter analyze` rather than after.)*
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Find the existing fake `TournamentDetailController`-supporting test doubles in
 `test/features/tournament/presentation/controllers/tournament_detail_controller_test.dart` (it already
@@ -1881,12 +1881,12 @@ test('registerPoolPlayer reloads the pool on success', () async {
 some fakes in this codebase expose a settable `response`/`Function` field, others take a constructor
 argument; match the file's own established pattern, not this snippet verbatim, if they differ.)*
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `flutter test test/features/tournament/presentation/controllers/tournament_detail_controller_test.dart`
 Expected: FAIL — compile error, `poolEntries`/`loadPool`/`registerPoolPlayer` undefined.
 
-- [ ] **Step 3: Widen the controller**
+- [x] **Step 3: Widen the controller**
 
 In `lib/features/tournament/presentation/controllers/tournament_detail_controller.dart`, add the four
 new imports alongside the existing `tournament/domain/usecases/*` imports:
@@ -1986,7 +1986,7 @@ Then add four new required constructor fields, and four new methods plus three n
   }
 ```
 
-- [ ] **Step 4: Widen the binding**
+- [x] **Step 4: Widen the binding**
 
 In `lib/features/tournament/presentation/bindings/tournament_detail_binding.dart`, add the four
 imports alongside the existing `tournament/domain/usecases/*` imports:
@@ -2004,18 +2004,18 @@ Then add the four constructor arguments:
         removePoolEntryUseCase: Get.find<RemovePoolEntryUseCase>(),
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `flutter test test/features/tournament/presentation/controllers/tournament_detail_controller_test.dart`
 Expected: PASS (all tests in the file, existing + new)
 
-- [ ] **Step 6: Run `flutter analyze`**
+- [x] **Step 6: Run `flutter analyze`**
 
 Expected: no new errors — this is the check that catches every other direct
 `TournamentDetailController(...)` construction site this task's constructor widening might have broken
 (per this task's opening note).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add lib/features/tournament/presentation/controllers/tournament_detail_controller.dart lib/features/tournament/presentation/bindings/tournament_detail_binding.dart test/features/tournament/presentation/controllers/tournament_detail_controller_test.dart
@@ -2045,7 +2045,7 @@ EOF
 - Produces: `AppRoutes.tournamentPool`/`.tournamentPoolPath(tournamentId)`,
   `TournamentPlayerPoolScreen`. Task 12 links to this route from the detail screen.
 
-- [ ] **Step 1: Add the route constant**
+- [x] **Step 1: Add the route constant**
 
 In `lib/config/routes/app_routes.dart`, add after `tournamentLeaderboardsPath`:
 ```dart
@@ -2062,7 +2062,7 @@ In `lib/config/routes/app_routes.dart`, add after `tournamentLeaderboardsPath`:
       '/tournament/$tournamentId/pool';
 ```
 
-- [ ] **Step 2: Register the page**
+- [x] **Step 2: Register the page**
 
 In `lib/config/routes/app_pages.dart`, add the import alongside the existing
 `tournament_leaderboards_screen.dart`/`tournament_standings_screen.dart` imports:
@@ -2077,7 +2077,7 @@ Then add, after the `tournamentLeaderboards` `GetPage`:
     ),
 ```
 
-- [ ] **Step 3: Write the failing widget test**
+- [x] **Step 3: Write the failing widget test**
 
 Create `test/features/tournament/presentation/pages/tournament_player_pool_screen_test.dart`. Follow
 `tournament_standings_screen_test.dart`'s exact setup pattern (`GetMaterialApp` + `GetPage` +
@@ -2152,12 +2152,12 @@ class _FakeGetPoolUseCase implements GetPoolUseCase {
 `tournament_standings_screen_test.dart` in full first, exactly as this step's comment says. Do not
 guess at the other fakes' shapes.)*
 
-- [ ] **Step 4: Run test to verify it fails**
+- [x] **Step 4: Run test to verify it fails**
 
 Run: `flutter test test/features/tournament/presentation/pages/tournament_player_pool_screen_test.dart`
 Expected: FAIL — `tournament_player_pool_screen.dart` doesn't exist yet.
 
-- [ ] **Step 5: Create the screen**
+- [x] **Step 5: Create the screen**
 
 `lib/features/tournament/presentation/pages/tournament_player_pool_screen.dart`:
 ```dart
@@ -2344,7 +2344,7 @@ class _PoolEntryTile extends StatelessWidget {
 }
 ```
 
-- [ ] **Step 6: Run test to verify it passes**
+- [x] **Step 6: Run test to verify it passes**
 
 Run: `flutter test test/features/tournament/presentation/pages/tournament_player_pool_screen_test.dart`
 Expected: PASS. (This step will fail to compile until Task 12 creates `pool_player_sheet.dart` — if
@@ -2352,7 +2352,7 @@ executing tasks strictly in order, stub `showPoolPlayerSheet` as a no-op functio
 `Future<void>` in a placeholder file first, then let Task 12 replace it with the real implementation; do
 not leave the stub in place after Task 12 completes.)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add lib/config/routes/app_routes.dart lib/config/routes/app_pages.dart lib/features/tournament/presentation/pages/tournament_player_pool_screen.dart test/features/tournament/presentation/pages/tournament_player_pool_screen_test.dart
@@ -2384,7 +2384,7 @@ EOF
 - Produces: `showPoolPlayerSheet({controller, existingEntry})`, wired from both the pool screen
   (Task 11, already calling it) and a new entry point on the tournament detail screen.
 
-- [ ] **Step 1: Add translation keys**
+- [x] **Step 1: Add translation keys**
 
 In `lib/core/translations/translation_keys.dart`, add near the existing `leaderboards`/`noLeaderboardsYet`
 keys:
@@ -2442,7 +2442,7 @@ In `lib/core/translations/mr.dart`:
 `leaderboards`/`standings` entries first, since some of these files may key by the raw string constant
 rather than `TranslationKeys.xxx`; follow whichever this project's files actually do.)*
 
-- [ ] **Step 2: Write the failing widget test**
+- [x] **Step 2: Write the failing widget test**
 
 Create `test/features/tournament/presentation/widget/pool_player_sheet_test.dart`, mirroring
 `edit_tournament_sheet.dart`'s own test if one exists (check first — if not, mirror
@@ -2486,12 +2486,12 @@ testWidgets('registering a new player submits name and base price', (tester) asy
 });
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `flutter test test/features/tournament/presentation/widget/pool_player_sheet_test.dart`
 Expected: FAIL — `pool_player_sheet.dart` doesn't exist.
 
-- [ ] **Step 4: Create the sheet**
+- [x] **Step 4: Create the sheet**
 
 `lib/features/tournament/presentation/widget/pool_player_sheet.dart`:
 ```dart
@@ -2606,7 +2606,7 @@ Future<void> showPoolPlayerSheet({
 `TranslationKeys.somethingWentWrong` and `.save` already exist — see `edit_tournament_sheet.dart`'s own
 usage of both above. `invalidBasePrice` is added fresh in Step 1.
 
-- [ ] **Step 5: Add the detail-screen entry point**
+- [x] **Step 5: Add the detail-screen entry point**
 
 In `lib/features/tournament/presentation/pages/tournament_detail_screen.dart`, add the import, then add
 a third `TextButton` alongside the existing Standings/Leaderboards row (both org-owner-only and
@@ -2621,7 +2621,7 @@ as Leaderboards, so add it unconditionally within that same `Row`):
                         ),
 ```
 
-- [ ] **Step 6: Run test to verify it passes**
+- [x] **Step 6: Run test to verify it passes**
 
 Run: `flutter test test/features/tournament/presentation/widget/pool_player_sheet_test.dart`
 Expected: PASS
@@ -2631,7 +2631,7 @@ Task 11 Step 6):
 Run: `flutter test test/features/tournament/presentation/pages/tournament_player_pool_screen_test.dart`
 Expected: PASS
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add lib/features/tournament/presentation/widget/pool_player_sheet.dart lib/features/tournament/presentation/pages/tournament_detail_screen.dart lib/core/translations/translation_keys.dart lib/core/translations/en.dart lib/core/translations/hi.dart lib/core/translations/mr.dart test/features/tournament/presentation/widget/pool_player_sheet_test.dart
@@ -2648,7 +2648,7 @@ EOF
 )"
 ```
 
-- [ ] **Step 8: Upload the new translation keys to the CMS**
+- [x] **Step 8: Upload the new translation keys to the CMS**
 
 Per the workspace CLAUDE.md — a `TranslationKeys` entry plus the local en/hi/mr maps is not enough; the
 CMS map replaces the local one wholesale on next sync, so a missing CMS record renders as the raw key.
@@ -2664,7 +2664,7 @@ body: `[{key, translations:{en,hi,mr}}, …]` for each of `player_pool`, `no_pla
 
 **Files:** none (verification only)
 
-- [ ] **Step 1: Backend full suite**
+- [x] **Step 1: Backend full suite**
 
 ```bash
 cd cricket-scorer-backend
@@ -2672,12 +2672,12 @@ npm test
 ```
 Expected: no new failures versus the pre-existing baseline established in Task 6 Step 7.
 
-- [ ] **Step 2: Backend lint/format, if configured**
+- [x] **Step 2: Backend lint/format, if configured**
 
 Check `package.json` for a lint script; run it if one exists. (As of this plan's writing, this backend
 has no such script — skip if still true.)
 
-- [ ] **Step 3: Frontend full suite**
+- [x] **Step 3: Frontend full suite**
 
 ```bash
 cd cricket-scrorer
@@ -2686,7 +2686,7 @@ flutter test
 ```
 Expected: `flutter analyze` clean; `flutter test` all passing, no regressions in unrelated suites.
 
-- [ ] **Step 4: Live verification against the dev server**
+- [x] **Step 4: Live verification against the dev server**
 
 ```bash
 curl -s -m 3 http://localhost:9000/api/v1/tournament/000000000000000000000000/pool -H "Authorization: Bearer bad" -o /dev/null -w "%{http_code}\n"
