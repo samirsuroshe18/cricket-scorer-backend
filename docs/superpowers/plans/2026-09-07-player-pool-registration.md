@@ -98,7 +98,8 @@ pool entry's own `createdAt`, renamed for readability, same convention as `joine
 | statusCode | code | when |
 |---|---|---|
 | 404 | `TOURNAMENT_NOT_FOUND` | `tournamentId` doesn't exist or is soft-deleted |
-| 403 | `TOURNAMENT_NOT_OWNED` | caller isn't the owning organization's owner |
+| 403 | `NOT_ORG_MEMBER` | caller isn't a member of the owning organization at all |
+| 403 | `TOURNAMENT_NOT_OWNED` | caller is a member but not the owning organization's owner |
 | 400 | `POOL_PLAYER_NAME_REQUIRED` | neither a usable `playerId` nor a non-blank `playerName` given |
 | 400 | `INVALID_PLAYER_ID` | `playerId` given but doesn't resolve to a `Player` owned by the caller |
 | 400 | `BASE_PRICE_REQUIRED` | `basePrice` missing |
@@ -154,7 +155,8 @@ Same shape as `POST`'s response, reflecting the updated `basePrice`. Message: "P
 | statusCode | code | when |
 |---|---|---|
 | 404 | `TOURNAMENT_NOT_FOUND` | `tournamentId` doesn't exist or is soft-deleted |
-| 403 | `TOURNAMENT_NOT_OWNED` | caller isn't the owning organization's owner |
+| 403 | `NOT_ORG_MEMBER` | caller isn't a member of the owning organization at all |
+| 403 | `TOURNAMENT_NOT_OWNED` | caller is a member but not the owning organization's owner |
 | 400 | `INVALID_ID` | `playerId` isn't a well-formed ObjectId |
 | 400 | `BASE_PRICE_REQUIRED` | `basePrice` missing |
 | 400 | `INVALID_BASE_PRICE` | not a whole number in `1`–`100000000` |
@@ -181,7 +183,8 @@ document is untouched — only the pool entry is removed.
 | statusCode | code | when |
 |---|---|---|
 | 404 | `TOURNAMENT_NOT_FOUND` | `tournamentId` doesn't exist or is soft-deleted |
-| 403 | `TOURNAMENT_NOT_OWNED` | caller isn't the owning organization's owner |
+| 403 | `NOT_ORG_MEMBER` | caller isn't a member of the owning organization at all |
+| 403 | `TOURNAMENT_NOT_OWNED` | caller is a member but not the owning organization's owner |
 | 400 | `INVALID_ID` | `playerId` isn't a well-formed ObjectId |
 | 404 | `POOL_ENTRY_NOT_FOUND` | no pool entry for this `{tournamentId, playerId}` pair |
 | 401 | `UNAUTHORIZED_REQUEST` / `ACCESS_TOKEN_EXPIRED` / `INVALID_ACCESS_TOKEN` | via `verifyJwt` |
@@ -473,7 +476,7 @@ describe('POST /:tournamentId/pool', () => {
     const res = await registerPlayer(strangerToken, tournamentId, { playerName: 'Rohit Sharma', basePrice: 5000 });
 
     expect(res.status).toBe(403);
-    expect(res.body.code).toBe('TOURNAMENT_NOT_OWNED');
+    expect(res.body.code).toBe('NOT_ORG_MEMBER');
   });
 
   it('rejects a blank player name with no playerId given', async () => {
