@@ -201,6 +201,7 @@
   "MATCH_CODE_REQUIRED": "A match code is required",
   "SCORECARD_FETCHED": "Scorecard fetched",
   "SCORECARD_NOT_READY": "The scorecard is available once the match has finished",
+  "BOWLERS_FETCHED": "Bowlers fetched",
   "SEARCH_QUERY_REQUIRED": "A search term is required",
   "SEARCH_FETCHED": "Search results fetched",
   "INTERNAL_SERVER_ERROR": "Something went wrong. Please try again later",

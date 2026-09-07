@@ -201,6 +201,7 @@
   "MATCH_CODE_REQUIRED": "मैच कोड आवश्यक है",
   "SCORECARD_FETCHED": "स्कोरकार्ड प्राप्त हुआ",
   "SCORECARD_NOT_READY": "मैच समाप्त होने के बाद स्कोरकार्ड उपलब्ध होगा",
+  "BOWLERS_FETCHED": "गेंदबाज़ प्राप्त हुए",
   "SEARCH_QUERY_REQUIRED": "एक खोज शब्द आवश्यक है",
   "SEARCH_FETCHED": "खोज परिणाम प्राप्त हुए",
   "INTERNAL_SERVER_ERROR": "कुछ गलत हो गया। कृपया बाद में पुनः प्रयास करें",

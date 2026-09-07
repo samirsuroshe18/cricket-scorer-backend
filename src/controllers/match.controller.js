@@ -2268,6 +2268,65 @@ const getMatchScorecard = catchAsync(async (req, res) => {
     }, req.t("SCORECARD_FETCHED")));
 });
 
+// The bowling side's full roster for the current innings, each with legal
+// deliveries/runs/wickets bowled so far this innings — not just the handful
+// of names `bowlersSeen` accumulates client-side from live events. A player
+// who has never bowled still appears, with zero figures: nothing but
+// start-innings/select-bowler ever creates a Player on the bowling side (see
+// next_bowler_bottom_sheet.dart), so the roster is exactly who could
+// plausibly bowl next, batters included.
+const getMatchBowlers = catchAsync(async (req, res) => {
+    const { matchId } = req.params;
+
+    const match = await Match.findOne({ _id: matchId, isDeleted: false });
+    if (!match) {
+        throw new ApiError(404, "MATCH_NOT_FOUND");
+    }
+
+    if (!match.createdBy?.equals(req.user._id) && !match.assignedScorer?.equals(req.user._id)) {
+        throw new ApiError(403, "MATCH_NOT_OWNED");
+    }
+
+    const inning = await Inning.findOne({ matchId: match._id, inningsNumber: match.currentInnings });
+    if (!inning) {
+        throw new ApiError(400, "INNINGS_NOT_STARTED");
+    }
+
+    const bowlingTeamId = inning.bowlingTeam === 'teamA' ? match.teamA : match.teamB;
+
+    const [team, overs] = await Promise.all([
+        Team.findById(bowlingTeamId),
+        Over.find({ inningsId: inning._id }, 'bowlerId legalDeliveries totalRuns wickets extras'),
+    ]);
+
+    const figuresById = new Map();
+    for (const over of overs) {
+        const key = String(over.bowlerId);
+        const figures = figuresById.get(key) ?? { legalDeliveries: 0, runsConceded: 0, wickets: 0 };
+        figures.legalDeliveries += over.legalDeliveries;
+        figures.runsConceded += over.totalRuns - over.extras.byes - over.extras.legByes;
+        figures.wickets += over.wickets;
+        figuresById.set(key, figures);
+    }
+
+    const roster = await Player.find({ _id: { $in: team?.players ?? [] }, isDeleted: false }, 'name');
+
+    const bowlers = roster
+        .map((player) => {
+            const figures = figuresById.get(String(player._id)) ?? { legalDeliveries: 0, runsConceded: 0, wickets: 0 };
+            return {
+                id: player._id,
+                name: player.name,
+                legalDeliveries: figures.legalDeliveries,
+                runsConceded: figures.runsConceded,
+                wickets: figures.wickets,
+            };
+        })
+        .sort((a, b) => b.legalDeliveries - a.legalDeliveries || a.name.localeCompare(b.name));
+
+    return res.status(200).json(new ApiResponse(200, { bowlers }, req.t("BOWLERS_FETCHED")));
+});
+
 const getPublicMatch = catchAsync(async (req, res) => {
     const { code } = req.params;
 
@@ -2586,4 +2645,4 @@ const getMatchHistory = catchAsync(async (req, res) => {
     }, req.t("MATCH_HISTORY_FETCHED")));
 });
 
-export { createMatch, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, assignScorer, getScorerCandidates, createMatchWithJoinCode, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };
+export { createMatch, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, assignScorer, getScorerCandidates, createMatchWithJoinCode, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };

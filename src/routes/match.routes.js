@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createMatch, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, assignScorer, getScorerCandidates } from "../controllers/match.controller.js";
+import { createMatch, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, assignScorer, getScorerCandidates } from "../controllers/match.controller.js";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
 
 const router = Router();
@@ -27,6 +27,7 @@ router.route('/:matchId/score-ball').post(verifyJwt, scoreBall);
 router.route('/:matchId/undo-ball').post(verifyJwt, undoBall);
 router.route('/:matchId/sync').post(verifyJwt, syncMatch);
 router.route('/:matchId/scorecard').get(verifyJwt, getMatchScorecard);
+router.route('/:matchId/bowlers').get(verifyJwt, getMatchBowlers);
 router.route('/:matchId/scorer').patch(verifyJwt, assignScorer);
 router.route('/:matchId/scorer-candidates').get(verifyJwt, getScorerCandidates);
 router.route('/:matchId/abandon').post(verifyJwt, abandonMatch);
