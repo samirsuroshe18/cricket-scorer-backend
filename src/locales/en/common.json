@@ -194,6 +194,7 @@
   "AUCTION_SETUP_DUPLICATE_OWNER": "The same owner was listed more than once",
   "BUDGET_REQUIRED": "A budget is required",
   "INVALID_BUDGET": "Budget must be a whole number between 1 and 100000000",
+  "AUCTION_SETUP_FETCHED": "Auction setup fetched",
   "BALL_UNDONE": "Ball undone",
   "BALL_EVENT_ID_REQUIRED": "The ball to undo must be specified",
   "INVALID_BALL_EVENT_ID": "Invalid ball reference",

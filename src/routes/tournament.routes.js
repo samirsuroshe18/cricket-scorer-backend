@@ -3,7 +3,7 @@ import { getTournament, updateTournament, deleteTournament, addTournamentTeam, r
 import { generateFixtures, listFixtures, startFixtureMatch, resolveFixture } from "../controllers/fixture.controller.js";
 import { getStandings } from "../controllers/standings.controller.js";
 import { getLeaderboards } from "../controllers/leaderboard.controller.js";
-import { setAuctionSetup } from "../controllers/auctionSetup.controller.js";
+import { setAuctionSetup, getAuctionSetup } from "../controllers/auctionSetup.controller.js";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
 
 const router = Router();
@@ -22,6 +22,8 @@ router.route('/:tournamentId/fixtures/:fixtureId')
 router.route('/:tournamentId/fixtures/:fixtureId/start-match').post(verifyJwt, startFixtureMatch);
 router.route('/:tournamentId/standings').get(verifyJwt, getStandings);
 router.route('/:tournamentId/leaderboards').get(verifyJwt, getLeaderboards);
-router.route('/:tournamentId/auction-setup').patch(verifyJwt, setAuctionSetup);
+router.route('/:tournamentId/auction-setup')
+    .patch(verifyJwt, setAuctionSetup)
+    .get(verifyJwt, getAuctionSetup);
 
 export default router;

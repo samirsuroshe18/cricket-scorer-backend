@@ -328,3 +328,54 @@ describe('PATCH /:tournamentId/auction-setup — owners', () => {
     expect(count).toBe(0);
   });
 });
+
+const getSetup = (token, tournamentId) =>
+  request(app).get(`/api/v1/tournament/${tournamentId}/auction-setup`).set('Authorization', `Bearer ${token}`);
+
+describe('GET /:tournamentId/auction-setup', () => {
+  it('returns null squad-rule fields and an empty owners array before anything is set', async () => {
+    const { ownerToken, tournamentId } = await setupOwnedTournament();
+
+    const res = await getSetup(ownerToken, tournamentId);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.minSquadSize).toBeNull();
+    expect(res.body.data.maxSquadSize).toBeNull();
+    expect(res.body.data.categoryCaps).toBeNull();
+    expect(res.body.data.owners).toEqual([]);
+  });
+
+  it('any org member can read the current setup, with names resolved', async () => {
+    const { ownerToken, memberToken, member, tournamentId, teamAId } = await setupOwnedTournament();
+    await patchSetup(ownerToken, tournamentId, {
+      minSquadSize: 15,
+      owners: [{ teamId: teamAId, userId: String(member._id), budget: 100000 }],
+    });
+
+    const res = await getSetup(memberToken, tournamentId);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.minSquadSize).toBe(15);
+    expect(res.body.data.owners[0]).toMatchObject({ teamId: teamAId, budget: 100000 });
+    expect(res.body.data.owners[0].userName).toBeTruthy();
+    expect(res.body.data.owners[0].teamName).toBe('Team A');
+  });
+
+  it('rejects a non-member of the organization', async () => {
+    const { strangerToken, tournamentId } = await setupOwnedTournament();
+
+    const res = await getSetup(strangerToken, tournamentId);
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('NOT_ORG_MEMBER');
+  });
+
+  it('rejects with TOURNAMENT_NOT_FOUND for an unknown tournamentId', async () => {
+    const { token } = await createTestUser();
+
+    const res = await getSetup(token, '000000000000000000000000');
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('TOURNAMENT_NOT_FOUND');
+  });
+});

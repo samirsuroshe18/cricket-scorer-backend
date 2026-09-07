@@ -194,6 +194,7 @@
   "AUCTION_SETUP_DUPLICATE_OWNER": "एक ही मालिक एक से अधिक बार सूचीबद्ध किया गया",
   "BUDGET_REQUIRED": "बजट आवश्यक है",
   "INVALID_BUDGET": "बजट 1 और 100000000 के बीच एक पूर्ण संख्या होनी चाहिए",
+  "AUCTION_SETUP_FETCHED": "नीलामी सेटअप प्राप्त हुआ",
   "BALL_UNDONE": "गेंद वापस ली गई",
   "BALL_EVENT_ID_REQUIRED": "वापस लेने वाली गेंद बतानी आवश्यक है",
   "INVALID_BALL_EVENT_ID": "अमान्य गेंद संदर्भ",

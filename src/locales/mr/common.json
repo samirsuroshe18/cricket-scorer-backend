@@ -194,6 +194,7 @@
   "AUCTION_SETUP_DUPLICATE_OWNER": "एकच मालक एकापेक्षा जास्त वेळा सूचीबद्ध केला",
   "BUDGET_REQUIRED": "बजेट आवश्यक आहे",
   "INVALID_BUDGET": "बजेट 1 ते 100000000 दरम्यान पूर्ण संख्या असावी",
+  "AUCTION_SETUP_FETCHED": "लिलाव सेटअप मिळाले",
   "BALL_UNDONE": "चेंडू मागे घेतला",
   "BALL_EVENT_ID_REQUIRED": "मागे घ्यायचा चेंडू नमूद करणे आवश्यक आहे",
   "INVALID_BALL_EVENT_ID": "अवैध चेंडू संदर्भ",

@@ -192,4 +192,13 @@ const setAuctionSetup = catchAsync(async (req, res) => {
     );
 });
 
-export { setAuctionSetup, formatAuctionSetup, canConfigureAuction, canViewAuctionSetup, validateSquadSizeField, validateCategoryCaps };
+const getAuctionSetup = catchAsync(async (req, res) => {
+    const { tournamentId } = req.params;
+    const { tournament } = await canViewAuctionSetup(tournamentId, req.user._id);
+
+    return res.status(200).json(
+        new ApiResponse(200, await formatAuctionSetup(tournament._id), req.t("AUCTION_SETUP_FETCHED"))
+    );
+});
+
+export { setAuctionSetup, getAuctionSetup, formatAuctionSetup, canConfigureAuction, canViewAuctionSetup, validateSquadSizeField, validateCategoryCaps };
