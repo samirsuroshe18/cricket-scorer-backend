@@ -4,6 +4,7 @@ import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import { AuctionSettings, CATEGORY_CAP_ROLES } from '../models/auctionSettings.model.js';
 import { AuctionTeamOwner } from '../models/auctionTeamOwner.model.js';
+import { AuctionSession } from '../models/auctionSession.model.js';
 import { Organization } from '../models/organization.model.js';
 import { isOrgMember } from '../utils/organizationAccess.js';
 import { findOwnedTournament, findAccessibleTournament } from './tournament.controller.js';
@@ -124,6 +125,16 @@ const formatAuctionSetup = async (tournamentId) => {
 const setAuctionSetup = catchAsync(async (req, res) => {
     const { tournamentId } = req.params;
     const { tournament } = await canConfigureAuction(tournamentId, req.user._id);
+
+    // Once the auction has started, its setup is frozen — the auction room
+    // reads AuctionSettings/AuctionTeamOwner.budget as a stable baseline for
+    // the whole session (squad rules aren't enforced live this phase, but
+    // budget IS, and a budget that could change mid-auction would make
+    // "remaining budget" meaningless).
+    const activeSession = await AuctionSession.findOne({ tournament: tournament._id, status: { $ne: 'completed' } });
+    if (activeSession) {
+        throw new ApiError(409, "AUCTION_SETUP_LOCKED");
+    }
 
     const settingsUpdate = {};
     if (req.body.minSquadSize !== undefined) {
