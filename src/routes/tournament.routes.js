@@ -4,6 +4,7 @@ import { generateFixtures, listFixtures, startFixtureMatch, resolveFixture } fro
 import { getStandings } from "../controllers/standings.controller.js";
 import { getLeaderboards } from "../controllers/leaderboard.controller.js";
 import { registerPoolPlayer, listPoolEntries, updatePoolEntry, removePoolEntry } from "../controllers/playerPool.controller.js";
+import { setAuctionSetup, getAuctionSetup } from "../controllers/auctionSetup.controller.js";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
 
 const router = Router();
@@ -28,5 +29,8 @@ router.route('/:tournamentId/pool')
 router.route('/:tournamentId/pool/:playerId')
     .patch(verifyJwt, updatePoolEntry)
     .delete(verifyJwt, removePoolEntry);
+router.route('/:tournamentId/auction-setup')
+    .patch(verifyJwt, setAuctionSetup)
+    .get(verifyJwt, getAuctionSetup);
 
 export default router;
