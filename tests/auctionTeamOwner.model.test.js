@@ -85,4 +85,14 @@ describe('AuctionTeamOwner', () => {
 
     expect(second.budget).toBe(75000);
   });
+
+  it('defaults spent to 0', async () => {
+    const { tournament, teamA, member, owner } = await seed();
+
+    const doc = await AuctionTeamOwner.create({
+      tournament: tournament._id, team: teamA._id, owner: member._id, budget: 100000, createdBy: owner._id,
+    });
+
+    expect(doc.spent).toBe(0);
+  });
 });

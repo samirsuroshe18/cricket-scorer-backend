@@ -9,6 +9,10 @@ const auctionTeamOwnerSchema = new Schema(
     // organizer-entered integer, never derived from career stats. Same
     // reasoning as PlayerPoolEntry.basePrice.
     budget:     { type: Number, required: true, min: 1, max: 100000000 },
+    // Incremented atomically only at lot-resolution time (the sweep), never
+    // by a bid — a bid never touches this. Remaining budget is always
+    // `budget - spent`, computed on read, never stored redundantly.
+    spent:      { type: Number, required: true, default: 0, min: 0 },
     createdBy:  { type: Schema.Types.ObjectId, ref: 'User', required: true },
   },
   { timestamps: true }
