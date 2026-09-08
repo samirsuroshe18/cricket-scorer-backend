@@ -6,6 +6,7 @@ import { Tournament } from '../models/tournament.model.js';
 import { Organization } from '../models/organization.model.js';
 import { isOrgMember } from '../utils/organizationAccess.js';
 import { verifySocketAuth } from '../utils/verifySocketAuth.js';
+import { nextBidAmount, LOT_TIMER_MS } from '../config/auctionRules.js';
 
 const roomName = (tournamentId) => `auction:${tournamentId}`;
 
@@ -84,6 +85,72 @@ export const registerAuctionSocket = (io) => {
         socket.on('auction:leave', ({ tournamentId } = {}) => {
             if (typeof tournamentId === 'string' && tournamentId) {
                 socket.leave(roomName(tournamentId));
+            }
+        });
+
+        // The other authenticated write path — see verifySocketAuth's own
+        // comment. No amount in the payload: the server computes the next
+        // increment itself, which is what makes the write below a genuine
+        // compare-and-swap rather than "whichever amount arrives first
+        // wins" — two clients proposing different amounts would otherwise
+        // need reconciliation logic this design avoids entirely.
+        socket.on('auction:bid', async ({ tournamentId, lotId, accessToken } = {}) => {
+            try {
+                const user = await verifySocketAuth(accessToken);
+                if (!user) {
+                    socket.emit('auction:bidRejected', { code: 'UNAUTHORIZED_REQUEST', message: 'Unauthorized' });
+                    return;
+                }
+
+                const owner = await AuctionTeamOwner.findOne({ tournament: tournamentId, owner: user._id })
+                    .populate('team', 'name');
+                if (!owner) {
+                    socket.emit('auction:bidRejected', { code: 'NOT_AUCTION_OWNER', message: 'Not a team owner in this auction' });
+                    return;
+                }
+
+                const lot = await AuctionLot.findOne({ _id: lotId, tournament: tournamentId });
+                if (!lot || lot.status !== 'active' || !lot.endsAt || lot.endsAt.getTime() <= Date.now()) {
+                    socket.emit('auction:bidRejected', { code: 'LOT_NOT_ACTIVE', message: 'This lot is no longer accepting bids' });
+                    return;
+                }
+
+                const next = nextBidAmount(lot.currentBid);
+                if (owner.budget - owner.spent < next) {
+                    socket.emit('auction:bidRejected', { code: 'INSUFFICIENT_BUDGET', message: 'Not enough remaining budget' });
+                    return;
+                }
+
+                const newEndsAt = new Date(Date.now() + LOT_TIMER_MS);
+                // Compare-and-swap on currentBid — exactly the pattern
+                // `applyBowlerSelection` uses for its own near-simultaneous
+                // race (see match.controller.js). Two bids reading the same
+                // currentBid can both compute the same `next`; only whichever
+                // write lands first still matches this filter when it runs.
+                // The loser's filter no longer matches (currentBid has moved)
+                // and it gets null back — a real rejection, never a silently
+                // overwritten "success." No transaction needed: this is a
+                // single-document write, and budget/spent aren't touched
+                // here at all (only lot resolution touches those — see the
+                // sweep).
+                const updated = await AuctionLot.findOneAndUpdate(
+                    { _id: lot._id, status: 'active', currentBid: lot.currentBid },
+                    { $set: { currentBid: next, currentBidder: owner._id, endsAt: newEndsAt } },
+                    { new: true }
+                );
+
+                if (!updated) {
+                    socket.emit('auction:bidRejected', { code: 'BID_TOO_LATE', message: "Someone else's bid landed first" });
+                    return;
+                }
+
+                await AuctionBidEvent.create({ lot: lot._id, session: lot.session, bidder: owner._id, amount: next });
+
+                emitBidAccepted(io, tournamentId, {
+                    lotId: lot._id, amount: next, bidderTeamId: owner.team._id, bidderTeamName: owner.team.name, endsAt: newEndsAt,
+                });
+            } catch (err) {
+                console.error('auction:bid failed', err);
             }
         });
     });
