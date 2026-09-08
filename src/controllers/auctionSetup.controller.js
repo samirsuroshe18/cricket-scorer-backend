@@ -134,21 +134,6 @@ const setAuctionSetup = catchAsync(async (req, res) => {
         validateSquadSizeField(req.body.maxSquadSize);
         settingsUpdate.maxSquadSize = req.body.maxSquadSize;
     }
-    // The cross-check must hold against the *effective* pair after this
-    // update applies, not just the two fields present in this request —
-    // otherwise a request that only lowers maxSquadSize (leaving an
-    // already-stored, now-larger minSquadSize untouched) would sail
-    // through and leave min > max stored.
-    if (settingsUpdate.minSquadSize !== undefined || settingsUpdate.maxSquadSize !== undefined) {
-        const existing = await AuctionSettings.findOne({ tournament: tournament._id });
-        const effectiveMin = settingsUpdate.minSquadSize !== undefined
-            ? settingsUpdate.minSquadSize : existing?.minSquadSize;
-        const effectiveMax = settingsUpdate.maxSquadSize !== undefined
-            ? settingsUpdate.maxSquadSize : existing?.maxSquadSize;
-        if (effectiveMin != null && effectiveMax != null && effectiveMin > effectiveMax) {
-            throw new ApiError(400, "INVALID_SQUAD_SIZE");
-        }
-    }
     if (req.body.categoryCaps !== undefined) {
         validateCategoryCaps(req.body.categoryCaps);
         settingsUpdate.categoryCaps = req.body.categoryCaps;
@@ -163,6 +148,32 @@ const setAuctionSetup = catchAsync(async (req, res) => {
     try {
         await session.withTransaction(async () => {
             if (Object.keys(settingsUpdate).length > 0) {
+                // The cross-check must hold against the *effective* pair
+                // after this update applies, not just the two fields
+                // present in this request — otherwise a request that only
+                // lowers maxSquadSize (leaving an already-stored, now-larger
+                // minSquadSize untouched) would sail through and leave
+                // min > max stored. Read inside the transaction (with the
+                // session) rather than before it opens: two concurrent
+                // PATCHes each touching only one bound could otherwise both
+                // read the same pre-transaction snapshot and both pass
+                // validation independently, each committing a value that's
+                // individually fine but jointly invalid. Reading under the
+                // transaction's snapshot isolation means a genuine conflict
+                // surfaces as a write conflict that forces a retry against
+                // the now-current document instead.
+                if (settingsUpdate.minSquadSize !== undefined || settingsUpdate.maxSquadSize !== undefined) {
+                    const existing = await AuctionSettings.findOne(
+                        { tournament: tournament._id }, null, { session }
+                    );
+                    const effectiveMin = settingsUpdate.minSquadSize !== undefined
+                        ? settingsUpdate.minSquadSize : existing?.minSquadSize;
+                    const effectiveMax = settingsUpdate.maxSquadSize !== undefined
+                        ? settingsUpdate.maxSquadSize : existing?.maxSquadSize;
+                    if (effectiveMin != null && effectiveMax != null && effectiveMin > effectiveMax) {
+                        throw new ApiError(400, "INVALID_SQUAD_SIZE");
+                    }
+                }
                 settingsUpdate.createdBy = req.user._id;
                 await AuctionSettings.findOneAndUpdate(
                     { tournament: tournament._id },
