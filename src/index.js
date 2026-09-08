@@ -7,12 +7,14 @@ import connectDB from "./database/database.js";
 import "./config/i18n.js";
 import { registerMatchSocket } from "./sockets/match.socket.js";
 import { registerAuctionSocket } from "./sockets/auction.socket.js";
+import { startAuctionSweep } from "./jobs/auctionSweep.js";
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: process.env.CORS_ORIGIN, credentials: true } });
 app.set('io', io);
 registerMatchSocket(io);
 registerAuctionSocket(io);
+startAuctionSweep(io);
 
 connectDB().then(()=>{
     server.listen(process.env.PORT || 8000, process.env.SERVER_HOST, async ()=>{
