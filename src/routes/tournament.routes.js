@@ -5,7 +5,7 @@ import { getStandings } from "../controllers/standings.controller.js";
 import { getLeaderboards } from "../controllers/leaderboard.controller.js";
 import { registerPoolPlayer, listPoolEntries, updatePoolEntry, removePoolEntry } from "../controllers/playerPool.controller.js";
 import { setAuctionSetup, getAuctionSetup } from "../controllers/auctionSetup.controller.js";
-import { startAuction } from "../controllers/auctionRoom.controller.js";
+import { startAuction, nextLot } from "../controllers/auctionRoom.controller.js";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
 
 const router = Router();
@@ -34,5 +34,6 @@ router.route('/:tournamentId/auction-setup')
     .patch(verifyJwt, setAuctionSetup)
     .get(verifyJwt, getAuctionSetup);
 router.route('/:tournamentId/auction/start').post(verifyJwt, startAuction);
+router.route('/:tournamentId/auction/next').post(verifyJwt, nextLot);
 
 export default router;

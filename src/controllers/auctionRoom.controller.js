@@ -7,6 +7,8 @@ import { AuctionSession } from '../models/auctionSession.model.js';
 import { AuctionLot } from '../models/auctionLot.model.js';
 import { PlayerPoolEntry } from '../models/playerPoolEntry.model.js';
 import { findOwnedTournament } from './tournament.controller.js';
+import { LOT_TIMER_MS } from '../config/auctionRules.js';
+import { emitLotOnBlock, emitSessionCompleted } from '../sockets/auction.socket.js';
 
 const startAuction = catchAsync(async (req, res) => {
     const { tournamentId } = req.params;
@@ -56,4 +58,58 @@ const startAuction = catchAsync(async (req, res) => {
     }, req.t("AUCTION_STARTED")));
 });
 
-export { startAuction };
+const nextLot = catchAsync(async (req, res) => {
+    const { tournamentId } = req.params;
+    const { tournament } = await findOwnedTournament(tournamentId, req.user._id);
+
+    const session = await mongoose.startSession();
+    let responseData;
+    try {
+        await session.withTransaction(async () => {
+            const auctionSession = await AuctionSession.findOne({ tournament: tournament._id }, null, { session });
+            if (!auctionSession || auctionSession.status !== 'active') {
+                throw new ApiError(400, "AUCTION_NOT_ACTIVE");
+            }
+
+            const alreadyActive = await AuctionLot.findOne({ session: auctionSession._id, status: 'active' }, null, { session });
+            if (alreadyActive) {
+                throw new ApiError(409, "LOT_ALREADY_ACTIVE");
+            }
+
+            const next = await AuctionLot.findOne({ session: auctionSession._id, status: 'queued' }, null, { session })
+                .sort({ sequence: 1 });
+
+            if (!next) {
+                await AuctionSession.updateOne({ _id: auctionSession._id }, { $set: { status: 'completed', completedAt: new Date() } }, { session });
+                responseData = { tournamentId: tournament._id, completed: true, lot: null };
+                return;
+            }
+
+            const endsAt = new Date(Date.now() + LOT_TIMER_MS);
+            await AuctionLot.updateOne(
+                { _id: next._id },
+                { $set: { status: 'active', currentBid: next.basePrice, endsAt } },
+                { session }
+            );
+            responseData = {
+                tournamentId: tournament._id, completed: false,
+                lot: { lotId: next._id, playerId: next.player, basePrice: next.basePrice, currentBid: next.basePrice, endsAt },
+            };
+        });
+    } finally {
+        await session.endSession();
+    }
+
+    const io = req.app.get('io');
+    if (io) {
+        if (responseData.completed) {
+            emitSessionCompleted(io, tournament._id);
+        } else {
+            emitLotOnBlock(io, tournament._id, responseData.lot);
+        }
+    }
+
+    return res.status(200).json(new ApiResponse(200, responseData, req.t(responseData.completed ? "AUCTION_COMPLETED" : "LOT_ON_BLOCK")));
+});
+
+export { startAuction, nextLot };
