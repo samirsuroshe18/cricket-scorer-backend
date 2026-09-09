@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals';
 import { resolveExpiredLots } from '../src/jobs/auctionSweep.js';
 import { createTestUser } from './helpers/authTestUser.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
@@ -58,6 +59,20 @@ describe('resolveExpiredLots', () => {
     expect(updatedOwner.spent).toBe(5500);
   });
 
+  it("emits the winning team's updated spent/remaining budget alongside the sold outcome", async () => {
+    const { lot, teamOwner } = await seed({ withBidder: true });
+    const emit = jest.fn();
+    const io = { to: jest.fn(() => ({ emit })) };
+
+    await resolveExpiredLots(io);
+
+    const [, payload] = emit.mock.calls.find(([event]) => event === 'auction:lotResolved');
+    expect(payload.outcome).toBe('sold');
+    expect(payload.spent).toBe(5500);
+    const owner = await AuctionTeamOwner.findById(teamOwner._id);
+    expect(payload.remaining).toBe(owner.budget - 5500);
+  });
+
   it('marks a lot with no bidder as unsold', async () => {
     const { lot } = await seed({ withBidder: false });
 
@@ -89,5 +104,32 @@ describe('resolveExpiredLots', () => {
     // Incremented exactly once — an unguarded double resolution would have
     // double-charged this owner's spend.
     expect(updatedOwner.spent).toBe(5500);
+  });
+
+  it('decides eligibility from a single read taken inside the transaction, never a value captured before it opened', async () => {
+    await seed({ withBidder: true });
+
+    // Found in code review: the original implementation read the expired
+    // lot via a plain, un-sessioned `findOne` BEFORE opening the
+    // transaction, then wrote that stale snapshot's currentBid/currentBidder
+    // back unconditionally. A bid landing in the gap between that read and
+    // the transactional write was silently overwritten — see
+    // tests/auctionSweepBidRace.test.js for the exact scenario. This test
+    // enforces the fix as a structural invariant: the lookup that decides
+    // "is this lot eligible to resolve" must happen exactly once, and it
+    // must be scoped to the transaction's own session — not a second,
+    // earlier, un-sessioned call whose result the transaction later trusts.
+    const findOneSpy = jest.spyOn(AuctionLot, 'findOne');
+
+    await resolveExpiredLots(null);
+
+    const eligibilityLookups = findOneSpy.mock.calls.filter(
+      ([filter]) => filter && filter.status === 'active' && filter.endsAt
+    );
+    expect(eligibilityLookups).toHaveLength(1);
+    const [, , options] = eligibilityLookups[0];
+    expect(options?.session).toBeDefined();
+
+    findOneSpy.mockRestore();
   });
 });
