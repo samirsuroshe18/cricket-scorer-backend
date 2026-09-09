@@ -7,8 +7,22 @@ import { Organization } from '../models/organization.model.js';
 import { isOrgMember } from '../utils/organizationAccess.js';
 import { verifySocketAuth } from '../utils/verifySocketAuth.js';
 import { nextBidAmount, LOT_TIMER_MS } from '../config/auctionRules.js';
+import i18next from '../config/i18n.js';
 
 const roomName = (tournamentId) => `auction:${tournamentId}`;
+
+// Sockets have no `accept-language` header the way REST requests do — the
+// client sends its locale explicitly on `auction:join` (stored on
+// `socket.data.auctionLocale`), and every rejection this connection ever
+// receives is localized from that, the same `i18next.t(code, {lng})` call
+// `req.t` wraps for REST (see locale.middleware.js). A bid arriving before
+// any join (which the client never does in practice) falls back to 'en'.
+const rejectBid = (socket, code) => {
+    socket.emit('auction:bidRejected', {
+        code,
+        message: i18next.t(code, { lng: socket.data.auctionLocale || 'en' }),
+    });
+};
 
 /**
  * The full current state of a tournament's auction room — shared by
@@ -98,26 +112,26 @@ export const registerAuctionSocket = (io) => {
             try {
                 const user = await verifySocketAuth(accessToken);
                 if (!user) {
-                    socket.emit('auction:bidRejected', { code: 'UNAUTHORIZED_REQUEST', message: 'Unauthorized' });
+                    rejectBid(socket, 'UNAUTHORIZED_REQUEST');
                     return;
                 }
 
                 const owner = await AuctionTeamOwner.findOne({ tournament: tournamentId, owner: user._id })
                     .populate('team', 'name');
                 if (!owner) {
-                    socket.emit('auction:bidRejected', { code: 'NOT_AUCTION_OWNER', message: 'Not a team owner in this auction' });
+                    rejectBid(socket, 'NOT_AUCTION_OWNER');
                     return;
                 }
 
                 const lot = await AuctionLot.findOne({ _id: lotId, tournament: tournamentId });
                 if (!lot || lot.status !== 'active' || !lot.endsAt || lot.endsAt.getTime() <= Date.now()) {
-                    socket.emit('auction:bidRejected', { code: 'LOT_NOT_ACTIVE', message: 'This lot is no longer accepting bids' });
+                    rejectBid(socket, 'LOT_NOT_ACTIVE');
                     return;
                 }
 
                 const next = nextBidAmount(lot.currentBid);
                 if (owner.budget - owner.spent < next) {
-                    socket.emit('auction:bidRejected', { code: 'INSUFFICIENT_BUDGET', message: 'Not enough remaining budget' });
+                    rejectBid(socket, 'INSUFFICIENT_BUDGET');
                     return;
                 }
 
@@ -132,15 +146,19 @@ export const registerAuctionSocket = (io) => {
                 // overwritten "success." No transaction needed: this is a
                 // single-document write, and budget/spent aren't touched
                 // here at all (only lot resolution touches those — see the
-                // sweep).
+                // sweep). `endsAt` is re-checked in this same atomic filter,
+                // not just in the pre-check above, so a bid whose CAS
+                // executes after the deadline — even by a few milliseconds,
+                // in the gap before the pre-check's read and this write —
+                // can never succeed.
                 const updated = await AuctionLot.findOneAndUpdate(
-                    { _id: lot._id, status: 'active', currentBid: lot.currentBid },
+                    { _id: lot._id, status: 'active', currentBid: lot.currentBid, endsAt: { $gt: new Date() } },
                     { $set: { currentBid: next, currentBidder: owner._id, endsAt: newEndsAt } },
                     { new: true }
                 );
 
                 if (!updated) {
-                    socket.emit('auction:bidRejected', { code: 'BID_TOO_LATE', message: "Someone else's bid landed first" });
+                    rejectBid(socket, 'BID_TOO_LATE');
                     return;
                 }
 

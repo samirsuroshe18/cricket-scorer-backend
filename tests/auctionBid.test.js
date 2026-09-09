@@ -86,6 +86,27 @@ describe('auction:bid', () => {
     expect(rejection[1].code).toBe('NOT_AUCTION_OWNER');
   });
 
+  it("localizes the rejection message using the locale captured on auction:join, not a hardcoded English string", async () => {
+    const { ownerToken, tournamentId, lotId } = await setupActiveLot();
+
+    const io = { on: jest.fn() };
+    registerAuctionSocket(io);
+    const [, onConnection] = io.on.mock.calls.find(([e]) => e === 'connection');
+    const socket = buildFakeSocket();
+    onConnection(socket);
+
+    // The tournament owner is a real org member (so auction:join succeeds
+    // and captures socket.data.auctionLocale) but never configured as an
+    // AuctionTeamOwner — the same NOT_AUCTION_OWNER rejection a stranger
+    // would get, without needing a second org-membership call.
+    await socket.trigger('auction:join', { tournamentId, accessToken: ownerToken, locale: 'hi' });
+    await socket.trigger('auction:bid', { tournamentId, lotId, accessToken: ownerToken });
+
+    const rejection = socket.emit.mock.calls.find(([e]) => e === 'auction:bidRejected');
+    expect(rejection[1].code).toBe('NOT_AUCTION_OWNER');
+    expect(rejection[1].message).toBe('आप इस नीलामी में टीम मालिक नहीं हैं');
+  });
+
   it("rejects a bid that would exceed the bidder's remaining budget", async () => {
     const { memberToken, tournamentId, lotId } = await setupActiveLot({ budget: 5200, basePrice: 5000 });
 
