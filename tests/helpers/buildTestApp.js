@@ -72,5 +72,9 @@ export const buildTestApp = ({ withTranslations = false, withPlayer = false, wit
   const server = http.createServer(app);
   server.listen(0);
   server.unref();
+  // Exposed so a test that needs to assert on a real `req.app.get('io')`
+  // emission (rather than just that it was skipped) can call
+  // `server.app.set('io', fakeIo)` before making its request.
+  server.app = app;
   return server;
 };

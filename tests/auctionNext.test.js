@@ -52,6 +52,7 @@ describe('POST /:tournamentId/auction/next', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.completed).toBe(false);
     expect(res.body.data.lot.basePrice).toBe(5000);
+    expect(res.body.data.lot.playerName).toBe('Player 0');
     const auctionSession = await AuctionSession.findOne({ tournament: tournamentId });
     const active = await AuctionLot.findOne({ session: auctionSession._id, status: 'active' });
     expect(active).not.toBeNull();

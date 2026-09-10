@@ -174,6 +174,10 @@ export const registerAuctionSocket = (io) => {
     });
 };
 
+export const emitSessionStarted = (io, tournamentId, payload) => {
+    io.to(roomName(tournamentId)).emit('auction:sessionStarted', payload);
+};
+
 export const emitLotOnBlock = (io, tournamentId, payload) => {
     io.to(roomName(tournamentId)).emit('auction:lotOnBlock', payload);
 };

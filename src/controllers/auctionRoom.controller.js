@@ -8,7 +8,7 @@ import { AuctionLot } from '../models/auctionLot.model.js';
 import { PlayerPoolEntry } from '../models/playerPoolEntry.model.js';
 import { findOwnedTournament } from './tournament.controller.js';
 import { LOT_TIMER_MS } from '../config/auctionRules.js';
-import { emitLotOnBlock, emitSessionCompleted, emitPaused, emitResumed } from '../sockets/auction.socket.js';
+import { emitSessionStarted, emitLotOnBlock, emitSessionCompleted, emitPaused, emitResumed } from '../sockets/auction.socket.js';
 
 const startAuction = catchAsync(async (req, res) => {
     const { tournamentId } = req.params;
@@ -53,6 +53,14 @@ const startAuction = catchAsync(async (req, res) => {
         await session.endSession();
     }
 
+    // A socket that joined the room before this call has no other way to
+    // learn the session began — the room otherwise stays silent until the
+    // organizer separately calls next-lot, and even that only ever
+    // broadcasts the lot itself, never a transition out of the
+    // null/not-started sessionStatus the client is still sitting on.
+    const io = req.app.get('io');
+    if (io) emitSessionStarted(io, tournament._id, { tournamentId: tournament._id, lotCount: poolEntries.length });
+
     return res.status(201).json(new ApiResponse(201, {
         tournamentId: tournament._id, sessionId: created._id, status: created.status, lotCount: poolEntries.length,
     }, req.t("AUCTION_STARTED")));
@@ -77,7 +85,8 @@ const nextLot = catchAsync(async (req, res) => {
             }
 
             const next = await AuctionLot.findOne({ session: auctionSession._id, status: 'queued' }, null, { session })
-                .sort({ sequence: 1 });
+                .sort({ sequence: 1 })
+                .populate({ path: 'player', select: 'name role', options: { session } });
 
             if (!next) {
                 await AuctionSession.updateOne({ _id: auctionSession._id }, { $set: { status: 'completed', completedAt: new Date() } }, { session });
@@ -93,7 +102,15 @@ const nextLot = catchAsync(async (req, res) => {
             );
             responseData = {
                 tournamentId: tournament._id, completed: false,
-                lot: { lotId: next._id, playerId: next.player, basePrice: next.basePrice, currentBid: next.basePrice, endsAt },
+                // playerName/playerRole here so this broadcasts identically to
+                // buildAuctionState's own lot shape (auction.socket.js) — a
+                // client landing mid-auction (via auction:state) and one
+                // watching live (via auction:lotOnBlock) must render the same
+                // card either way.
+                lot: {
+                    lotId: next._id, playerId: next.player._id, playerName: next.player.name, playerRole: next.player.role,
+                    basePrice: next.basePrice, currentBid: next.basePrice, endsAt,
+                },
             };
         });
     } finally {

@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals';
 import request from 'supertest';
 import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
@@ -91,5 +92,24 @@ describe('POST /:tournamentId/auction/start', () => {
     const res = await patchSetup(ownerToken, tournamentId, { minSquadSize: 15 });
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('AUCTION_SETUP_LOCKED');
+  });
+
+  // A socket that joined the auction room before the organizer clicked
+  // "Start Auction" has no other way to learn the session began: the room
+  // stays silent until the organizer separately calls next-lot, and even
+  // then only `auction:lotOnBlock` fires — never anything that tells an
+  // already-joined client the session itself is no longer null/not-started.
+  it('broadcasts to already-joined sockets that the session has started', async () => {
+    const { ownerToken, tournamentId } = await setupReadyTournament();
+    const emit = jest.fn();
+    const io = { to: jest.fn(() => ({ emit })) };
+    app.app.set('io', io);
+
+    await startAuction(ownerToken, tournamentId);
+
+    expect(io.to).toHaveBeenCalledWith(`auction:${tournamentId}`);
+    expect(emit.mock.calls[0][0]).toBe('auction:sessionStarted');
+    expect(emit.mock.calls[0][1].tournamentId.toString()).toBe(tournamentId);
+    expect(emit.mock.calls[0][1].lotCount).toBe(2);
   });
 });
