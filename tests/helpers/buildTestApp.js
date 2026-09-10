@@ -1,4 +1,5 @@
 import express from 'express';
+import http from 'http';
 import { localeMiddleware } from '../../src/middlewares/locale.middleware.js';
 import { sanitizeMiddleware } from '../../src/middlewares/sanitize.middleware.js';
 import { errorHandler } from '../../src/utils/errorHandler.js';
@@ -22,6 +23,25 @@ import searchRouter from '../../src/routes/search.routes.js';
  * `withTranslations`/`withPlayer` are opt-in rather than always-mounted,
  * same reasoning: every existing caller only exercises `matchRouter` and
  * shouldn't pay for (or accidentally rely on) a router it never asked for.
+ *
+ * Returns an already-`listen()`ing `http.Server`, not the bare Express app
+ * function — `supertest` is duck-typed on this at every call site
+ * (`request(app)` works identically whether `app` names a listening server
+ * or a plain function), so no caller needs to change. The reason: passed a
+ * plain function, supertest's own `Test` constructor calls
+ * `http.createServer(app).listen(0)` **on every single request**, not once
+ * per file — across this suite's full run (99 files, thousands of requests
+ * in one `--runInBand` process) that churns through thousands of ephemeral
+ * ports in rapid succession, and rarely the OS recycles a port fast enough
+ * to collide with lingering client-side connection state, producing a
+ * response from one ephemeral server bleeding into a request meant for
+ * another (reproduced in isolation: a bare Express+supertest loop with no
+ * app code at all threw a stray `301` with an empty body by request #990).
+ * One persistent server per file removes the churn entirely — confirmed
+ * clean over 3000 iterations in the same isolated repro. `.unref()` so this
+ * server (up to ~50 of them accumulate for the process lifetime, one per
+ * file, never explicitly closed) doesn't hold the event loop open and hang
+ * Jest's own process exit at the end of a run.
  */
 export const buildTestApp = ({ withTranslations = false, withPlayer = false, withTeam = false, withOrganization = false, withTournament = false, withSearch = false } = {}) => {
   const app = express();
@@ -48,5 +68,9 @@ export const buildTestApp = ({ withTranslations = false, withPlayer = false, wit
     app.use('/api/v1/search', searchRouter);
   }
   app.use(errorHandler);
-  return app;
+
+  const server = http.createServer(app);
+  server.listen(0);
+  server.unref();
+  return server;
 };

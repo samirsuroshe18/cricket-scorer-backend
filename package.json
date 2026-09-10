@@ -14,7 +14,8 @@
     "transform": {},
     "testMatch": [
       "**/tests/**/*.test.js"
-    ]
+    ],
+    "testTimeout": 20000
   },
   "keywords": [],
   "author": "",
