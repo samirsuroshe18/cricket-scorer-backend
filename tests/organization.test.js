@@ -334,6 +334,45 @@ describe('POST /v1/organization/:orgId/teams', () => {
   });
 });
 
+describe('POST /v1/organization/:orgId/logo', () => {
+  const uploadLogo = (token, orgId) =>
+    request(app)
+      .post(`/api/v1/organization/${orgId}/logo`)
+      .set('Authorization', `Bearer ${token}`);
+
+  it('400s when no file is attached', async () => {
+    const { token } = await createTestUser();
+    const createRes = await createOrg(token, { name: 'Riverside CC' });
+    const orgId = createRes.body.data.id;
+
+    const res = await uploadLogo(token, orgId).send();
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('LOGO_REQUIRED');
+  });
+
+  it('403s when a non-owner tries to upload a logo', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const createRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const orgId = createRes.body.data.id;
+    const { token: strangerToken } = await createTestUser({ email: 'stranger@example.com' });
+
+    const res = await uploadLogo(strangerToken, orgId).send();
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('ORG_NOT_OWNED');
+  });
+
+  it("404s for an orgId that doesn't exist", async () => {
+    const { token } = await createTestUser();
+
+    const res = await uploadLogo(token, '665f3b1c2d3e4f5a6b7c8d90').send();
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('ORG_NOT_FOUND');
+  });
+});
+
 describe('DELETE /v1/organization/:orgId', () => {
   const createOrgTeam = (token, orgId, body) =>
     request(app).post(`/api/v1/organization/${orgId}/teams`).set('Authorization', `Bearer ${token}`).send(body);

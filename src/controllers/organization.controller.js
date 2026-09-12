@@ -9,6 +9,7 @@ import { User } from '../models/user.model.js';
 import { Tournament, TOURNAMENT_FORMATS } from '../models/tournament.model.js';
 import { Match } from '../models/match.model.js';
 import { buildLeaderboardsForMatchIds } from '../utils/leaderboardQuery.js';
+import { uploadOnCloudinary } from '../utils/cloudinary.js';
 
 const asString = (value) => (typeof value === 'string' ? value : '');
 
@@ -40,6 +41,7 @@ const createOrganization = catchAsync(async (req, res) => {
         owner: { id: req.user._id, name: req.user.fullName },
         members: [{ id: req.user._id, name: req.user.fullName, role: 'owner' }],
         teams: [],
+        logoUrl: org.logoUrl,
         createdAt: org.createdAt,
     }, req.t("ORGANIZATION_CREATED")));
 });
@@ -61,6 +63,7 @@ const listMyOrganizations = catchAsync(async (req, res) => {
             myRole: org.members.find((m) => m.user.equals(req.user._id))?.role ?? 'member',
             memberCount: org.members.length,
             teamCount: teamCountByOrgId.get(String(org._id)) ?? 0,
+            logoUrl: org.logoUrl,
         })),
     }, req.t("ORGANIZATIONS_FETCHED")));
 });
@@ -110,6 +113,7 @@ const getOrganization = catchAsync(async (req, res) => {
             .filter((m) => m.user)
             .map((m) => ({ id: m.user._id, name: m.user.fullName, role: m.role })),
         teams: teams.map((team) => ({ id: team._id, name: team.name, shortName: team.shortName ?? null })),
+        logoUrl: org.logoUrl,
         tournaments: tournaments.map((t) => ({
             id: t._id,
             name: t.name,
@@ -257,6 +261,34 @@ const deleteOrganization = catchAsync(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, { orgId: org._id }, req.t("ORGANIZATION_DELETED")));
 });
 
+// Owner-only, same file-upload path `updateProfile` (user.controller.js)
+// already uses: `upload.single('file')` stages it to disk (type/size
+// already validated there), then Cloudinary hosts it. The old logo (if
+// any) is left orphaned on Cloudinary rather than deleted — same tradeoff
+// updateProfile already makes for a replaced photo, not a new one
+// introduced here.
+const updateOrganizationLogo = catchAsync(async (req, res) => {
+    const { orgId } = req.params;
+    const org = await findOwnedOrganization(orgId, req.user._id);
+
+    if (!req.file) {
+        throw new ApiError(400, "LOGO_REQUIRED");
+    }
+
+    const uploadResult = await uploadOnCloudinary(req.file.path);
+    if (!uploadResult?.secure_url) {
+        throw new ApiError(500, "LOGO_UPLOAD_FAILED");
+    }
+
+    org.logoUrl = uploadResult.secure_url;
+    await org.save();
+
+    return res.status(200).json(new ApiResponse(200, {
+        id: org._id,
+        logoUrl: org.logoUrl,
+    }, req.t("ORG_LOGO_UPDATED")));
+});
+
 // Every tournament run by this org, across every one of its matches —
 // deliberately not "every match any of the org's teams ever played," which
 // would pull in ad-hoc/friendly matches outside any tournament and raise an
@@ -295,5 +327,6 @@ export {
     createOrganizationTeam,
     createOrgTournament,
     deleteOrganization,
+    updateOrganizationLogo,
     getOrganizationLeaderboards,
 };
