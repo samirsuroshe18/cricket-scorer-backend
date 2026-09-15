@@ -1,7 +1,11 @@
 import mongoose, { Schema } from "mongoose";
-import { BATTING_STYLES, BOWLING_STYLES } from "./user.model.js";
+import { BATTING_STYLES, BOWLING_STYLES, PLAYER_ROLES } from "./user.model.js";
 
-export const PLAYER_ROLES = ['batsman', 'bowler', 'allrounder', 'wicketkeeper', 'unknown'];
+// Re-exported rather than duplicated: User.playingRole now shares this exact
+// enum, so it has to live in one file. Kept as a named export here too so
+// existing importers (auctionSettings.model.js, player.controller.js) don't
+// need to change where they get it from.
+export { PLAYER_ROLES };
 
 const playerSchema = new Schema(
   {
