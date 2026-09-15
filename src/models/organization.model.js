@@ -9,6 +9,11 @@ const organizationSchema = new Schema(
     // bypass document middleware).
     nameLower: { type: String, required: true, trim: true },
     owner: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    // Cloudinary secure_url, same convention as User.photoUrl — set via
+    // POST /v1/organization/:orgId/logo, owner-only. Absent for every org
+    // that predates this field or never uploaded one; the client falls
+    // back to a monogram avatar when null.
+    logoUrl: { type: String, default: null },
     members: [
       {
         user: { type: Schema.Types.ObjectId, ref: 'User', required: true },

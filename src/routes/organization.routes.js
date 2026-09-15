@@ -1,6 +1,7 @@
 import { Router } from "express";
-import { createOrganization, listMyOrganizations, getOrganization, addOrganizationMember, removeOrganizationMember, createOrganizationTeam, createOrgTournament, deleteOrganization, getOrganizationLeaderboards } from "../controllers/organization.controller.js";
+import { createOrganization, listMyOrganizations, getOrganization, addOrganizationMember, removeOrganizationMember, createOrganizationTeam, createOrgTournament, deleteOrganization, updateOrganizationLogo, getOrganizationLeaderboards } from "../controllers/organization.controller.js";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
+import { upload } from "../middlewares/multer.middleware.js";
 
 const router = Router();
 
@@ -14,6 +15,7 @@ router.route('/:orgId/members').post(verifyJwt, addOrganizationMember);
 router.route('/:orgId/members/:userId').delete(verifyJwt, removeOrganizationMember);
 router.route('/:orgId/teams').post(verifyJwt, createOrganizationTeam);
 router.route('/:orgId/tournaments').post(verifyJwt, createOrgTournament);
+router.route('/:orgId/logo').post(verifyJwt, upload.single('file'), updateOrganizationLogo);
 router.route('/:orgId/leaderboards').get(verifyJwt, getOrganizationLeaderboards);
 
 export default router;
