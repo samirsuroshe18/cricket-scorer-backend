@@ -14,9 +14,9 @@ const io = new Server(server, { cors: { origin: process.env.CORS_ORIGIN, credent
 app.set('io', io);
 registerMatchSocket(io);
 registerAuctionSocket(io);
-startAuctionSweep(io);
 
 connectDB().then(()=>{
+    startAuctionSweep(io);
     server.listen(process.env.PORT || 8000, process.env.SERVER_HOST, async ()=>{
         console.log(`Server is running at on : http://${process.env.SERVER_HOST}:${process.env.PORT}`);
     })
