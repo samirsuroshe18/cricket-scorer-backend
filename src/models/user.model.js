@@ -13,6 +13,12 @@ import crypto from "crypto";
 export const BATTING_STYLES = ['right_handed', 'left_handed'];
 export const BOWLING_STYLES = ['right_arm_pace', 'left_arm_pace', 'right_arm_spin', 'left_arm_spin'];
 
+// Owned here rather than on player.model.js (which used to define this)
+// so a User can self-declare the same vocabulary Player already exposes,
+// without the two files importing each other. player.model.js now imports
+// and re-exports this constant instead of defining its own copy.
+export const PLAYER_ROLES = ['batsman', 'bowler', 'allrounder', 'wicketkeeper', 'unknown'];
+
 const userSchema = new Schema(
     {
         email: {
@@ -89,6 +95,21 @@ const userSchema = new Schema(
         bowlingStyle: {
             type: String,
             enum: BOWLING_STYLES,
+        },
+
+        // Self-declared, same reasoning as battingStyle/bowlingStyle above —
+        // this is "what I say I play," independent of Player.role, which a
+        // scorer sets on a per-match participant they may not be.
+        playingRole: {
+            type: String,
+            enum: PLAYER_ROLES,
+            default: 'unknown',
+        },
+
+        jerseyNumber: {
+            type: Number,
+            min: 0,
+            max: 999,
         },
 
         profileCompleted: {

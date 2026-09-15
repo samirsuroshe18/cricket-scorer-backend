@@ -2,7 +2,7 @@ import catchAsync from '../utils/catchAsync.js';
 import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import mailSender from '../utils/mailSender.js';
-import { User, BATTING_STYLES, BOWLING_STYLES } from '../models/user.model.js';
+import { User, BATTING_STYLES, BOWLING_STYLES, PLAYER_ROLES } from '../models/user.model.js';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
@@ -514,7 +514,7 @@ const setPassword = catchAsync(async (req, res) => {
 });
 
 const updateProfile = catchAsync(async (req, res) => {
-    const { userName, bio, battingStyle, bowlingStyle } = req.body;
+    const { userName, bio, battingStyle, bowlingStyle, playingRole, jerseyNumber } = req.body;
     let imageUrl = null;
     const imagePath = req.file?.path || null;
 
@@ -537,6 +537,22 @@ const updateProfile = catchAsync(async (req, res) => {
         throw new ApiError(400, "INVALID_BOWLING_STYLE");
     }
 
+    // Same self-declared/optional shape as battingStyle/bowlingStyle above —
+    // see docs/api.md's update-profile section for why this lives on User
+    // rather than only on Player.
+    const trimmedPlayingRole = typeof playingRole === "string" ? playingRole.trim() : "";
+    if (trimmedPlayingRole && !PLAYER_ROLES.includes(trimmedPlayingRole)) {
+        throw new ApiError(400, "INVALID_PLAYER_ROLE");
+    }
+
+    let parsedJerseyNumber;
+    if (jerseyNumber !== undefined && jerseyNumber !== null && jerseyNumber !== "") {
+        parsedJerseyNumber = Number(jerseyNumber);
+        if (!Number.isInteger(parsedJerseyNumber) || parsedJerseyNumber < 0 || parsedJerseyNumber > 999) {
+            throw new ApiError(400, "INVALID_JERSEY_NUMBER");
+        }
+    }
+
     if (imagePath) {
         const uploadResult = await uploadOnCloudinary(imagePath);
         imageUrl = uploadResult?.secure_url;
@@ -546,6 +562,8 @@ const updateProfile = catchAsync(async (req, res) => {
     if (typeof bio === "string" && bio.trim()) updateData.bio = bio.trim();
     if (trimmedBattingStyle) updateData.battingStyle = trimmedBattingStyle;
     if (trimmedBowlingStyle) updateData.bowlingStyle = trimmedBowlingStyle;
+    if (trimmedPlayingRole) updateData.playingRole = trimmedPlayingRole;
+    if (parsedJerseyNumber !== undefined) updateData.jerseyNumber = parsedJerseyNumber;
     if (imageUrl) updateData.photoUrl = imageUrl;
 
     const updatedUser = await User.findByIdAndUpdate(
