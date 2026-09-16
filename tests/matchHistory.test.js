@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
-import { createMatch } from './helpers/matchSetup.js';
+import { createMatch, startLiveInnings, scoreDotBall } from './helpers/matchSetup.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 
 // The first list endpoint in this codebase — see the backend CLAUDE.md's own
@@ -173,5 +173,51 @@ describe('GET /v1/match/history', () => {
     const res = await history(token);
 
     expect(res.body.data.matches[0].assignedScorer).toBeNull();
+  });
+
+  it('reports null currentInnings for a match that has not started', async () => {
+    const { token } = await createTestUser({ email: 'notstarted@example.com' });
+    await createMatch(app, token);
+
+    const res = await history(token);
+
+    expect(res.body.data.matches[0].status).toBe('upcoming');
+    expect(res.body.data.matches[0].currentInnings).toBeNull();
+  });
+
+  it("reports the live innings' running score for a match in progress", async () => {
+    const { token } = await createTestUser({ email: 'livescore@example.com' });
+    const matchId = await createMatch(app, token, { totalOvers: 5 });
+    await startLiveInnings(app, token, matchId);
+    await scoreDotBall(app, token, matchId, { runs: 4 });
+    await scoreDotBall(app, token, matchId, { runs: 1 });
+
+    const res = await history(token);
+    const match = res.body.data.matches.find((m) => m.matchId === matchId);
+
+    expect(match.status).toBe('live');
+    expect(match.currentInnings).toEqual({
+      inningsNumber: 1,
+      totalRuns: 5,
+      wickets: 0,
+      overs: '0.2',
+    });
+  });
+
+  it('does not report a currentInnings score for a completed match', async () => {
+    const { token } = await createTestUser({ email: 'donecheck@example.com' });
+    const matchId = await createMatch(app, token, { totalOvers: 5 });
+    await startLiveInnings(app, token, matchId);
+    await scoreDotBall(app, token, matchId, { runs: 2 });
+    await request(app)
+      .post(`/api/v1/match/${matchId}/abandon`)
+      .set('Authorization', `Bearer ${token}`)
+      .send();
+
+    const res = await history(token);
+    const match = res.body.data.matches.find((m) => m.matchId === matchId);
+
+    expect(match.status).toBe('abandoned');
+    expect(match.currentInnings).toBeNull();
   });
 });
