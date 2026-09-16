@@ -2615,8 +2615,28 @@ const getMatchHistory = catchAsync(async (req, res) => {
     const users = await User.find({ _id: { $in: userIds } }, 'fullName');
     const userNameById = new Map(users.map((user) => [String(user._id), user.fullName]));
 
+    // A live/innings_break card needs a score summary, and Inning already
+    // carries the running total as a denormalized "live state" pointer
+    // (updated on every ball — see inning.model.js) — no BallEvent
+    // aggregation needed. Fetched for the whole page's live matches in one
+    // query rather than one Inning.findOne per match, same N+1-avoidance
+    // reasoning as teamIds/userIds above. A completed match still has
+    // Inning docs but doesn't need a "current" score badge, so this only
+    // runs for matches that do.
+    const liveMatchIds = matches
+        .filter((match) => match.status === 'live' || match.status === 'innings_break')
+        .map((match) => match._id);
+    const innings = liveMatchIds.length
+        ? await Inning.find({ matchId: { $in: liveMatchIds } })
+        : [];
+    const inningByMatchAndNumber = new Map(
+        innings.map((inning) => [`${inning.matchId}:${inning.inningsNumber}`, inning])
+    );
+
     return res.status(200).json(new ApiResponse(200, {
-        matches: matches.map((match) => ({
+        matches: matches.map((match) => {
+            const currentInning = inningByMatchAndNumber.get(`${match._id}:${match.currentInnings}`);
+            return {
             matchId: match._id,
             // Unlike getPublicMatch/getMatchScorecard, this response carries
             // team ids, not just names — a card here can route straight back
@@ -2638,7 +2658,16 @@ const getMatchHistory = catchAsync(async (req, res) => {
                 ? { id: match.assignedScorer, name: userNameById.get(String(match.assignedScorer)) ?? null }
                 : null,
             createdAt: match.createdAt,
-        })),
+            currentInnings: currentInning
+                ? {
+                    inningsNumber: currentInning.inningsNumber,
+                    totalRuns: currentInning.totalRuns,
+                    wickets: currentInning.wickets,
+                    overs: formatOvers(currentInning.oversCompleted, currentInning.legalBalls),
+                }
+                : null,
+            };
+        }),
         page,
         limit,
         total,
