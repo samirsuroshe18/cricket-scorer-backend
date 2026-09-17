@@ -118,6 +118,18 @@ Don't conflate them. **`src/locales/*/common.json`** are static backend response
 
 The CMS's read routes are public by design (fetched before login); its three write routes require `verifyAdmin` — see "Auth & Security" above.
 
+## Notifications & player linking
+
+**Built, not a gap.** `Notification` model + inbox endpoints (`GET /v1/notifications`, unread-count, mark-read, mark-all-read — `notification.controller.js`/`notification.routes.js`), plus `src/utils/notify.js`'s `notifyUser`/`notifyUsers`, which localizes off the recipient's own `User.language` (never `req`, so it works from a `req`-less background job too), persists an inbox row, and pushes via FCM in one call. Never throws — a bad/missing token or a deleted `User` can't fail the write it's attached to.
+
+Six triggers exist today, each fired strictly after its transaction commits (never from inside a `session.withTransaction` callback — a notification can't go out for a write that then rolls back): `match_started`, `scorer_assigned`, `your_turn_to_bat`, `your_turn_to_bowl` (`match.controller.js`), `auction_started` (`auctionRoom.controller.js`), `lot_sold` (`src/jobs/auctionSweep.js`, the only one with no request in flight at all). `sendNotification.js` was rewritten to include the FCM `notification` block — the previous data-only payload never rendered in the OS tray once the app was backgrounded or killed.
+
+**Player linking** (`Player.linkedUserId`) gives "your turn"/"you won the bid" pushes an account to reach, without exposing a `Player`'s identity to anyone but its owning scorer — no endpoint returns who linked a `Player`, only `isClaimed` (`linkedUserId != null`) on the career-stats response. Claiming is scorer-initiated via an invite link (`claimPlayer`/`unclaimPlayer` in `player.controller.js`, `POST /v1/player/:playerId/claim` / `.../unclaim`), never a self-service "this is me" button. First-claim-wins via atomic CAS (`findOneAndUpdate` matched on `linkedUserId: null`), idempotent for the account that already holds the claim, `409 PLAYER_ALREADY_CLAIMED` for anyone else. Only the linked account itself can unclaim — a scorer has no override.
+
+Full contract, including why `Player` has no default notification target: [docs/api.md](../docs/api.md) → `## Notifications`, `## POST /v1/player/:playerId/claim`.
+
+Covered by `tests/notificationTriggers.test.js` (8), `tests/notifications.test.js` (6), plus additions to `assignScorer`/`auctionStart`/`auctionSweep`/`careerStatsEndpoint`/`matchHistory` test files — 928/928 passing (verified 2026-09-17).
+
 ## Naming Conventions
 
 - Files: `<resource>.<role>.js` — `user.controller.js`, `user.routes.js`, `auth.middleware.js`, `match.model.js`, `otp.constants.js`. Lowercase resource, dot-separated role.
