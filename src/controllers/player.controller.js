@@ -51,6 +51,15 @@ const getCareerStats = catchAsync(async (req, res) => {
         bio: player.bio ?? null,
         battingStyle: player.battingStyle ?? null,
         bowlingStyle: player.bowlingStyle ?? null,
+        // Whether *someone* has claimed this Player (see claimPlayer below) —
+        // deliberately not who, even to the owning scorer: the scorer has no
+        // relationship to the claiming account beyond having typed this
+        // name in once, and leaking a third party's user id here would be
+        // the same "identity attached without consent" problem the
+        // public-match-view already avoids (see docs/api.md). Just enough
+        // for the scorer's own UI to say "already claimed" vs offer an
+        // invite.
+        isClaimed: player.linkedUserId != null,
         ...(career
             ? {
                 matchesPlayed: career.matchesPlayed,
@@ -157,4 +166,67 @@ const updatePlayer = catchAsync(async (req, res) => {
     }, req.t("PLAYER_UPDATED")));
 });
 
-export { getCareerStats, updatePlayer };
+// Self-claim only — deliberately not gated on `createdBy` the way
+// getCareerStats/updatePlayer are. The whole point is linking a Player to
+// the real person it represents, who is very often not the scorer that
+// typed their name in the first place. First-claim-wins: once linked, only
+// the linked account itself can unlink (see unclaimPlayer), so a scorer can
+// never silently relink someone else's claimed identity out from under
+// them.
+const claimPlayer = catchAsync(async (req, res) => {
+    const { playerId } = req.params;
+
+    const player = await Player.findOne({ _id: playerId, isDeleted: false });
+    if (!player) {
+        throw new ApiError(404, "PLAYER_NOT_FOUND");
+    }
+
+    if (player.linkedUserId?.equals(req.user._id)) {
+        return res.status(200).json(new ApiResponse(200, {
+            playerId: player._id,
+            linkedUserId: player.linkedUserId,
+        }, req.t("PLAYER_CLAIMED")));
+    }
+
+    // Atomic compare-and-swap rather than a read-then-write on the doc
+    // already fetched above — closes the race where two different accounts
+    // claim the same still-unlinked Player at the same moment.
+    const updated = await Player.findOneAndUpdate(
+        { _id: playerId, linkedUserId: null },
+        { $set: { linkedUserId: req.user._id } },
+        { new: true }
+    );
+    if (!updated) {
+        throw new ApiError(409, "PLAYER_ALREADY_CLAIMED");
+    }
+
+    return res.status(200).json(new ApiResponse(200, {
+        playerId: updated._id,
+        linkedUserId: updated.linkedUserId,
+    }, req.t("PLAYER_CLAIMED")));
+});
+
+// Only the linked account can unlink itself — same reasoning as claim being
+// self-service only. A scorer who created the Player has no say here.
+const unclaimPlayer = catchAsync(async (req, res) => {
+    const { playerId } = req.params;
+
+    const player = await Player.findOne({ _id: playerId, isDeleted: false });
+    if (!player) {
+        throw new ApiError(404, "PLAYER_NOT_FOUND");
+    }
+
+    if (!player.linkedUserId?.equals(req.user._id)) {
+        throw new ApiError(403, "PLAYER_NOT_LINKED_TO_YOU");
+    }
+
+    player.linkedUserId = null;
+    await player.save();
+
+    return res.status(200).json(new ApiResponse(200, {
+        playerId: player._id,
+        linkedUserId: null,
+    }, req.t("PLAYER_UNCLAIMED")));
+});
+
+export { getCareerStats, updatePlayer, claimPlayer, unclaimPlayer };

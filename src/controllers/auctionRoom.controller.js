@@ -9,6 +9,7 @@ import { PlayerPoolEntry } from '../models/playerPoolEntry.model.js';
 import { findOwnedTournament } from './tournament.controller.js';
 import { LOT_TIMER_MS } from '../config/auctionRules.js';
 import { emitSessionStarted, emitLotOnBlock, emitSessionCompleted, emitPaused, emitResumed } from '../sockets/auction.socket.js';
+import { notifyUsers } from '../utils/notify.js';
 
 const startAuction = catchAsync(async (req, res) => {
     const { tournamentId } = req.params;
@@ -60,6 +61,18 @@ const startAuction = catchAsync(async (req, res) => {
     // null/not-started sessionStatus the client is still sitting on.
     const io = req.app.get('io');
     if (io) emitSessionStarted(io, tournament._id, { tournamentId: tournament._id, lotCount: poolEntries.length });
+
+    // Post-commit (session already ended above) — every team owner in this
+    // tournament, not just the organizer who just started it.
+    const owners = await AuctionTeamOwner.find({ tournament: tournament._id }, 'owner');
+    await notifyUsers({
+        recipientIds: owners.map((owner) => owner.owner),
+        type: 'auction_started',
+        titleKey: 'NOTIFICATION_AUCTION_STARTED_TITLE',
+        bodyKey: 'NOTIFICATION_AUCTION_STARTED_BODY',
+        params: { tournament: tournament.name },
+        data: { type: 'auction_started', tournamentId: String(tournament._id) },
+    });
 
     return res.status(201).json(new ApiResponse(201, {
         tournamentId: tournament._id, sessionId: created._id, status: created.status, lotCount: poolEntries.length,

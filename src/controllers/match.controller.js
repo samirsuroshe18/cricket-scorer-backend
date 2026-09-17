@@ -22,6 +22,7 @@ import { resolveSyncDecision } from '../utils/resolveSync.js';
 import { generateScorecard, liveStrikeFigures } from '../utils/scorecard.js';
 import { applyCareerStatsIncrement } from '../utils/careerStats.js';
 import { generateJoinCode } from '../utils/joinCode.js';
+import { notifyUser } from '../utils/notify.js';
 import { findMatchByIdOrCode } from '../utils/matchLookup.js';
 import { resolveFixtureAfterMatch } from './fixture.controller.js';
 import { resolveBallOutcome, isSameBowler, LEGAL_DELIVERIES_PER_OVER } from '../utils/resolveOver.js';
@@ -680,6 +681,59 @@ const startInnings = catchAsync(async (req, res) => {
             );
         });
 
+        // Post-commit only, deliberately outside withTransaction: every
+        // notify* call is best-effort and must never be why this endpoint
+        // fails, and a notification firing for an attempt that ultimately
+        // rolls back (withTransaction retries the whole callback on a
+        // transient error) would be a false "it's live" push.
+        const [teamADoc, teamBDoc] = await Promise.all([
+            Team.findById(match.teamA, 'name'),
+            Team.findById(match.teamB, 'name'),
+        ]);
+        const notifyParams = { teamA: teamADoc?.name ?? '', teamB: teamBDoc?.name ?? '' };
+        const notifyData = { type: 'match_started', matchId: String(match._id) };
+
+        // "Match starting" — notify whichever of {creator, assigned scorer}
+        // didn't just call this endpoint (the delegation case). The caller
+        // already knows; the other party might not.
+        const actorId = String(req.user._id);
+        const otherPartyId =
+            (match.createdBy && String(match.createdBy) !== actorId && match.createdBy) ||
+            (match.assignedScorer && String(match.assignedScorer) !== actorId && match.assignedScorer) ||
+            null;
+        if (otherPartyId) {
+            await notifyUser({
+                recipientId: otherPartyId,
+                type: 'match_started',
+                titleKey: 'NOTIFICATION_MATCH_STARTED_TITLE',
+                bodyKey: 'NOTIFICATION_MATCH_STARTED_BODY',
+                params: notifyParams,
+                data: notifyData,
+            });
+        }
+
+        // "Your turn to bat/bowl" — the innings' openers, only if each has
+        // linked their own account (Player.linkedUserId); a no-op for the
+        // overwhelmingly common case where they haven't.
+        await Promise.all([
+            strikerDoc.linkedUserId && notifyUser({
+                recipientId: strikerDoc.linkedUserId,
+                type: 'your_turn_to_bat',
+                titleKey: 'NOTIFICATION_YOUR_TURN_TO_BAT_TITLE',
+                bodyKey: 'NOTIFICATION_YOUR_TURN_TO_BAT_BODY',
+                params: notifyParams,
+                data: notifyData,
+            }),
+            bowlerDoc.linkedUserId && notifyUser({
+                recipientId: bowlerDoc.linkedUserId,
+                type: 'your_turn_to_bowl',
+                titleKey: 'NOTIFICATION_YOUR_TURN_TO_BOWL_TITLE',
+                bodyKey: 'NOTIFICATION_YOUR_TURN_TO_BOWL_BODY',
+                params: notifyParams,
+                data: notifyData,
+            }),
+        ]);
+
         return res.status(200).json(new ApiResponse(200, {
             matchId: match._id,
             inningsId: inning._id,
@@ -936,6 +990,24 @@ const selectBowler = catchAsync(async (req, res) => {
         bowlerName,
         bowlerId,
     });
+
+    // "Your turn to bowl" — online path only, same reasoning as scoreBall's
+    // own "your turn to bat": a sync batch replay's bowler change already
+    // happened, possibly offline and hours ago.
+    if (bowler.linkedUserId) {
+        const [teamADoc, teamBDoc] = await Promise.all([
+            Team.findById(match.teamA, 'name'),
+            Team.findById(match.teamB, 'name'),
+        ]);
+        await notifyUser({
+            recipientId: bowler.linkedUserId,
+            type: 'your_turn_to_bowl',
+            titleKey: 'NOTIFICATION_YOUR_TURN_TO_BOWL_TITLE',
+            bodyKey: 'NOTIFICATION_YOUR_TURN_TO_BOWL_BODY',
+            params: { teamA: teamADoc?.name ?? '', teamB: teamBDoc?.name ?? '' },
+            data: { type: 'your_turn_to_bowl', matchId: String(match._id) },
+        });
+    }
 
     return res.status(200).json(new ApiResponse(200, {
         matchId: match._id,
@@ -1353,7 +1425,12 @@ const applyDelivery = async ({ match, inning, session, req, delivery }) => {
 
     await inning.save({ session });
 
-    return { ballEvent, over, inning, matchJustCompleted, inning1ForResult };
+    // `incomingPlayer` (the new batsman after a wicket, or null on every
+    // other delivery) is surfaced here so a caller can send a "your turn to
+    // bat" notification post-commit — never from inside this function
+    // itself, which also runs from inside a sync batch replay where the
+    // "turn" already happened, possibly hours ago offline.
+    return { ballEvent, over, inning, matchJustCompleted, inning1ForResult, incomingPlayer };
 };
 
 // Shared by scoreBall and syncMatch's ball/bowler branch: both converge on
@@ -1512,6 +1589,25 @@ const scoreBall = catchAsync(async (req, res) => {
         });
 
         const view = await finishBallDelivery({ match, req, result });
+
+        // "Your turn to bat" — only from the online path (here), never from
+        // a sync batch replay, where this same wicket may have happened
+        // offline minutes or hours earlier; a push for it now would be
+        // stale, not a real "right now" moment.
+        if (result.incomingPlayer?.linkedUserId) {
+            const [teamADoc, teamBDoc] = await Promise.all([
+                Team.findById(match.teamA, 'name'),
+                Team.findById(match.teamB, 'name'),
+            ]);
+            await notifyUser({
+                recipientId: result.incomingPlayer.linkedUserId,
+                type: 'your_turn_to_bat',
+                titleKey: 'NOTIFICATION_YOUR_TURN_TO_BAT_TITLE',
+                bodyKey: 'NOTIFICATION_YOUR_TURN_TO_BAT_BODY',
+                params: { teamA: teamADoc?.name ?? '', teamB: teamBDoc?.name ?? '' },
+                data: { type: 'your_turn_to_bat', matchId: String(match._id) },
+            });
+        }
 
         return res.status(200).json(new ApiResponse(200, buildBallResponse(result.ballEvent, result.inning, view), req.t("BALL_SCORED")));
     } catch (err) {
@@ -2536,6 +2632,21 @@ const assignScorer = catchAsync(async (req, res) => {
 
     const scorer = await User.findById(scorerId, 'fullName');
 
+    // No transaction here (see the function's two plain `.save()` calls),
+    // so nothing to wait on post-commit for — the save above already is
+    // the commit. Skipped for a self-assign, which the roster/eligibility
+    // checks above allow but doesn't need a "you've been assigned" push.
+    if (String(scorerId) !== String(req.user._id)) {
+        await notifyUser({
+            recipientId: scorerId,
+            type: 'scorer_assigned',
+            titleKey: 'NOTIFICATION_SCORER_ASSIGNED_TITLE',
+            bodyKey: 'NOTIFICATION_SCORER_ASSIGNED_BODY',
+            params: { teamA: teamA.name, teamB: teamB.name },
+            data: { type: 'scorer_assigned', matchId: String(match._id) },
+        });
+    }
+
     return res.status(200).json(new ApiResponse(200, {
         matchId: match._id,
         assignedScorer: { id: scorerId, name: scorer?.fullName ?? null },
@@ -2658,6 +2769,12 @@ const getMatchHistory = catchAsync(async (req, res) => {
                 ? { id: match.assignedScorer, name: userNameById.get(String(match.assignedScorer)) ?? null }
                 : null,
             createdAt: match.createdAt,
+            // 'local' / 'syncing' / 'synced' / 'conflict' — see Match.syncStatus.
+            // Always present (every Match has one), not gated by status: a
+            // scorer needs to see a stuck 'conflict' on a match's card
+            // without re-entering the scoring console, per the offline-sync
+            // reject-and-alert design.
+            syncStatus: match.syncStatus,
             currentInnings: currentInning
                 ? {
                     inningsNumber: currentInning.inningsNumber,

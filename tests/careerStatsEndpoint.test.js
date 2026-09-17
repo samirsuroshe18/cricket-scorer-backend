@@ -72,6 +72,26 @@ describe('GET /:playerId/career-stats', () => {
     });
   });
 
+  it("reports isClaimed true once the player has linked an account, without naming who", async () => {
+    const { token } = await createTestUser();
+    const { token: claimerToken } = await createTestUser({ email: 'claimer-cs@example.com' });
+    const matchId = await createMatch(app, token, { totalOvers: 1 });
+    await startLiveInnings(app, token, matchId, { strikerName: 'Rahul' });
+    const rahul = await Player.findOne({ nameLower: 'rahul' });
+
+    const before = await getCareerStats(token, rahul._id.toString());
+    expect(before.body.data.isClaimed).toBe(false);
+
+    await request(app)
+      .post(`/api/v1/player/${rahul._id}/claim`)
+      .set('Authorization', `Bearer ${claimerToken}`)
+      .send();
+
+    const after = await getCareerStats(token, rahul._id.toString());
+    expect(after.body.data.isClaimed).toBe(true);
+    expect(after.body.data.linkedUserId).toBeUndefined();
+  });
+
   // Exact worked-example verification (the "50 runs, average 50" case) lives
   // in careerStatsIntegration.test.js, which already proves the STORED sums
   // land correctly. This test is scoped to a narrower claim: that the READ

@@ -63,6 +63,7 @@ import teamRouter from './routes/team.routes.js';
 import organizationRouter from './routes/organization.routes.js';
 import tournamentRouter from './routes/tournament.routes.js';
 import searchRouter from './routes/search.routes.js';
+import notificationRouter from './routes/notification.routes.js';
 
 //Routes declaration
 app.use("/api/v1/user", userRouter);
@@ -73,6 +74,7 @@ app.use("/api/v1/team", teamRouter);
 app.use("/api/v1/tournament", tournamentRouter);
 app.use("/api/v1/organization", organizationRouter);
 app.use("/api/v1/search", searchRouter);
+app.use("/api/v1/notifications", notificationRouter);
 
 // Custom error handeling
 app.use(errorHandler)

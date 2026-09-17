@@ -1,6 +1,7 @@
 import request from 'supertest';
 import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
+import { randomUUID } from 'node:crypto';
 import { createMatch, startLiveInnings, scoreDotBall } from './helpers/matchSetup.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 
@@ -219,5 +220,39 @@ describe('GET /v1/match/history', () => {
 
     expect(match.status).toBe('abandoned');
     expect(match.currentInnings).toBeNull();
+  });
+
+  it("reports syncStatus 'local' for a match never touched by the sync endpoint", async () => {
+    const { token } = await createTestUser({ email: 'syncstatus-local@example.com' });
+    await createMatch(app, token);
+
+    const res = await history(token);
+
+    expect(res.body.data.matches[0].syncStatus).toBe('local');
+  });
+
+  it("reports syncStatus 'conflict' after a genuine sync conflict, without needing to reopen the match", async () => {
+    const { token } = await createTestUser({ email: 'syncstatus-conflict@example.com' });
+    const matchId = await createMatch(app, token);
+    await startLiveInnings(app, token, matchId);
+    await scoreDotBall(app, token, matchId);
+    await scoreDotBall(app, token, matchId);
+
+    // Same genuine-conflict shape as syncMatch.test.js: the client claims to
+    // be ahead of a server that only has two balls, which can only be a
+    // real conflict, not a lost-response resume.
+    await request(app)
+      .post(`/api/v1/match/${matchId}/sync`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        inningsNumber: 1,
+        baseAbsoluteBallSeq: 5,
+        events: [{ type: 'ball', runs: 0, idempotencyKey: randomUUID() }],
+      });
+
+    const res = await history(token);
+    const match = res.body.data.matches.find((m) => m.matchId === matchId);
+
+    expect(match.syncStatus).toBe('conflict');
   });
 });
