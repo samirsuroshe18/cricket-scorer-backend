@@ -5,6 +5,7 @@ import { createTestUser } from './helpers/authTestUser.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 import { AuctionSession } from '../src/models/auctionSession.model.js';
 import { AuctionLot } from '../src/models/auctionLot.model.js';
+import { Notification } from '../src/models/notification.model.js';
 
 let app;
 
@@ -111,5 +112,28 @@ describe('POST /:tournamentId/auction/start', () => {
     expect(emit.mock.calls[0][0]).toBe('auction:sessionStarted');
     expect(emit.mock.calls[0][1].tournamentId.toString()).toBe(tournamentId);
     expect(emit.mock.calls[0][1].lotCount).toBe(2);
+  });
+
+  it('notifies every team owner that the auction has started', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'notifyowner@example.com' });
+    const { user: member } = await createTestUser({ email: 'notifymember@example.com' });
+    const orgRes = await createOrg(ownerToken, { name: 'Notify CC' });
+    const orgId = orgRes.body.data.id;
+    await addMember(ownerToken, orgId, { email: 'notifymember@example.com' });
+    const tournamentRes = await createTournament(ownerToken, orgId, { name: 'Notify Cup', format: 'league' });
+    const tournamentId = tournamentRes.body.data.id;
+    const teamRes = await createOrgTeam(ownerToken, orgId, { name: 'Notify XI' });
+    await addTeamToTournament(ownerToken, tournamentId, teamRes.body.data.id);
+    await patchSetup(ownerToken, tournamentId, {
+      owners: [{ teamId: teamRes.body.data.id, userId: member._id.toString(), budget: 100000 }],
+    });
+    await registerPool(ownerToken, tournamentId, { playerName: 'Test Player', basePrice: 1000 });
+
+    await startAuction(ownerToken, tournamentId);
+
+    const notification = await Notification.findOne({ recipient: member._id, type: 'auction_started' });
+    expect(notification).not.toBeNull();
+    expect(notification.data.tournamentId).toBe(tournamentId);
+    expect(notification.body).toContain('Notify Cup');
   });
 });

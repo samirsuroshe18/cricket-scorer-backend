@@ -4,6 +4,7 @@ import { createTestUser } from './helpers/authTestUser.js';
 import { createMatch } from './helpers/matchSetup.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 import { Match } from '../src/models/match.model.js';
+import { Notification } from '../src/models/notification.model.js';
 
 describe('PATCH /:matchId/scorer', () => {
   let app;
@@ -139,6 +140,27 @@ describe('PATCH /:matchId/scorer', () => {
     const res = await assignScorer(ownerToken, matchId, { scorerId: String(member._id) });
 
     expect(res.status).toBe(200);
+  });
+
+  it('notifies the newly assigned scorer', async () => {
+    const { ownerToken, member, matchId } = await setupOrgMatch();
+
+    await assignScorer(ownerToken, matchId, { scorerId: String(member._id) });
+
+    const notification = await Notification.findOne({ recipient: member._id, type: 'scorer_assigned' });
+    expect(notification).not.toBeNull();
+    expect(notification.data.matchId).toBe(matchId);
+  });
+
+  it('sends no notification when clearing an assignment', async () => {
+    const { ownerToken, member, matchId } = await setupOrgMatch();
+    await assignScorer(ownerToken, matchId, { scorerId: String(member._id) });
+    await Notification.deleteMany({});
+
+    await assignScorer(ownerToken, matchId, { scorerId: null });
+
+    const count = await Notification.countDocuments({ type: 'scorer_assigned' });
+    expect(count).toBe(0);
   });
 
   it('rejects with MATCH_NOT_FOUND for an unknown matchId', async () => {

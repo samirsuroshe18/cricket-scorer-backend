@@ -2,7 +2,9 @@ import mongoose from 'mongoose';
 import { AuctionSession } from '../models/auctionSession.model.js';
 import { AuctionLot } from '../models/auctionLot.model.js';
 import { AuctionTeamOwner } from '../models/auctionTeamOwner.model.js';
+import { Player } from '../models/player.model.js';
 import { emitLotResolved } from '../sockets/auction.socket.js';
+import { notifyUser } from '../utils/notify.js';
 
 const SWEEP_INTERVAL_MS = 1000;
 
@@ -73,6 +75,11 @@ export const resolveExpiredLots = async (io) => {
                     outcome = {
                         lotId: lot._id, outcome: 'sold', soldPrice: updated.soldPrice, soldTo: updated.soldTo,
                         spent: updatedOwner.spent, remaining: updatedOwner.budget - updatedOwner.spent,
+                        // Captured here rather than re-queried post-commit —
+                        // `lot` (unlike `outcome`) is scoped to this
+                        // transaction closure, so this is the only place
+                        // that has it without a second AuctionLot lookup.
+                        playerId: lot.player,
                     };
                 } else {
                     const updated = await AuctionLot.findOneAndUpdate(
@@ -90,6 +97,34 @@ export const resolveExpiredLots = async (io) => {
 
         if (outcome && io) {
             emitLotResolved(io, auctionSession.tournament, outcome);
+        }
+
+        // "You've been sold" reinterpreted as "you won the bid" — the actual
+        // sold Player has no account to notify (see Player.linkedUserId's
+        // doc comment); the winning AuctionTeamOwner does. Post-commit
+        // (session already ended above), and deliberately outside the
+        // `if (outcome && io)` guard above: this must still fire even if no
+        // socket server is attached (e.g. a test harness), and must not
+        // fire at all for the 'unsold' branch.
+        if (outcome?.outcome === 'sold') {
+            const [player, teamOwner] = await Promise.all([
+                Player.findById(outcome.playerId, 'name'),
+                AuctionTeamOwner.findById(outcome.soldTo, 'owner'),
+            ]);
+            if (teamOwner?.owner) {
+                await notifyUser({
+                    recipientId: teamOwner.owner,
+                    type: 'lot_sold',
+                    titleKey: 'NOTIFICATION_LOT_SOLD_TITLE',
+                    bodyKey: 'NOTIFICATION_LOT_SOLD_BODY',
+                    params: { player: player?.name ?? '', price: String(outcome.soldPrice) },
+                    data: {
+                        type: 'lot_sold',
+                        tournamentId: String(auctionSession.tournament),
+                        lotId: String(outcome.lotId),
+                    },
+                });
+            }
         }
     }
 };

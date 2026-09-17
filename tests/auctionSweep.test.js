@@ -10,6 +10,7 @@ import { PlayerPoolEntry } from '../src/models/playerPoolEntry.model.js';
 import { AuctionSession } from '../src/models/auctionSession.model.js';
 import { AuctionLot } from '../src/models/auctionLot.model.js';
 import { AuctionTeamOwner } from '../src/models/auctionTeamOwner.model.js';
+import { Notification } from '../src/models/notification.model.js';
 
 describe('resolveExpiredLots', () => {
   beforeAll(async () => { await connectTestDb(); });
@@ -104,6 +105,25 @@ describe('resolveExpiredLots', () => {
     // Incremented exactly once — an unguarded double resolution would have
     // double-charged this owner's spend.
     expect(updatedOwner.spent).toBe(5500);
+  });
+
+  it('notifies the winning owner, not the sold player (Player has no linkable account)', async () => {
+    const { teamOwner } = await seed({ withBidder: true });
+
+    await resolveExpiredLots(null);
+
+    const notification = await Notification.findOne({ recipient: teamOwner.owner, type: 'lot_sold' });
+    expect(notification).not.toBeNull();
+    expect(notification.body).toContain('Rohit Sharma');
+  });
+
+  it('sends no lot_sold notification for an unsold lot', async () => {
+    const { teamOwner } = await seed({ withBidder: false });
+
+    await resolveExpiredLots(null);
+
+    const notification = await Notification.findOne({ recipient: teamOwner.owner, type: 'lot_sold' });
+    expect(notification).toBeNull();
   });
 
   it('decides eligibility from a single read taken inside the transaction, never a value captured before it opened', async () => {

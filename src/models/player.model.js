@@ -33,9 +33,19 @@ const playerSchema = new Schema(
     // Team.players, not a field here.
     createdBy:    { type: Schema.Types.ObjectId, ref: 'User' },
     isDeleted:    { type: Boolean, default: false },
+    // Self-claimed only — see PATCH-equivalent claim/unclaim endpoints in
+    // player.controller.js. Never set by the scorer who created this Player:
+    // this is what a notification (your turn to bat/bowl, you've been sold)
+    // gets sent to, so linking it without the account owner's own action
+    // would mean pushing to someone who never consented. Null on every
+    // Player until its real-world person claims it themselves; most named
+    // players never will, same as `createdBy`'s own comment already notes.
+    linkedUserId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
   },
   { timestamps: true }
 );
+
+playerSchema.index({ linkedUserId: 1 }, { sparse: true });
 
 // Unique so the find-or-create upsert in match.controller.js is race-safe —
 // without it, two concurrent calls naming the same new player for the first
