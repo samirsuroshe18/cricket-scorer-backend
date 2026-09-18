@@ -1,4 +1,3 @@
-import fs from 'fs';
 import catchAsync from '../utils/catchAsync.js';
 import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
@@ -9,6 +8,7 @@ import { User } from '../models/user.model.js';
 import { canAccessTeam, getMemberOrgIds } from '../utils/organizationAccess.js';
 import { DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT } from './match.controller.js';
 import { uploadOnCloudinary } from '../utils/cloudinary.js';
+import { discardStagedFile } from '../utils/discardStagedFile.js';
 
 // Shared by getTeamProfile/getTeamMatches: both need the team to exist and
 // belong to the caller before doing anything else. A Team is only ever
@@ -198,18 +198,6 @@ const updateTeamOrganization = catchAsync(async (req, res) => {
         organization: team.organization,
     }, req.t("TEAM_ORGANIZATION_UPDATED")));
 });
-
-// multer has already staged the file to disk by the time this runs, so every
-// early exit before uploadOnCloudinary (which deletes it itself) has to
-// discard it — otherwise a rejected upload leaves a 5MB file behind.
-// ApiError's `localFilePath` option (unlinked by errorHandler) would cover the
-// ApiError paths, but a malformed teamId raises a Mongoose CastError, which
-// carries no such option, so the cleanup is done explicitly here instead.
-const discardStagedFile = async (file) => {
-    if (file?.path) {
-        await fs.promises.unlink(file.path).catch(() => {});
-    }
-};
 
 // Same file-upload path as updateOrganizationLogo: `upload.single('file')`
 // stages and validates (type/size), Cloudinary hosts it. The previous logo is
