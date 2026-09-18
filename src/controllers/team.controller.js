@@ -46,6 +46,7 @@ const getTeamProfile = catchAsync(async (req, res) => {
         teamId: team._id,
         name: team.name,
         shortName: team.shortName ?? null,
+        logoUrl: team.logoUrl ?? null,
         organization: toOrganizationSummary(team.organization),
         // No feature currently soft-deletes a Player, but the roster
         // shouldn't surface one if that ever changes — same defensive
@@ -90,6 +91,7 @@ const getTeamMatches = catchAsync(async (req, res) => {
     const involvedTeamIds = [...new Set(matches.flatMap((match) => [String(match.teamA), String(match.teamB)]))];
     const involvedTeams = await Team.find({ _id: { $in: involvedTeamIds } });
     const teamNameById = new Map(involvedTeams.map((team) => [String(team._id), team.name]));
+    const teamLogoById = new Map(involvedTeams.map((team) => [String(team._id), team.logoUrl ?? null]));
 
     // Same batching reasoning as involvedTeamIds above — one lookup for
     // every createdBy/assignedScorer this page needs a display name for.
@@ -103,8 +105,16 @@ const getTeamMatches = catchAsync(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, {
         matches: matches.map((match) => ({
             matchId: match._id,
-            teamA: { id: match.teamA, name: teamNameById.get(String(match.teamA)) ?? null },
-            teamB: { id: match.teamB, name: teamNameById.get(String(match.teamB)) ?? null },
+            teamA: {
+                id: match.teamA,
+                name: teamNameById.get(String(match.teamA)) ?? null,
+                logoUrl: teamLogoById.get(String(match.teamA)) ?? null,
+            },
+            teamB: {
+                id: match.teamB,
+                name: teamNameById.get(String(match.teamB)) ?? null,
+                logoUrl: teamLogoById.get(String(match.teamB)) ?? null,
+            },
             joinCode: match.joinCode ?? null,
             totalOvers: match.totalOvers,
             status: match.status,
@@ -142,6 +152,7 @@ const listMyTeams = catchAsync(async (req, res) => {
             id: team._id,
             name: team.name,
             shortName: team.shortName ?? null,
+            logoUrl: team.logoUrl ?? null,
             organization: toOrganizationSummary(team.organization),
         })),
     }, req.t("MY_TEAMS_FETCHED")));
