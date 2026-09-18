@@ -159,6 +159,7 @@
   "TEAM_ALREADY_IN_ORGANIZATION": "वह टीम पहले से ही किसी संगठन से जुड़ी है",
   "TEAM_ORGANIZATION_UPDATED": "टीम का संगठन अपडेट किया गया",
   "TEAM_LOGO_UPDATED": "टीम का लोगो अपडेट किया गया",
+  "MY_CAREER_STATS_FETCHED": "करियर के आँकड़े प्राप्त हुए",
   "ORGANIZATION_DELETED": "संगठन हटाया गया",
   "ORG_LOGO_UPDATED": "संगठन का लोगो अपडेट किया गया",
   "LOGO_REQUIRED": "कृपया अपलोड करने के लिए एक इमेज चुनें",

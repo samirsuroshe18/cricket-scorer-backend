@@ -159,6 +159,7 @@
   "TEAM_ALREADY_IN_ORGANIZATION": "That team already belongs to an organization",
   "TEAM_ORGANIZATION_UPDATED": "Team organization updated",
   "TEAM_LOGO_UPDATED": "Team logo updated",
+  "MY_CAREER_STATS_FETCHED": "Career stats fetched",
   "ORGANIZATION_DELETED": "Organization deleted",
   "ORG_LOGO_UPDATED": "Organization logo updated",
   "LOGO_REQUIRED": "Please choose an image to upload",
