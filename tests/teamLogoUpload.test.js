@@ -29,14 +29,30 @@ const PNG_BYTES = Buffer.concat([
 ]);
 
 const UPLOAD_DIR = path.join(process.cwd(), 'uploads', 'temp');
-const stagedFileCount = () => fs.readdirSync(UPLOAD_DIR).length;
+
+// uploads/temp is shared with other test files running in parallel jest
+// workers (multerMiddleware.test.js stages real files there), so a raw count
+// can move for unrelated reasons. Compare contents instead: a file staged by
+// THIS request that is still present after a short poll is a genuine leak,
+// whereas a neighbouring worker's file comes and goes.
+const snapshotStaged = () => new Set(fs.readdirSync(UPLOAD_DIR));
+const leakedSince = async (before, timeoutMs = 500) => {
+  const deadline = Date.now() + timeoutMs;
+  let leaked;
+  do {
+    leaked = fs.readdirSync(UPLOAD_DIR).filter((name) => !before.has(name));
+    if (leaked.length === 0) return leaked;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  } while (Date.now() < deadline);
+  return leaked;
+};
 
 describe('POST /v1/team/:teamId/logo', () => {
   let app;
 
   beforeAll(async () => {
     await connectTestDb();
-    app = buildTestApp({ withTeam: true });
+    app = buildTestApp({ withTeam: true, withOrganization: true });
   });
 
   beforeEach(() => {
@@ -104,7 +120,7 @@ describe('POST /v1/team/:teamId/logo', () => {
     const { token: ownerToken } = await createTestUser({ email: 'owner-logo@example.com' });
     const teamId = await makeTeam(ownerToken);
     const { token: strangerToken } = await createTestUser({ email: 'stranger-logo@example.com' });
-    const before = stagedFileCount();
+    const before = snapshotStaged();
 
     const res = await uploadLogo(strangerToken, teamId).attach('file', PNG_BYTES, {
       filename: 'logo.png',
@@ -114,9 +130,39 @@ describe('POST /v1/team/:teamId/logo', () => {
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('TEAM_NOT_OWNED');
     expect(uploadOnCloudinaryMock).not.toHaveBeenCalled();
-    expect(stagedFileCount()).toBe(before);
+    expect(await leakedSince(before)).toEqual([]);
     const stored = await Team.findById(teamId);
     expect(stored.logoUrl).toBeNull();
+  });
+
+  it('200s for a non-creator member of the team\'s organization and stores the logo', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'org-owner-logo@example.com' });
+    const { token: memberToken } = await createTestUser({ email: 'org-member-logo@example.com' });
+    const orgRes = await request(app)
+      .post('/api/v1/organization')
+      .set(auth(ownerToken))
+      .send({ name: 'Riverside CC' });
+    const orgId = orgRes.body.data.id;
+    await request(app)
+      .post(`/api/v1/organization/${orgId}/members`)
+      .set(auth(ownerToken))
+      .send({ email: 'org-member-logo@example.com' });
+    const teamRes = await request(app)
+      .post(`/api/v1/organization/${orgId}/teams`)
+      .set(auth(ownerToken))
+      .send({ name: 'Riverside U19' });
+    const teamId = teamRes.body.data.id;
+
+    const res = await uploadLogo(memberToken, teamId).attach('file', PNG_BYTES, {
+      filename: 'logo.png',
+      contentType: 'image/png',
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({ id: teamId, logoUrl: LOGO_URL });
+    expect(uploadOnCloudinaryMock).toHaveBeenCalledTimes(1);
+    const stored = await Team.findById(teamId);
+    expect(stored.logoUrl).toBe(LOGO_URL);
   });
 
   it('500s with LOGO_UPLOAD_FAILED when Cloudinary fails, leaving logoUrl unchanged', async () => {

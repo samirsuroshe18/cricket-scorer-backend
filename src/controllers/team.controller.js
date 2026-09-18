@@ -202,6 +202,9 @@ const updateTeamOrganization = catchAsync(async (req, res) => {
 // multer has already staged the file to disk by the time this runs, so every
 // early exit before uploadOnCloudinary (which deletes it itself) has to
 // discard it — otherwise a rejected upload leaves a 5MB file behind.
+// ApiError's `localFilePath` option (unlinked by errorHandler) would cover the
+// ApiError paths, but a malformed teamId raises a Mongoose CastError, which
+// carries no such option, so the cleanup is done explicitly here instead.
 const discardStagedFile = async (file) => {
     if (file?.path) {
         await fs.promises.unlink(file.path).catch(() => {});
