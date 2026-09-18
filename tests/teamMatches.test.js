@@ -1,6 +1,7 @@
 import request from 'supertest';
 import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
+import { startLiveInnings, scoreDotBall } from './helpers/matchSetup.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 
 // Past results for a team: identical shape/validation to GET /v1/match/history
@@ -145,5 +146,51 @@ describe('GET /v1/team/:teamId/matches', () => {
     const match = res.body.data.matches.find((m) => m.matchId === matchId);
     expect(match.createdBy).toMatchObject({ id: String(owner._id) });
     expect(match.assignedScorer).toMatchObject({ id: String(scorer._id) });
+  });
+
+  // The client's MatchHistoryItem parses syncStatus as a non-null String, so a
+  // missing field here made the whole "Past results" list fail to parse.
+  it("carries syncStatus 'local' and a null currentInnings for a match that has not started", async () => {
+    const { token } = await createTestUser();
+    const created = await createMatch(token, { teamAName: 'Mumbai Indians', teamBName: 'Chennai Super Kings' });
+    const teamId = created.body.data.teamA.id;
+
+    const res = await teamMatches(token, teamId);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.matches[0].syncStatus).toBe('local');
+    expect(res.body.data.matches[0].currentInnings).toBeNull();
+  });
+
+  it("carries the live innings' running score for a match in progress", async () => {
+    const { token } = await createTestUser();
+    const created = await createMatch(token, { teamAName: 'Mumbai Indians', teamBName: 'Chennai Super Kings' });
+    const teamId = created.body.data.teamA.id;
+    const matchId = created.body.data.matchId;
+    await startLiveInnings(app, token, matchId);
+    await scoreDotBall(app, token, matchId, { runs: 4 });
+    await scoreDotBall(app, token, matchId, { runs: 1 });
+
+    const res = await teamMatches(token, teamId);
+    const match = res.body.data.matches.find((m) => m.matchId === matchId);
+
+    expect(match.status).toBe('live');
+    expect(match.currentInnings).toEqual({ inningsNumber: 1, totalRuns: 5, wickets: 0, overs: '0.2' });
+  });
+
+  it('does not report a currentInnings score for an abandoned match', async () => {
+    const { token } = await createTestUser();
+    const created = await createMatch(token, { teamAName: 'Mumbai Indians', teamBName: 'Chennai Super Kings' });
+    const teamId = created.body.data.teamA.id;
+    const matchId = created.body.data.matchId;
+    await startLiveInnings(app, token, matchId);
+    await scoreDotBall(app, token, matchId, { runs: 2 });
+    await request(app).post(`/api/v1/match/${matchId}/abandon`).set('Authorization', `Bearer ${token}`).send();
+
+    const res = await teamMatches(token, teamId);
+    const match = res.body.data.matches.find((m) => m.matchId === matchId);
+
+    expect(match.status).toBe('abandoned');
+    expect(match.currentInnings).toBeNull();
   });
 });
