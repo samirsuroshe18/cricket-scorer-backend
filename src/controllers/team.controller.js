@@ -1,3 +1,4 @@
+import fs from 'fs';
 import catchAsync from '../utils/catchAsync.js';
 import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
@@ -7,6 +8,7 @@ import { Organization } from '../models/organization.model.js';
 import { User } from '../models/user.model.js';
 import { canAccessTeam, getMemberOrgIds } from '../utils/organizationAccess.js';
 import { DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT } from './match.controller.js';
+import { uploadOnCloudinary } from '../utils/cloudinary.js';
 
 // Shared by getTeamProfile/getTeamMatches: both need the team to exist and
 // belong to the caller before doing anything else. A Team is only ever
@@ -197,4 +199,48 @@ const updateTeamOrganization = catchAsync(async (req, res) => {
     }, req.t("TEAM_ORGANIZATION_UPDATED")));
 });
 
-export { getTeamProfile, getTeamMatches, listMyTeams, updateTeamOrganization };
+// multer has already staged the file to disk by the time this runs, so every
+// early exit before uploadOnCloudinary (which deletes it itself) has to
+// discard it — otherwise a rejected upload leaves a 5MB file behind.
+const discardStagedFile = async (file) => {
+    if (file?.path) {
+        await fs.promises.unlink(file.path).catch(() => {});
+    }
+};
+
+// Same file-upload path as updateOrganizationLogo: `upload.single('file')`
+// stages and validates (type/size), Cloudinary hosts it. The previous logo is
+// left orphaned on Cloudinary, the same tradeoff updateProfile and
+// updateOrganizationLogo already make. Ownership is findOwnedTeam's own rule
+// (creator or org member), so anyone who can open the team profile can set
+// its logo.
+const updateTeamLogo = catchAsync(async (req, res) => {
+    const { teamId } = req.params;
+
+    let team;
+    try {
+        team = await findOwnedTeam(teamId, req.user._id);
+    } catch (error) {
+        await discardStagedFile(req.file);
+        throw error;
+    }
+
+    if (!req.file) {
+        throw new ApiError(400, "LOGO_REQUIRED");
+    }
+
+    const uploadResult = await uploadOnCloudinary(req.file.path);
+    if (!uploadResult?.secure_url) {
+        throw new ApiError(500, "LOGO_UPLOAD_FAILED");
+    }
+
+    team.logoUrl = uploadResult.secure_url;
+    await team.save();
+
+    return res.status(200).json(new ApiResponse(200, {
+        id: team._id,
+        logoUrl: team.logoUrl,
+    }, req.t("TEAM_LOGO_UPDATED")));
+});
+
+export { getTeamProfile, getTeamMatches, listMyTeams, updateTeamOrganization, updateTeamLogo };
