@@ -10,6 +10,7 @@ import { Tournament, TOURNAMENT_FORMATS } from '../models/tournament.model.js';
 import { Match } from '../models/match.model.js';
 import { buildLeaderboardsForMatchIds } from '../utils/leaderboardQuery.js';
 import { uploadOnCloudinary } from '../utils/cloudinary.js';
+import { discardStagedFile } from '../utils/discardStagedFile.js';
 
 const asString = (value) => (typeof value === 'string' ? value : '');
 
@@ -269,7 +270,14 @@ const deleteOrganization = catchAsync(async (req, res) => {
 // introduced here.
 const updateOrganizationLogo = catchAsync(async (req, res) => {
     const { orgId } = req.params;
-    const org = await findOwnedOrganization(orgId, req.user._id);
+
+    let org;
+    try {
+        org = await findOwnedOrganization(orgId, req.user._id);
+    } catch (error) {
+        await discardStagedFile(req.file);
+        throw error;
+    }
 
     if (!req.file) {
         throw new ApiError(400, "LOGO_REQUIRED");

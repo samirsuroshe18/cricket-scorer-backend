@@ -6,6 +6,8 @@ import { Match } from '../models/match.model.js';
 import { Organization } from '../models/organization.model.js';
 import { canAccessTeam, getMemberOrgIds } from '../utils/organizationAccess.js';
 import { DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT, serializeMatchHistoryItems } from './match.controller.js';
+import { uploadOnCloudinary } from '../utils/cloudinary.js';
+import { discardStagedFile } from '../utils/discardStagedFile.js';
 
 // Shared by getTeamProfile/getTeamMatches: both need the team to exist and
 // belong to the caller before doing anything else. A Team is only ever
@@ -45,6 +47,7 @@ const getTeamProfile = catchAsync(async (req, res) => {
         teamId: team._id,
         name: team.name,
         shortName: team.shortName ?? null,
+        logoUrl: team.logoUrl ?? null,
         organization: toOrganizationSummary(team.organization),
         // No feature currently soft-deletes a Player, but the roster
         // shouldn't surface one if that ever changes — same defensive
@@ -111,6 +114,7 @@ const listMyTeams = catchAsync(async (req, res) => {
             id: team._id,
             name: team.name,
             shortName: team.shortName ?? null,
+            logoUrl: team.logoUrl ?? null,
             organization: toOrganizationSummary(team.organization),
         })),
     }, req.t("MY_TEAMS_FETCHED")));
@@ -155,4 +159,39 @@ const updateTeamOrganization = catchAsync(async (req, res) => {
     }, req.t("TEAM_ORGANIZATION_UPDATED")));
 });
 
-export { getTeamProfile, getTeamMatches, listMyTeams, updateTeamOrganization };
+// Same file-upload path as updateOrganizationLogo: `upload.single('file')`
+// stages and validates (type/size), Cloudinary hosts it. The previous logo is
+// left orphaned on Cloudinary, the same tradeoff updateProfile and
+// updateOrganizationLogo already make. Ownership is findOwnedTeam's own rule
+// (creator or org member), so anyone who can open the team profile can set
+// its logo.
+const updateTeamLogo = catchAsync(async (req, res) => {
+    const { teamId } = req.params;
+
+    let team;
+    try {
+        team = await findOwnedTeam(teamId, req.user._id);
+    } catch (error) {
+        await discardStagedFile(req.file);
+        throw error;
+    }
+
+    if (!req.file) {
+        throw new ApiError(400, "LOGO_REQUIRED");
+    }
+
+    const uploadResult = await uploadOnCloudinary(req.file.path);
+    if (!uploadResult?.secure_url) {
+        throw new ApiError(500, "LOGO_UPLOAD_FAILED");
+    }
+
+    team.logoUrl = uploadResult.secure_url;
+    await team.save();
+
+    return res.status(200).json(new ApiResponse(200, {
+        id: team._id,
+        logoUrl: team.logoUrl,
+    }, req.t("TEAM_LOGO_UPDATED")));
+});
+
+export { getTeamProfile, getTeamMatches, listMyTeams, updateTeamOrganization, updateTeamLogo };

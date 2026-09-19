@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import request from 'supertest';
 import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
@@ -370,6 +372,58 @@ describe('POST /v1/organization/:orgId/logo', () => {
 
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('ORG_NOT_FOUND');
+  });
+
+  describe('a rejected upload leaves no staged file behind', () => {
+    // Signature bytes sniffImageType recognises (see multerMiddleware.test.js).
+    const PNG_BYTES = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.alloc(32),
+    ]);
+    const UPLOAD_DIR = path.join(process.cwd(), 'uploads', 'temp');
+
+    // Set-difference with a short poll rather than a count: other test files
+    // stage into this same directory from parallel jest workers, so only a
+    // file that appeared during this request and stays is a real leak.
+    const snapshotStaged = () => new Set(fs.readdirSync(UPLOAD_DIR));
+    const leakedSince = async (before, timeoutMs = 500) => {
+      const deadline = Date.now() + timeoutMs;
+      let leaked = [];
+      do {
+        leaked = fs.readdirSync(UPLOAD_DIR).filter((name) => !before.has(name));
+        if (leaked.length === 0) return leaked;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      } while (Date.now() < deadline);
+      return leaked;
+    };
+
+    const attachPng = (req) =>
+      req.attach('file', PNG_BYTES, { filename: 'logo.png', contentType: 'image/png' });
+
+    it("for a non-owner's 403", async () => {
+      const { token: ownerToken } = await createTestUser({ email: 'owner-leak@example.com' });
+      const createRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+      const orgId = createRes.body.data.id;
+      const { token: strangerToken } = await createTestUser({ email: 'stranger-leak@example.com' });
+      const before = snapshotStaged();
+
+      const res = await attachPng(uploadLogo(strangerToken, orgId));
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('ORG_NOT_OWNED');
+      expect(await leakedSince(before)).toEqual([]);
+    });
+
+    it("for a missing org's 404", async () => {
+      const { token } = await createTestUser();
+      const before = snapshotStaged();
+
+      const res = await attachPng(uploadLogo(token, '665f3b1c2d3e4f5a6b7c8d90'));
+
+      expect(res.status).toBe(404);
+      expect(res.body.code).toBe('ORG_NOT_FOUND');
+      expect(await leakedSince(before)).toEqual([]);
+    });
   });
 });
 

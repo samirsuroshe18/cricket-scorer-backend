@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { changeCurrentPassword, forgotPassword, getCurrentUser, getUserLanguage, loginUser, logoutUser, refreshAccessToken, registerUser, resendOtp, setPassword, updateFCMToken, updateProfile, updateUserLanguage, verifyOtp } from "../controllers/user.controller.js";
+import { getMyCareerStats } from "../controllers/player.controller.js";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
 import { upload } from "../middlewares/multer.middleware.js";
 import { authLimiter } from "../middlewares/rateLimit.middleware.js";
@@ -22,5 +23,6 @@ router.route('/update-fcm').post(verifyJwt, updateFCMToken);
 router.route('/get-current-user').get(verifyJwt, getCurrentUser);
 router.route('/change-password').post(verifyJwt, changeCurrentPassword);
 router.route('/update-profile').post(verifyJwt, upload.single('file'), updateProfile);
+router.route('/me/career-stats').get(verifyJwt, getMyCareerStats);
 
 export default router;

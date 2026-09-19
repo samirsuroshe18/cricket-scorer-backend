@@ -218,8 +218,8 @@ const createMatch = catchAsync(async (req, res) => {
         // The share code, returned here because this is the only moment the
         // scorer's client learns it — nothing else it calls reports one.
         joinCode: match.joinCode,
-        teamA: { id: teamA._id, name: teamA.name },
-        teamB: { id: teamB._id, name: teamB.name },
+        teamA: { id: teamA._id, name: teamA.name, logoUrl: teamA.logoUrl ?? null },
+        teamB: { id: teamB._id, name: teamB.name, logoUrl: teamB.logoUrl ?? null },
         totalOvers: match.totalOvers,
         tossWinner: match.tossWinner ?? null,
         tossDecision: match.tossDecision ?? null,
@@ -2700,6 +2700,7 @@ const serializeMatchHistoryItems = async (matches) => {
     const teamIds = [...new Set(matches.flatMap((match) => [String(match.teamA), String(match.teamB)]))];
     const teams = await Team.find({ _id: { $in: teamIds } });
     const teamNameById = new Map(teams.map((team) => [String(team._id), team.name]));
+    const teamLogoById = new Map(teams.map((team) => [String(team._id), team.logoUrl ?? null]));
 
     // Same batching reasoning as teamIds above — one lookup for every
     // createdBy/assignedScorer this page needs a display name for.
@@ -2737,8 +2738,16 @@ const serializeMatchHistoryItems = async (matches) => {
             // into the scoring console for a still-live match, which needs
             // teamA/teamB ids the same shape `create` originally returned
             // them in, not just display names.
-            teamA: { id: match.teamA, name: teamNameById.get(String(match.teamA)) ?? null },
-            teamB: { id: match.teamB, name: teamNameById.get(String(match.teamB)) ?? null },
+            teamA: {
+                id: match.teamA,
+                name: teamNameById.get(String(match.teamA)) ?? null,
+                logoUrl: teamLogoById.get(String(match.teamA)) ?? null,
+            },
+            teamB: {
+                id: match.teamB,
+                name: teamNameById.get(String(match.teamB)) ?? null,
+                logoUrl: teamLogoById.get(String(match.teamB)) ?? null,
+            },
             joinCode: match.joinCode ?? null,
             totalOvers: match.totalOvers,
             status: match.status,

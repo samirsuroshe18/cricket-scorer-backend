@@ -229,4 +229,46 @@ const unclaimPlayer = catchAsync(async (req, res) => {
     }, req.t("PLAYER_UNCLAIMED")));
 });
 
-export { getCareerStats, updatePlayer, claimPlayer, unclaimPlayer };
+// The signed-in user's own totals: CareerStats summed over every Player they
+// have claimed (Player.linkedUserId). Player identity is scorer-scoped, so a
+// person can be linked to several Players; a person linked to two Players that
+// both appeared in one match is counted twice in matchesPlayed — accepted as
+// rare (see the design spec). linkedPlayerCount lets the client hide the strip
+// for someone who has claimed nobody, which is indistinguishable from
+// all-zeros otherwise.
+const getMyCareerStats = catchAsync(async (req, res) => {
+    const linkedPlayers = await Player.find(
+        { linkedUserId: req.user._id, isDeleted: false },
+        '_id'
+    );
+    const playerIds = linkedPlayers.map((player) => player._id);
+
+    let totals = { matchesPlayed: 0, runs: 0, wickets: 0 };
+    if (playerIds.length > 0) {
+        const [aggregated] = await CareerStats.aggregate([
+            { $match: { playerId: { $in: playerIds } } },
+            {
+                $group: {
+                    _id: null,
+                    matchesPlayed: { $sum: '$matchesPlayed' },
+                    runs: { $sum: '$runs' },
+                    wickets: { $sum: '$wickets' },
+                },
+            },
+        ]);
+        if (aggregated) {
+            totals = {
+                matchesPlayed: aggregated.matchesPlayed,
+                runs: aggregated.runs,
+                wickets: aggregated.wickets,
+            };
+        }
+    }
+
+    return res.status(200).json(new ApiResponse(200, {
+        linkedPlayerCount: playerIds.length,
+        ...totals,
+    }, req.t("MY_CAREER_STATS_FETCHED")));
+});
+
+export { getCareerStats, updatePlayer, claimPlayer, unclaimPlayer, getMyCareerStats };

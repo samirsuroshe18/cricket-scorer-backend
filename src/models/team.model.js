@@ -4,6 +4,10 @@ const teamSchema = new Schema(
   {
     name:       { type: String, required: true, trim: true, maxlength: 50 },
     shortName:  { type: String, trim: true, maxlength: 5, uppercase: true },
+    // Cloudinary secure_url, same convention as Organization.logoUrl /
+    // User.photoUrl — set only via POST /v1/team/:teamId/logo. Null for every
+    // team that never had one uploaded; the client falls back to initials.
+    logoUrl:    { type: String, default: null },
     // The roster for THIS match's side — who a name resolves against for the
     // opposing-team collision check, since Player itself is scorer-scoped,
     // not team-scoped (see player.model.js). Maintained via $addToSet by
