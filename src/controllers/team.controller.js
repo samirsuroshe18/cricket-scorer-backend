@@ -4,9 +4,8 @@ import ApiResponse from '../utils/ApiResponse.js';
 import { Team } from '../models/team.model.js';
 import { Match } from '../models/match.model.js';
 import { Organization } from '../models/organization.model.js';
-import { User } from '../models/user.model.js';
 import { canAccessTeam, getMemberOrgIds } from '../utils/organizationAccess.js';
-import { DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT } from './match.controller.js';
+import { DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT, serializeMatchHistoryItems } from './match.controller.js';
 import { uploadOnCloudinary } from '../utils/cloudinary.js';
 import { discardStagedFile } from '../utils/discardStagedFile.js';
 
@@ -62,7 +61,8 @@ const getTeamProfile = catchAsync(async (req, res) => {
     }, req.t("TEAM_PROFILE_FETCHED")));
 });
 
-// Identical shape/validation to GET /v1/match/history (see getMatchHistory)
+// Identical shape/validation to GET /v1/match/history (see getMatchHistory;
+// the per-match serializer is shared, since the client parses both with one model)
 // — an $or across the two per-side indexes (match.model.js) instead of a
 // single createdBy filter, since a team can be either teamA or teamB. All
 // statuses are shown, same as match history: no completed-only filter.
@@ -87,50 +87,10 @@ const getTeamMatches = catchAsync(async (req, res) => {
         Match.countDocuments(filter),
     ]);
 
-    // Batched rather than one Team.findById per match, same reasoning as
-    // getMatchHistory. Includes teamId itself so its own name is available
-    // without a special case.
-    const involvedTeamIds = [...new Set(matches.flatMap((match) => [String(match.teamA), String(match.teamB)]))];
-    const involvedTeams = await Team.find({ _id: { $in: involvedTeamIds } });
-    const teamNameById = new Map(involvedTeams.map((team) => [String(team._id), team.name]));
-    const teamLogoById = new Map(involvedTeams.map((team) => [String(team._id), team.logoUrl ?? null]));
-
-    // Same batching reasoning as involvedTeamIds above — one lookup for
-    // every createdBy/assignedScorer this page needs a display name for.
-    const userIds = [...new Set(matches.flatMap((match) => [
-        match.createdBy ? String(match.createdBy) : null,
-        match.assignedScorer ? String(match.assignedScorer) : null,
-    ]).filter(Boolean))];
-    const users = await User.find({ _id: { $in: userIds } }, 'fullName');
-    const userNameById = new Map(users.map((user) => [String(user._id), user.fullName]));
+    const items = await serializeMatchHistoryItems(matches);
 
     return res.status(200).json(new ApiResponse(200, {
-        matches: matches.map((match) => ({
-            matchId: match._id,
-            teamA: {
-                id: match.teamA,
-                name: teamNameById.get(String(match.teamA)) ?? null,
-                logoUrl: teamLogoById.get(String(match.teamA)) ?? null,
-            },
-            teamB: {
-                id: match.teamB,
-                name: teamNameById.get(String(match.teamB)) ?? null,
-                logoUrl: teamLogoById.get(String(match.teamB)) ?? null,
-            },
-            joinCode: match.joinCode ?? null,
-            totalOvers: match.totalOvers,
-            status: match.status,
-            result: match.result ?? null,
-            tossWinner: match.tossWinner ?? null,
-            tossDecision: match.tossDecision ?? null,
-            createdBy: match.createdBy
-                ? { id: match.createdBy, name: userNameById.get(String(match.createdBy)) ?? null }
-                : null,
-            assignedScorer: match.assignedScorer
-                ? { id: match.assignedScorer, name: userNameById.get(String(match.assignedScorer)) ?? null }
-                : null,
-            createdAt: match.createdAt,
-        })),
+        matches: items,
         page,
         limit,
         total,

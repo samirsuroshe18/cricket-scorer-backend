@@ -2689,28 +2689,12 @@ const getScorerCandidates = catchAsync(async (req, res) => {
     }, req.t("SCORER_CANDIDATES_FETCHED")));
 });
 
-// The first list endpoint in this codebase — see the backend CLAUDE.md's own
-// pagination rule for why `?page`/`?limit` with an enforced max rather than
-// an unbounded `.find()`: Match is exactly the kind of collection this rule
-// exists for. Feeds the client's match-history/home screen.
-const getMatchHistory = catchAsync(async (req, res) => {
-    const page = Number.parseInt(req.query.page, 10) || 1;
-    const limit = Number.parseInt(req.query.limit, 10) || DEFAULT_HISTORY_LIMIT;
-
-    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(limit) || limit < 1 || limit > MAX_HISTORY_LIMIT) {
-        throw new ApiError(400, "INVALID_PAGINATION", { params: { max: MAX_HISTORY_LIMIT } });
-    }
-
-    const filter = { $or: [{ createdBy: req.user._id }, { assignedScorer: req.user._id }], isDeleted: false };
-
-    const [matches, total] = await Promise.all([
-        Match.find(filter)
-            .sort({ createdAt: -1 })
-            .skip((page - 1) * limit)
-            .limit(limit),
-        Match.countDocuments(filter),
-    ]);
-
+// Serializes a page of Match documents into the per-match shape shared by
+// GET /v1/match/history and GET /v1/team/:teamId/matches — the client parses
+// both with the same MatchHistoryItem model, so the two endpoints must never
+// diverge. Owns the batched Team/User/Inning lookups so callers only supply
+// the already-fetched page of matches.
+const serializeMatchHistoryItems = async (matches) => {
     // Batched rather than one Team.findById per match — a history page is
     // exactly the N+1 shape a per-match lookup would create.
     const teamIds = [...new Set(matches.flatMap((match) => [String(match.teamA), String(match.teamB)]))];
@@ -2745,10 +2729,9 @@ const getMatchHistory = catchAsync(async (req, res) => {
         innings.map((inning) => [`${inning.matchId}:${inning.inningsNumber}`, inning])
     );
 
-    return res.status(200).json(new ApiResponse(200, {
-        matches: matches.map((match) => {
-            const currentInning = inningByMatchAndNumber.get(`${match._id}:${match.currentInnings}`);
-            return {
+    return matches.map((match) => {
+        const currentInning = inningByMatchAndNumber.get(`${match._id}:${match.currentInnings}`);
+        return {
             matchId: match._id,
             // Unlike getPublicMatch/getMatchScorecard, this response carries
             // team ids, not just names — a card here can route straight back
@@ -2792,12 +2775,40 @@ const getMatchHistory = catchAsync(async (req, res) => {
                     overs: formatOvers(currentInning.oversCompleted, currentInning.legalBalls),
                 }
                 : null,
-            };
-        }),
+        };
+    });
+};
+
+// The first list endpoint in this codebase — see the backend CLAUDE.md's own
+// pagination rule for why `?page`/`?limit` with an enforced max rather than
+// an unbounded `.find()`: Match is exactly the kind of collection this rule
+// exists for. Feeds the client's match-history/home screen.
+const getMatchHistory = catchAsync(async (req, res) => {
+    const page = Number.parseInt(req.query.page, 10) || 1;
+    const limit = Number.parseInt(req.query.limit, 10) || DEFAULT_HISTORY_LIMIT;
+
+    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(limit) || limit < 1 || limit > MAX_HISTORY_LIMIT) {
+        throw new ApiError(400, "INVALID_PAGINATION", { params: { max: MAX_HISTORY_LIMIT } });
+    }
+
+    const filter = { $or: [{ createdBy: req.user._id }, { assignedScorer: req.user._id }], isDeleted: false };
+
+    const [matches, total] = await Promise.all([
+        Match.find(filter)
+            .sort({ createdAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(limit),
+        Match.countDocuments(filter),
+    ]);
+
+    const items = await serializeMatchHistoryItems(matches);
+
+    return res.status(200).json(new ApiResponse(200, {
+        matches: items,
         page,
         limit,
         total,
     }, req.t("MATCH_HISTORY_FETCHED")));
 });
 
-export { createMatch, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, assignScorer, getScorerCandidates, createMatchWithJoinCode, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };
+export { createMatch, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, serializeMatchHistoryItems, assignScorer, getScorerCandidates, createMatchWithJoinCode, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };
