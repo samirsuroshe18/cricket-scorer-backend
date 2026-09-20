@@ -175,7 +175,18 @@ describe('GET /v1/team/:teamId/matches', () => {
     const match = res.body.data.matches.find((m) => m.matchId === matchId);
 
     expect(match.status).toBe('live');
-    expect(match.currentInnings).toEqual({ inningsNumber: 1, totalRuns: 5, wickets: 0, overs: '0.2' });
+    expect(match.currentInnings).toEqual({
+      inningsNumber: 1,
+      battingTeam: expect.stringMatching(/^team[AB]$/),
+      totalRuns: 5,
+      wickets: 0,
+      overs: '0.2',
+      target: null,
+      recentBalls: [
+        { totalRuns: 4, extraType: null, isWicket: false },
+        { totalRuns: 1, extraType: null, isWicket: false },
+      ],
+    });
   });
 
   it('does not report a currentInnings score for an abandoned match', async () => {

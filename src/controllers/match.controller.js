@@ -51,6 +51,9 @@ const MAX_RUNS_PER_BALL = 6;
 const MAX_PLAYER_NAME_LENGTH = 50;
 const DEFAULT_HISTORY_LIMIT = 20;
 const MAX_HISTORY_LIMIT = 50;
+// How many trailing deliveries a live card's "recent balls" strip carries —
+// one over's worth, which is what the Home dashboard's ball dots draw.
+const RECENT_BALLS_LIMIT = 6;
 
 // Teams are not reused by NAME: two different real teams that happen to
 // share a name — even for the same scorer, across two unrelated matches —
@@ -2729,8 +2732,44 @@ const serializeMatchHistoryItems = async (matches) => {
         innings.map((inning) => [`${inning.matchId}:${inning.inningsNumber}`, inning])
     );
 
+    // The last few deliveries of each in-play innings, for the Home
+    // dashboard's ball dots. Only `live` matches: an `innings_break` card has
+    // no ball being bowled, and a match with no deliveries yet has nothing to
+    // show. One capped query per live match rather than one per history row —
+    // a scorer has a handful of live matches at once, not a page's worth —
+    // and each rides the `{ inningsId, absoluteBallSeq: -1 }` index, so it
+    // reads six documents, never the innings.
+    const recentBallsByInningId = new Map();
+    await Promise.all(
+        matches
+            .filter((match) => match.status === 'live')
+            .map((match) => inningByMatchAndNumber.get(`${match._id}:${match.currentInnings}`))
+            .filter(Boolean)
+            .map(async (inning) => {
+                const balls = await BallEvent.find({ inningsId: inning._id })
+                    .sort({ absoluteBallSeq: -1 })
+                    .limit(RECENT_BALLS_LIMIT)
+                    .select('runs extras extraType isWicket');
+                // Newest-first out of the index, oldest-first on the wire —
+                // the order a scorer reads an over in.
+                recentBallsByInningId.set(String(inning._id), balls.reverse().map((ball) => ({
+                    totalRuns: ball.runs + (ball.extras ?? 0),
+                    extraType: ball.extraType ?? null,
+                    isWicket: ball.isWicket,
+                })));
+            })
+    );
+
     return matches.map((match) => {
-        const currentInning = inningByMatchAndNumber.get(`${match._id}:${match.currentInnings}`);
+        // At an innings break `match.currentInnings` already points at innings
+        // 2, whose Inning document only exists once start-innings runs — so
+        // the lookup misses and the card would show no score at all in the
+        // one state where "what did they post?" is the whole point. Fall back
+        // to the innings just completed.
+        const currentInning = inningByMatchAndNumber.get(`${match._id}:${match.currentInnings}`)
+            ?? (match.status === 'innings_break'
+                ? inningByMatchAndNumber.get(`${match._id}:${match.currentInnings - 1}`)
+                : undefined);
         return {
             matchId: match._id,
             // Unlike getPublicMatch/getMatchScorecard, this response carries
@@ -2770,9 +2809,17 @@ const serializeMatchHistoryItems = async (matches) => {
             currentInnings: currentInning
                 ? {
                     inningsNumber: currentInning.inningsNumber,
+                    // Which side is batting — a card shows the batting
+                    // team's score against its own name, so it needs to know
+                    // which of teamA/teamB the running total belongs to.
+                    battingTeam: currentInning.battingTeam,
                     totalRuns: currentInning.totalRuns,
                     wickets: currentInning.wickets,
                     overs: formatOvers(currentInning.oversCompleted, currentInning.legalBalls),
+                    // Only set for innings 2 (see Inning.target); null while
+                    // the first side is still batting.
+                    target: currentInning.target ?? null,
+                    recentBalls: recentBallsByInningId.get(String(currentInning._id)) ?? [],
                 }
                 : null,
         };
