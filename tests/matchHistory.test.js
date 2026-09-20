@@ -199,10 +199,102 @@ describe('GET /v1/match/history', () => {
     expect(match.status).toBe('live');
     expect(match.currentInnings).toEqual({
       inningsNumber: 1,
+      battingTeam: expect.stringMatching(/^team[AB]$/),
       totalRuns: 5,
       wickets: 0,
       overs: '0.2',
+      target: null,
+      recentBalls: [
+        { totalRuns: 4, extraType: null, isWicket: false },
+        { totalRuns: 1, extraType: null, isWicket: false },
+      ],
     });
+  });
+
+  it('reports recent balls oldest-first, folding extras into the total and flagging wickets', async () => {
+    const { token } = await createTestUser({ email: 'recentballs@example.com' });
+    const matchId = await createMatch(app, token, { totalOvers: 5 });
+    await startLiveInnings(app, token, matchId);
+    await scoreDotBall(app, token, matchId, { runs: 2 });
+    await scoreDotBall(app, token, matchId, { runs: 0, extraType: 'wide' });
+    await scoreDotBall(app, token, matchId, { wicketType: 'bowled', incomingBatsmanName: 'Third Batsman' });
+
+    const res = await history(token);
+    const match = res.body.data.matches.find((m) => m.matchId === matchId);
+
+    expect(match.currentInnings.recentBalls).toEqual([
+      { totalRuns: 2, extraType: null, isWicket: false },
+      { totalRuns: 1, extraType: 'wide', isWicket: false },
+      { totalRuns: 0, extraType: null, isWicket: true },
+    ]);
+  });
+
+  it('caps recent balls at the last six deliveries', async () => {
+    const { token } = await createTestUser({ email: 'recentcap@example.com' });
+    const matchId = await createMatch(app, token, { totalOvers: 5 });
+    await startLiveInnings(app, token, matchId);
+    // Five legal balls plus three wides is eight deliveries inside a single
+    // over (wides are not legal), so the over never completes and no bowler
+    // change interrupts scoring — the cap has to drop the two oldest.
+    for (const runs of [1, 2, 3, 4, 0]) {
+      // eslint-disable-next-line no-await-in-loop
+      await scoreDotBall(app, token, matchId, { runs });
+    }
+    for (let i = 0; i < 3; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await scoreDotBall(app, token, matchId, { runs: 0, extraType: 'wide' });
+    }
+
+    const res = await history(token);
+    const match = res.body.data.matches.find((m) => m.matchId === matchId);
+
+    expect(match.currentInnings.recentBalls).toEqual([
+      { totalRuns: 3, extraType: null, isWicket: false },
+      { totalRuns: 4, extraType: null, isWicket: false },
+      { totalRuns: 0, extraType: null, isWicket: false },
+      { totalRuns: 1, extraType: 'wide', isWicket: false },
+      { totalRuns: 1, extraType: 'wide', isWicket: false },
+      { totalRuns: 1, extraType: 'wide', isWicket: false },
+    ]);
+  });
+
+  it("reports the completed first innings' score at an innings break, with no recent balls", async () => {
+    const { token } = await createTestUser({ email: 'inningsbreak@example.com' });
+    const matchId = await createMatch(app, token, { totalOvers: 1 });
+    await startLiveInnings(app, token, matchId);
+    // A one-over match: six legal balls completes innings 1 and flips the
+    // match to innings_break, pointing currentInnings at an innings 2 whose
+    // Inning document does not exist yet.
+    await scoreDotBall(app, token, matchId, { runs: 4 });
+    for (let i = 0; i < 5; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await scoreDotBall(app, token, matchId);
+    }
+
+    const res = await history(token);
+    const match = res.body.data.matches.find((m) => m.matchId === matchId);
+
+    expect(match.status).toBe('innings_break');
+    expect(match.currentInnings).toEqual({
+      inningsNumber: 1,
+      battingTeam: expect.stringMatching(/^team[AB]$/),
+      totalRuns: 4,
+      wickets: 0,
+      overs: '1.0',
+      target: null,
+      recentBalls: [],
+    });
+  });
+
+  it('reports no recent balls before the first delivery', async () => {
+    const { token } = await createTestUser({ email: 'norecent@example.com' });
+    const matchId = await createMatch(app, token, { totalOvers: 5 });
+    await startLiveInnings(app, token, matchId);
+
+    const res = await history(token);
+    const match = res.body.data.matches.find((m) => m.matchId === matchId);
+
+    expect(match.currentInnings.recentBalls).toEqual([]);
   });
 
   it('does not report a currentInnings score for a completed match', async () => {
