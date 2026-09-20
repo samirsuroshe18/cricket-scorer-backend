@@ -3,6 +3,7 @@ import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
 import { randomUUID } from 'node:crypto';
 import { createMatch, startLiveInnings, scoreDotBall } from './helpers/matchSetup.js';
+import { Match } from '../src/models/match.model.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 
 // The first list endpoint in this codebase — see the backend CLAUDE.md's own
@@ -346,5 +347,146 @@ describe('GET /v1/match/history', () => {
     const match = res.body.data.matches.find((m) => m.matchId === matchId);
 
     expect(match.syncStatus).toBe('conflict');
+  });
+
+  describe('?status filter and per-status counts', () => {
+    // Statuses are set directly: reaching `completed` through the scoring API
+    // would need a whole innings, and what's under test is the read side.
+    const seed = async (token, statuses) => {
+      const ids = [];
+      for (const [i, status] of statuses.entries()) {
+        const id = await createMatch(app, token, { teamAName: `S${i}A`, teamBName: `S${i}B` });
+        await Match.updateOne({ _id: id }, { status });
+        ids.push(id);
+      }
+      return ids;
+    };
+
+    it('filters to one status and reports the filtered total', async () => {
+      const { token } = await createTestUser();
+      const [, live] = await seed(token, ['upcoming', 'live', 'completed', 'live']);
+
+      const res = await history(token, '?status=live');
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.matches).toHaveLength(2);
+      expect(res.body.data.matches.every((m) => m.status === 'live')).toBe(true);
+      expect(res.body.data.total).toBe(2);
+      expect(res.body.data.matches.map((m) => m.matchId)).toContain(live);
+    });
+
+    it('accepts a comma-separated list, so "live" can include innings_break', async () => {
+      const { token } = await createTestUser();
+      await seed(token, ['live', 'innings_break', 'completed', 'upcoming']);
+
+      const res = await history(token, '?status=live,innings_break');
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.total).toBe(2);
+      expect(res.body.data.matches.map((m) => m.status).sort()).toEqual(['innings_break', 'live']);
+    });
+
+    it('paginates within the filtered set, so page 2 is still that status', async () => {
+      const { token } = await createTestUser();
+      await seed(token, ['upcoming', 'completed', 'upcoming', 'upcoming']);
+
+      const page1 = await history(token, '?status=upcoming&page=1&limit=2');
+      const page2 = await history(token, '?status=upcoming&page=2&limit=2');
+
+      expect(page1.body.data.matches).toHaveLength(2);
+      expect(page1.body.data.total).toBe(3);
+      expect(page2.body.data.matches).toHaveLength(1);
+      expect(page2.body.data.matches[0].status).toBe('upcoming');
+    });
+
+    it('rejects an unknown status rather than silently returning everything', async () => {
+      const { token } = await createTestUser();
+
+      const res = await history(token, '?status=bogus');
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('INVALID_STATUS_FILTER');
+    });
+
+    it('rejects a list containing one unknown status', async () => {
+      const { token } = await createTestUser();
+
+      const res = await history(token, '?status=live,bogus');
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('INVALID_STATUS_FILTER');
+    });
+
+    it('treats an empty ?status as no filter', async () => {
+      const { token } = await createTestUser();
+      await seed(token, ['live', 'completed']);
+
+      const res = await history(token, '?status=');
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.total).toBe(2);
+    });
+
+    it('never widens the filter beyond the caller\'s own matches', async () => {
+      const { token: mine } = await createTestUser();
+      const { token: theirs } = await createTestUser();
+      await seed(theirs, ['live']);
+
+      const res = await history(mine, '?status=live');
+
+      expect(res.body.data.matches).toHaveLength(0);
+      expect(res.body.data.total).toBe(0);
+    });
+
+    it('reports a count for every status, zero where there are none', async () => {
+      const { token } = await createTestUser();
+      await seed(token, ['upcoming', 'live', 'live', 'completed']);
+
+      const res = await history(token);
+
+      expect(res.body.data.counts).toEqual({
+        upcoming: 1,
+        live: 2,
+        innings_break: 0,
+        completed: 1,
+        abandoned: 0,
+      });
+    });
+
+    it('reports the same counts whatever status is being filtered', async () => {
+      const { token } = await createTestUser();
+      await seed(token, ['upcoming', 'live', 'completed']);
+
+      const all = await history(token);
+      const filtered = await history(token, '?status=completed');
+
+      expect(filtered.body.data.counts).toEqual(all.body.data.counts);
+    });
+
+    it("leaves deleted and other users' matches out of the counts", async () => {
+      const { token } = await createTestUser();
+      const { token: other } = await createTestUser();
+      const [gone] = await seed(token, ['live', 'live']);
+      await seed(other, ['live', 'live', 'live']);
+      await request(app)
+        .delete(`/api/v1/match/${gone}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send();
+
+      const res = await history(token);
+
+      expect(res.body.data.counts.live).toBe(1);
+    });
+
+    it('counts a match the caller is only the assigned scorer on', async () => {
+      const { token: creator } = await createTestUser();
+      const { token: scorer, user } = await createTestUser();
+      const [id] = await seed(creator, ['live']);
+      await Match.updateOne({ _id: id }, { assignedScorer: user._id });
+
+      const res = await history(scorer);
+
+      expect(res.body.data.counts.live).toBe(1);
+    });
   });
 });

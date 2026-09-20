@@ -2,6 +2,7 @@ import request from 'supertest';
 import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
 import { createMatch } from './helpers/matchSetup.js';
+import { User } from '../src/models/user.model.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 
 describe('GET /:matchId/scorer-candidates', () => {
@@ -46,6 +47,28 @@ describe('GET /:matchId/scorer-candidates', () => {
     expect(res.status).toBe(200);
     const ids = res.body.data.candidates.map((c) => c.id).sort();
     expect(ids).toEqual([String(owner._id), String(member._id)].sort());
+  });
+
+  // `populate('members.user')` yields null for a member whose User document no
+  // longer exists; the endpoint used to dereference it and 500 for the whole
+  // org, so one deleted account made "Assign scorer" unusable.
+  it('skips a member whose user account no longer exists instead of failing', async () => {
+    const { token: ownerToken, user: owner } = await createTestUser({ email: 'owner@example.com' });
+    const { user: gone } = await createTestUser({ email: 'gone@example.com' });
+    const { user: kept } = await createTestUser({ email: 'kept@example.com' });
+    const orgRes = await createOrg(ownerToken, { name: 'Riverside CC' });
+    const orgId = orgRes.body.data.id;
+    await addMember(ownerToken, orgId, { email: 'gone@example.com' });
+    await addMember(ownerToken, orgId, { email: 'kept@example.com' });
+    const teamRes = await createOrgTeam(ownerToken, orgId, { name: 'Riverside U19' });
+    const matchId = await createMatch(app, ownerToken, { teamAId: teamRes.body.data.id, teamBName: 'Visitors' });
+    await User.deleteOne({ _id: gone._id });
+
+    const res = await getCandidates(ownerToken, matchId);
+
+    expect(res.status).toBe(200);
+    const ids = res.body.data.candidates.map((c) => c.id).sort();
+    expect(ids).toEqual([String(owner._id), String(kept._id)].sort());
   });
 
   it('returns an empty list for an authorized caller on a match with no org-linked team', async () => {
