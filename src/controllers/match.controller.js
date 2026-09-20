@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import catchAsync from '../utils/catchAsync.js';
 import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
-import { Match } from '../models/match.model.js';
+import { Match, MATCH_STATUS } from '../models/match.model.js';
 import { Team } from '../models/team.model.js';
 import { canAccessTeam, canAssignScorer, isOrgMember } from '../utils/organizationAccess.js';
 import { Organization } from '../models/organization.model.js';
@@ -2830,6 +2830,38 @@ const serializeMatchHistoryItems = async (matches) => {
 // pagination rule for why `?page`/`?limit` with an enforced max rather than
 // an unbounded `.find()`: Match is exactly the kind of collection this rule
 // exists for. Feeds the client's match-history/home screen.
+// `?status=live` or a comma list (`?status=live,innings_break` — the client's
+// "Live" chip covers both). Absent or empty means no filter. An unknown value
+// is a 400 rather than being ignored: silently returning everything for a
+// typo'd status would look like a filter that matched every match.
+const parseStatusFilter = (raw) => {
+    if (raw === undefined || raw === '') return null;
+    if (typeof raw !== 'string') {
+        throw new ApiError(400, "INVALID_STATUS_FILTER", { params: { allowed: MATCH_STATUS.join(', ') } });
+    }
+
+    const statuses = [...new Set(raw.split(',').map((status) => status.trim()).filter(Boolean))];
+    if (statuses.length === 0) return null;
+    if (statuses.some((status) => !MATCH_STATUS.includes(status))) {
+        throw new ApiError(400, "INVALID_STATUS_FILTER", { params: { allowed: MATCH_STATUS.join(', ') } });
+    }
+    return statuses;
+};
+
+// One count per status across everything the caller can see, deliberately
+// independent of `?status`: a chip's badge has to say how many live matches
+// exist while the list below is showing completed ones. Every status is
+// present (zero where none) so the client never has to guess a missing key.
+const countMatchesByStatus = async (ownerFilter) => {
+    const grouped = await Match.aggregate([
+        { $match: ownerFilter },
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+    ]);
+    const counts = Object.fromEntries(MATCH_STATUS.map((status) => [status, 0]));
+    for (const { _id, count } of grouped) counts[_id] = count;
+    return counts;
+};
+
 const getMatchHistory = catchAsync(async (req, res) => {
     const page = Number.parseInt(req.query.page, 10) || 1;
     const limit = Number.parseInt(req.query.limit, 10) || DEFAULT_HISTORY_LIMIT;
@@ -2838,14 +2870,18 @@ const getMatchHistory = catchAsync(async (req, res) => {
         throw new ApiError(400, "INVALID_PAGINATION", { params: { max: MAX_HISTORY_LIMIT } });
     }
 
-    const filter = { $or: [{ createdBy: req.user._id }, { assignedScorer: req.user._id }], isDeleted: false };
+    const statuses = parseStatusFilter(req.query.status);
 
-    const [matches, total] = await Promise.all([
+    const ownerFilter = { $or: [{ createdBy: req.user._id }, { assignedScorer: req.user._id }], isDeleted: false };
+    const filter = statuses ? { ...ownerFilter, status: { $in: statuses } } : ownerFilter;
+
+    const [matches, total, counts] = await Promise.all([
         Match.find(filter)
             .sort({ createdAt: -1 })
             .skip((page - 1) * limit)
             .limit(limit),
         Match.countDocuments(filter),
+        countMatchesByStatus(ownerFilter),
     ]);
 
     const items = await serializeMatchHistoryItems(matches);
@@ -2855,6 +2891,7 @@ const getMatchHistory = catchAsync(async (req, res) => {
         page,
         limit,
         total,
+        counts,
     }, req.t("MATCH_HISTORY_FETCHED")));
 });
 

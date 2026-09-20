@@ -1,7 +1,7 @@
 import mongoose, {Schema} from "mongoose";
 
 const TEAM_SIDE = ['teamA', 'teamB'];
-const MATCH_STATUS = ['upcoming', 'live', 'innings_break', 'completed', 'abandoned'];
+export const MATCH_STATUS = ['upcoming', 'live', 'innings_break', 'completed', 'abandoned'];
 const MATCH_TYPES  = ['friendly', 'turf', 'tournament', 'practice'];
 const SYNC_STATUS  = ['local', 'syncing', 'synced', 'conflict'];
 
