@@ -2683,6 +2683,11 @@ const getScorerCandidates = catchAsync(async (req, res) => {
     const candidateById = new Map();
     for (const org of orgs) {
         for (const member of org.members) {
+            // populate() leaves null where the member's User document no
+            // longer exists (a deleted account). Such a member can't score
+            // anything, so they are left out rather than taking down the
+            // whole list for everyone else in the org.
+            if (!member.user) continue;
             candidateById.set(String(member.user._id), { id: member.user._id, name: member.user.fullName });
         }
     }
