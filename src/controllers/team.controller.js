@@ -8,6 +8,7 @@ import { canAccessTeam, getMemberOrgIds } from '../utils/organizationAccess.js';
 import { DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT, serializeMatchHistoryItems } from './match.controller.js';
 import { uploadOnCloudinary } from '../utils/cloudinary.js';
 import { discardStagedFile } from '../utils/discardStagedFile.js';
+import { parseTeamFields } from '../utils/teamFields.js';
 
 // Shared by getTeamProfile/getTeamMatches: both need the team to exist and
 // belong to the caller before doing anything else. A Team is only ever
@@ -194,35 +195,15 @@ const updateTeamLogo = catchAsync(async (req, res) => {
     }, req.t("TEAM_LOGO_UPDATED")));
 });
 
-const MAX_TEAM_NAME_LENGTH = 50;
-const MAX_TEAM_SHORT_NAME_LENGTH = 5;
-
-const asString = (value) => (typeof value === 'string' ? value : '');
-
 // A standalone team the caller owns, created without playing a match first.
-// Length limits are checked here rather than left to Team's schema: a
-// Mongoose ValidationError is not an ApiError, so errorHandler would report
-// an over-long name as a 500. Organization-owned teams go through
-// POST /v1/organization/:orgId/teams instead.
+// Organization-owned teams go through POST /v1/organization/:orgId/teams
+// instead; both validate through parseTeamFields.
 const createTeam = catchAsync(async (req, res) => {
-    const body = req.body ?? {};
-
-    const name = asString(body.name).trim();
-    if (!name) {
-        throw new ApiError(400, "TEAM_NAME_REQUIRED");
-    }
-    if (name.length > MAX_TEAM_NAME_LENGTH) {
-        throw new ApiError(400, "TEAM_NAME_TOO_LONG");
-    }
-
-    const shortName = asString(body.shortName).trim();
-    if (shortName.length > MAX_TEAM_SHORT_NAME_LENGTH) {
-        throw new ApiError(400, "TEAM_SHORT_NAME_TOO_LONG");
-    }
+    const { name, shortName } = parseTeamFields(req.body);
 
     const team = await Team.create({
         name,
-        shortName: shortName || undefined,
+        shortName,
         createdBy: req.user._id,
         organization: null,
     });

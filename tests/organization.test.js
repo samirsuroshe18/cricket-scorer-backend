@@ -324,15 +324,94 @@ describe('POST /v1/organization/:orgId/teams', () => {
     expect(res.body.code).toBe('ORG_NOT_OWNED');
   });
 
-  it('400s for an empty name', async () => {
+  const setupOrg = async () => {
     const { token } = await createTestUser();
     const createRes = await createOrg(token, { name: 'Riverside CC' });
-    const orgId = createRes.body.data.id;
+    return { token, orgId: createRes.body.data.id };
+  };
 
-    const res = await createOrgTeam(token, orgId, { name: '  ' });
+  it.each([
+    ['an empty name', { name: '  ' }],
+    ['a missing name', { shortName: 'RU' }],
+    ['a non-string name', { name: 42 }],
+  ])('400 TEAM_NAME_REQUIRED for %s (a single team, not "both team names")', async (_label, body) => {
+    const { token, orgId } = await setupOrg();
+
+    const res = await createOrgTeam(token, orgId, body);
 
     expect(res.status).toBe(400);
-    expect(res.body.code).toBe('TEAM_NAMES_REQUIRED');
+    expect(res.body.code).toBe('TEAM_NAME_REQUIRED');
+  });
+
+  it('400 TEAM_NAME_REQUIRED when there is no body at all, never a 500', async () => {
+    const { token, orgId } = await setupOrg();
+
+    const res = await request(app)
+      .post(`/api/v1/organization/${orgId}/teams`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('TEAM_NAME_REQUIRED');
+  });
+
+  it('400 TEAM_NAME_TOO_LONG for a 51-character name, never a 500', async () => {
+    const { token, orgId } = await setupOrg();
+
+    const res = await createOrgTeam(token, orgId, { name: 'a'.repeat(51) });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('TEAM_NAME_TOO_LONG');
+  });
+
+  it('400 TEAM_SHORT_NAME_TOO_LONG for a 6-character short name, never a 500', async () => {
+    const { token, orgId } = await setupOrg();
+
+    const res = await createOrgTeam(token, orgId, { name: 'Riverside U19', shortName: 'abcdef' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('TEAM_SHORT_NAME_TOO_LONG');
+  });
+
+  it('creates nothing when validation fails', async () => {
+    const { token, orgId } = await setupOrg();
+
+    await createOrgTeam(token, orgId, { name: 'a'.repeat(51) });
+    await createOrgTeam(token, orgId, { name: 'Riverside U19', shortName: 'abcdef' });
+
+    expect(await Team.countDocuments()).toBe(0);
+  });
+
+  it('accepts a name of exactly 50 characters and a short name of exactly 5', async () => {
+    const { token, orgId } = await setupOrg();
+
+    const res = await createOrgTeam(token, orgId, { name: 'a'.repeat(50), shortName: 'abcde' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.name).toHaveLength(50);
+    expect(res.body.data.shortName).toBe('ABCDE');
+  });
+
+  it('trims the name and short name, and treats a blank short name as absent', async () => {
+    const { token, orgId } = await setupOrg();
+
+    const trimmed = await createOrgTeam(token, orgId, { name: '  Riverside U19  ', shortName: '  ru ' });
+    const blank = await createOrgTeam(token, orgId, { name: 'Riverside U17', shortName: '   ' });
+
+    expect(trimmed.body.data).toMatchObject({ name: 'Riverside U19', shortName: 'RU' });
+    expect(blank.status).toBe(200);
+    expect(blank.body.data.shortName).toBeNull();
+    const stored = await Team.findById(blank.body.data.id);
+    expect(stored.shortName).toBeUndefined();
+  });
+
+  it('still 403s a non-owner before looking at the body', async () => {
+    const { orgId } = await setupOrg();
+    const { token: strangerToken } = await createTestUser({ email: 'stranger2@example.com' });
+
+    const res = await createOrgTeam(strangerToken, orgId, { name: 'a'.repeat(51) });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('ORG_NOT_OWNED');
   });
 });
 
