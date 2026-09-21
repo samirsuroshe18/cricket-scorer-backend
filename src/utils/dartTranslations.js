@@ -131,5 +131,17 @@ export const buildEntries = (keyNames, localeMaps) => {
         entries.push({ key, translations });
     }
 
+    // A key declared in translation_keys.dart but absent from every locale map
+    // never reaches the union above, so it would be skipped silently. It also
+    // renders as raw text before the first successful translation sync, so
+    // name it.
+    for (const [name, key] of Object.entries(keyNames)) {
+        if (!names.has(name)) {
+            problems.push(
+                `${key}: declared in translation_keys.dart but has no entry in ${languages.join(', ')}`
+            );
+        }
+    }
+
     return { entries, problems };
 };
