@@ -11,6 +11,7 @@ import { Match } from '../models/match.model.js';
 import { buildLeaderboardsForMatchIds } from '../utils/leaderboardQuery.js';
 import { uploadOnCloudinary } from '../utils/cloudinary.js';
 import { discardStagedFile } from '../utils/discardStagedFile.js';
+import { parseTeamFields } from '../utils/teamFields.js';
 
 const asString = (value) => (typeof value === 'string' ? value : '');
 
@@ -175,14 +176,11 @@ const createOrganizationTeam = catchAsync(async (req, res) => {
     const { orgId } = req.params;
     const org = await findOwnedOrganization(orgId, req.user._id);
 
-    const name = asString(req.body.name).trim();
-    if (!name) {
-        throw new ApiError(400, "TEAM_NAMES_REQUIRED");
-    }
+    const { name, shortName } = parseTeamFields(req.body);
 
     const team = await Team.create({
         name,
-        shortName: req.body.shortName,
+        shortName,
         createdBy: req.user._id,
         organization: org._id,
     });
