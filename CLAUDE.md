@@ -15,6 +15,7 @@ npm run dev         # nodemon, NODE_ENV=development → loads .env.development
 npm run prod        # node, NODE_ENV=production → loads .env.production
 npm test            # cross-env NODE_ENV=test + jest (ESM via --experimental-vm-modules)
 npm run test:watch
+npm run sync-translations   # adds client TranslationKeys the CMS lacks; dev only, no login (-- --dry-run, -- --only k1,k2)
 ```
 
 ## Architecture
