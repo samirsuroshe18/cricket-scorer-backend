@@ -94,7 +94,7 @@ describe('buildEntries', () => {
   });
 
   it('holds back a key that is missing in one language', () => {
-    const { entries, problems } = buildEntries(keyNames, {
+    const { entries, problems } = buildEntries({ roleOwner: 'role_owner' }, {
       en: { roleOwner: 'Owner' },
       hi: { roleOwner: 'मालिक' },
       mr: {},
@@ -104,8 +104,33 @@ describe('buildEntries', () => {
     expect(problems).toEqual(['role_owner: missing in mr']);
   });
 
+  it('reports a declared key that has no entry in any language', () => {
+    const { entries, problems } = buildEntries(
+      { roleOwner: 'role_owner', orphan: 'orphan_key' },
+      {
+        en: { roleOwner: 'Owner' },
+        hi: { roleOwner: 'मालिक' },
+        mr: { roleOwner: 'मालक' },
+      }
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(problems).toEqual([
+      'orphan_key: declared in translation_keys.dart but has no entry in en, hi, mr',
+    ]);
+  });
+
+  it('does not report a declared key that has an entry in some language', () => {
+    const { problems } = buildEntries(
+      { roleOwner: 'role_owner' },
+      { en: { roleOwner: 'Owner' }, hi: {}, mr: {} }
+    );
+
+    expect(problems).toEqual(['role_owner: missing in hi, mr']);
+  });
+
   it('holds back a locale entry that has no declared key', () => {
-    const { entries, problems } = buildEntries(keyNames, {
+    const { entries, problems } = buildEntries({}, {
       en: { ghost: 'Boo' },
       hi: { ghost: 'Boo' },
       mr: { ghost: 'Boo' },
