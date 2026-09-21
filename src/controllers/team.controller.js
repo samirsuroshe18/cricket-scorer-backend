@@ -194,4 +194,46 @@ const updateTeamLogo = catchAsync(async (req, res) => {
     }, req.t("TEAM_LOGO_UPDATED")));
 });
 
-export { getTeamProfile, getTeamMatches, listMyTeams, updateTeamOrganization, updateTeamLogo };
+const MAX_TEAM_NAME_LENGTH = 50;
+const MAX_TEAM_SHORT_NAME_LENGTH = 5;
+
+const asString = (value) => (typeof value === 'string' ? value : '');
+
+// A standalone team the caller owns, created without playing a match first.
+// Length limits are checked here rather than left to Team's schema: a
+// Mongoose ValidationError is not an ApiError, so errorHandler would report
+// an over-long name as a 500. Organization-owned teams go through
+// POST /v1/organization/:orgId/teams instead.
+const createTeam = catchAsync(async (req, res) => {
+    const body = req.body ?? {};
+
+    const name = asString(body.name).trim();
+    if (!name) {
+        throw new ApiError(400, "TEAM_NAME_REQUIRED");
+    }
+    if (name.length > MAX_TEAM_NAME_LENGTH) {
+        throw new ApiError(400, "TEAM_NAME_TOO_LONG");
+    }
+
+    const shortName = asString(body.shortName).trim();
+    if (shortName.length > MAX_TEAM_SHORT_NAME_LENGTH) {
+        throw new ApiError(400, "TEAM_SHORT_NAME_TOO_LONG");
+    }
+
+    const team = await Team.create({
+        name,
+        shortName: shortName || undefined,
+        createdBy: req.user._id,
+        organization: null,
+    });
+
+    return res.status(200).json(new ApiResponse(200, {
+        id: team._id,
+        name: team.name,
+        shortName: team.shortName ?? null,
+        logoUrl: null,
+        organization: null,
+    }, req.t("TEAM_CREATED")));
+});
+
+export { getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeamOrganization, updateTeamLogo };
