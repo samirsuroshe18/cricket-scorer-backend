@@ -2853,10 +2853,50 @@ const parseStatusFilter = (raw) => {
     return statuses;
 };
 
-// One count per status across everything the caller can see, deliberately
-// independent of `?status`: a chip's badge has to say how many live matches
-// exist while the list below is showing completed ones. Every status is
-// present (zero where none) so the client never has to guess a missing key.
+// `Team.name`'s own maxlength: a longer search can never match, so it is a
+// malformed request rather than a search that happens to find nothing.
+const MAX_SEARCH_LENGTH = 50;
+
+// `?q=mumbai` — team-name search. Absent, empty or whitespace means no
+// search. A repeated `?q=a&q=b` arrives as an array, and picking one of the
+// two silently would be a guess, so it is a 400 like an unknown status.
+const parseSearchQuery = (raw) => {
+    if (raw === undefined) return null;
+    if (typeof raw !== 'string') {
+        throw new ApiError(400, "INVALID_SEARCH_QUERY", { params: { max: MAX_SEARCH_LENGTH } });
+    }
+    const query = raw.trim();
+    if (query.length > MAX_SEARCH_LENGTH) {
+        throw new ApiError(400, "INVALID_SEARCH_QUERY", { params: { max: MAX_SEARCH_LENGTH } });
+    }
+    return query || null;
+};
+
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Matches with either team's name or short name containing `query`. The
+// teams considered are only those on matches the caller can already see —
+// bounded by their own history rather than every team in the database, so a
+// one-letter search cannot build an `$in` of the whole collection.
+const teamSearchFilter = async (ownerFilter, query) => {
+    const [sideA, sideB] = await Promise.all([
+        Match.distinct('teamA', ownerFilter),
+        Match.distinct('teamB', ownerFilter),
+    ]);
+    const pattern = new RegExp(escapeRegex(query), 'i');
+    const teams = await Team.find({
+        _id: { $in: [...sideA, ...sideB] },
+        $or: [{ name: pattern }, { shortName: pattern }],
+    }).select('_id');
+    const teamIds = teams.map((team) => team._id);
+    return { $or: [{ teamA: { $in: teamIds } }, { teamB: { $in: teamIds } }] };
+};
+
+// One count per status across the matches the caller can see (and, when
+// searching, that match the search), deliberately independent of `?status`: a
+// chip's badge has to say how many live matches exist while the list below
+// is showing completed ones. Every status is present (zero where none) so
+// the client never has to guess a missing key.
 const countMatchesByStatus = async (ownerFilter) => {
     const grouped = await Match.aggregate([
         { $match: ownerFilter },
@@ -2876,9 +2916,15 @@ const getMatchHistory = catchAsync(async (req, res) => {
     }
 
     const statuses = parseStatusFilter(req.query.status);
+    const query = parseSearchQuery(req.query.q);
 
     const ownerFilter = { $or: [{ createdBy: req.user._id }, { assignedScorer: req.user._id }], isDeleted: false };
-    const filter = statuses ? { ...ownerFilter, status: { $in: statuses } } : ownerFilter;
+    // What the caller can see, narrowed by the search when there is one; the
+    // status filter then narrows only the list, never the counts.
+    const visibleFilter = query
+        ? { $and: [ownerFilter, await teamSearchFilter(ownerFilter, query)] }
+        : ownerFilter;
+    const filter = statuses ? { ...visibleFilter, status: { $in: statuses } } : visibleFilter;
 
     const [matches, total, counts] = await Promise.all([
         Match.find(filter)
@@ -2886,7 +2932,7 @@ const getMatchHistory = catchAsync(async (req, res) => {
             .skip((page - 1) * limit)
             .limit(limit),
         Match.countDocuments(filter),
-        countMatchesByStatus(ownerFilter),
+        countMatchesByStatus(visibleFilter),
     ]);
 
     const items = await serializeMatchHistoryItems(matches);

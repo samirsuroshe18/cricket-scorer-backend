@@ -95,6 +95,7 @@
   "SCORER_CANDIDATES_FETCHED": "Scorer candidates fetched",
   "INVALID_PAGINATION": "Page and limit must be valid, and limit cannot exceed {{max}}",
   "INVALID_STATUS_FILTER": "Status must be one or more of: {{allowed}}",
+  "INVALID_SEARCH_QUERY": "Search text must be a single value of at most {{max}} characters",
   "INVALID_EXTRA_TYPE": "Extra type must be either a wide or a no-ball",
   "INVALID_RUNS_FROM": "Runs must be credited to the bat, byes, or leg-byes",
   "RUNS_FROM_NOT_ALLOWED_FOR_WIDE": "All runs off a wide are recorded as wides",

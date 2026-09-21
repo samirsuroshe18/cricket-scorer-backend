@@ -4,6 +4,7 @@ import { createTestUser } from './helpers/authTestUser.js';
 import { randomUUID } from 'node:crypto';
 import { createMatch, startLiveInnings, scoreDotBall } from './helpers/matchSetup.js';
 import { Match } from '../src/models/match.model.js';
+import { Team } from '../src/models/team.model.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 
 // The first list endpoint in this codebase — see the backend CLAUDE.md's own
@@ -487,6 +488,170 @@ describe('GET /v1/match/history', () => {
       const res = await history(scorer);
 
       expect(res.body.data.counts.live).toBe(1);
+    });
+  });
+
+  describe('?q team-name search', () => {
+    // Same shortcut as the status tests: set the status directly.
+    const seedTeams = async (token, teams) => {
+      const ids = [];
+      for (const [teamAName, teamBName, status = 'upcoming'] of teams) {
+        const id = await createMatch(app, token, { teamAName, teamBName });
+        await Match.updateOne({ _id: id }, { status });
+        ids.push(id);
+      }
+      return ids;
+    };
+
+    const ids = (res) => res.body.data.matches.map((m) => m.matchId);
+
+    it('finds a match by either team, ignoring case, on part of the name', async () => {
+      const { token } = await createTestUser();
+      const [mine, other] = await seedTeams(token, [
+        ['Mumbai Indians', 'Chennai Kings'],
+        ['Delhi Stars', 'Punjab Lions'],
+      ]);
+
+      expect(ids(await history(token, '?q=mumbai'))).toEqual([mine]);
+      expect(ids(await history(token, '?q=KINGS'))).toEqual([mine]);
+      expect(ids(await history(token, '?q=ndia'))).toEqual([mine]);
+      expect(ids(await history(token, '?q=lion'))).toEqual([other]);
+    });
+
+    it('also matches a team\'s short name', async () => {
+      const { token } = await createTestUser();
+      const [id] = await seedTeams(token, [['Mumbai Indians', 'Chennai Kings']]);
+      const match = await Match.findById(id);
+      await Team.updateOne({ _id: match.teamA }, { shortName: 'MI' });
+
+      const res = await history(token, '?q=mi');
+
+      expect(ids(res)).toEqual([id]);
+    });
+
+    it('trims the query, and treats a blank one as no search', async () => {
+      const { token } = await createTestUser();
+      await seedTeams(token, [['Mumbai Indians', 'Chennai Kings'], ['Delhi Stars', 'Punjab Lions']]);
+
+      expect((await history(token, '?q=%20%20mumbai%20')).body.data.matches).toHaveLength(1);
+      expect((await history(token, '?q=%20%20')).body.data.matches).toHaveLength(2);
+      expect((await history(token, '?q=')).body.data.matches).toHaveLength(2);
+    });
+
+    it('takes regex characters literally', async () => {
+      const { token } = await createTestUser();
+      const [plus] = await seedTeams(token, [['A+B Club', 'Chennai Kings'], ['Delhi Stars', 'Punjab Lions']]);
+
+      expect(ids(await history(token, '?q=%2B'))).toEqual([plus]);
+      // `.*` would match everything if it were treated as a pattern.
+      expect((await history(token, '?q=.*')).body.data.matches).toHaveLength(0);
+      expect((await history(token, '?q=(')).status).toBe(200);
+    });
+
+    it('returns an empty page, not an error, when nothing matches', async () => {
+      const { token } = await createTestUser();
+      await seedTeams(token, [['Mumbai Indians', 'Chennai Kings']]);
+
+      const res = await history(token, '?q=zzz');
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.matches).toEqual([]);
+      expect(res.body.data.total).toBe(0);
+      expect(res.body.data.counts).toEqual({
+        upcoming: 0, live: 0, innings_break: 0, completed: 0, abandoned: 0,
+      });
+    });
+
+    it('combines with ?status and paginates within the result', async () => {
+      const { token } = await createTestUser();
+      const [liveOne, , liveTwo] = await seedTeams(token, [
+        ['Mumbai A', 'X1', 'live'],
+        ['Mumbai B', 'X2', 'completed'],
+        ['Mumbai C', 'X3', 'live'],
+        ['Delhi D', 'X4', 'live'],
+      ]);
+
+      const res = await history(token, '?q=mumbai&status=live&limit=1&page=2');
+
+      expect(res.body.data.total).toBe(2);
+      expect(ids(res)).toEqual([liveOne]);
+      expect(ids(await history(token, '?q=mumbai&status=live&limit=1'))).toEqual([liveTwo]);
+    });
+
+    it('makes the counts describe the search, not the whole list', async () => {
+      const { token } = await createTestUser();
+      await seedTeams(token, [
+        ['Mumbai A', 'X1', 'live'],
+        ['Mumbai B', 'X2', 'completed'],
+        ['Delhi C', 'X3', 'live'],
+      ]);
+
+      const searched = await history(token, '?q=mumbai');
+      const everything = await history(token);
+
+      expect(searched.body.data.counts).toMatchObject({ live: 1, completed: 1 });
+      expect(everything.body.data.counts.live).toBe(2);
+    });
+
+    it('only searches matches the caller can see', async () => {
+      const { token } = await createTestUser();
+      const { token: other } = await createTestUser();
+      await seedTeams(other, [['Mumbai Indians', 'Chennai Kings']]);
+      await seedTeams(token, [['Delhi Stars', 'Punjab Lions']]);
+
+      const res = await history(token, '?q=mumbai');
+
+      expect(res.body.data.matches).toEqual([]);
+    });
+
+    it('finds a match the caller is only the assigned scorer on', async () => {
+      const { token: creator } = await createTestUser();
+      const { token: scorer, user } = await createTestUser();
+      const [id] = await seedTeams(creator, [['Mumbai Indians', 'Chennai Kings']]);
+      await Match.updateOne({ _id: id }, { assignedScorer: user._id });
+
+      const res = await history(scorer, '?q=mumbai');
+
+      expect(ids(res)).toEqual([id]);
+    });
+
+    it('leaves out a soft-deleted match', async () => {
+      const { token } = await createTestUser();
+      const [id] = await seedTeams(token, [['Mumbai Indians', 'Chennai Kings']]);
+      await request(app)
+        .delete(`/api/v1/match/${id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send();
+
+      const res = await history(token, '?q=mumbai');
+
+      expect(res.body.data.matches).toEqual([]);
+    });
+
+    it('rejects a repeated ?q rather than guessing which one was meant', async () => {
+      const { token } = await createTestUser();
+
+      const res = await history(token, '?q=a&q=b');
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('INVALID_SEARCH_QUERY');
+    });
+
+    it('rejects a query longer than any team name can be', async () => {
+      const { token } = await createTestUser();
+
+      const res = await history(token, `?q=${'x'.repeat(51)}`);
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('INVALID_SEARCH_QUERY');
+    });
+
+    it('accepts a query of exactly 50 characters', async () => {
+      const { token } = await createTestUser();
+
+      const res = await history(token, `?q=${'x'.repeat(50)}`);
+
+      expect(res.status).toBe(200);
     });
   });
 });
