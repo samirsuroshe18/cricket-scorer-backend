@@ -114,6 +114,32 @@ describe('GET /v1/team/:teamId', () => {
     expect(res.body.data.canManage).toBe(false);
   });
 
+  // canManageTeam runs on the team AFTER getTeamProfile populates
+  // team.organization (team.controller.js), so it's handed a populated
+  // Organization document rather than a bare id. Mongoose casts that back
+  // to an id for the query today, but nothing pins that down — this
+  // regression test is what would catch a future populate/select change
+  // silently making every org owner lose their edit/delete buttons.
+  it('canManage is true for the organization owner, through the populated team', async () => {
+    const { token: ownerToken } = await createTestUser({ email: 'owner@example.com' });
+    const orgRes = await request(app)
+      .post('/api/v1/organization')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ name: 'Riverside CC' });
+    const orgId = orgRes.body.data.id;
+
+    const teamRes = await request(app)
+      .post(`/api/v1/organization/${orgId}/teams`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ name: 'Riverside U19' });
+    const teamId = teamRes.body.data.id;
+
+    const res = await getTeamProfile(ownerToken, teamId);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.canManage).toBe(true);
+  });
+
   it('returns a roster entry for each player rostered onto the team', async () => {
     const { token } = await createTestUser();
     const createRes = await request(app)
