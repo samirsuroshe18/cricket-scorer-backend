@@ -161,6 +161,8 @@
   "TEAM_NAME_REQUIRED": "टीम का नाम दर्ज करें",
   "TEAM_NAME_TOO_LONG": "टीम का नाम अधिकतम 50 अक्षरों का हो सकता है",
   "TEAM_SHORT_NAME_TOO_LONG": "संक्षिप्त नाम अधिकतम 5 अक्षरों का हो सकता है",
+  "TEAM_NOT_MANAGEABLE": "आप वह टीम प्रबंधित नहीं कर सकते",
+  "TEAM_UPDATED": "टीम अपडेट की गई",
   "TEAM_ALREADY_IN_ORGANIZATION": "वह टीम पहले से ही किसी संगठन से जुड़ी है",
   "TEAM_ORGANIZATION_UPDATED": "टीम का संगठन अपडेट किया गया",
   "TEAM_LOGO_UPDATED": "टीम का लोगो अपडेट किया गया",

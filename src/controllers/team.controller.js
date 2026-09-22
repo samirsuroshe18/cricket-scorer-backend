@@ -218,4 +218,28 @@ const createTeam = catchAsync(async (req, res) => {
     }, req.t("TEAM_CREATED")));
 });
 
-export { getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeamOrganization, updateTeamLogo };
+// Rename (and/or re-set the short name of) a team the caller manages —
+// creator for a standalone team, organization owner for an org team. Reuses
+// parseTeamFields as-is: the edit sheet always sends both fields (prefilled
+// from the current profile), so there is no "omitted vs blank shortName"
+// distinction to make on the wire that create doesn't already handle.
+const updateTeam = catchAsync(async (req, res) => {
+    const { teamId } = req.params;
+    const team = await findOwnedTeam(teamId, req.user._id);
+    if (!(await canManageTeam(team, req.user._id))) {
+        throw new ApiError(403, "TEAM_NOT_MANAGEABLE");
+    }
+
+    const { name, shortName } = parseTeamFields(req.body);
+    team.name = name;
+    team.shortName = shortName;
+    await team.save();
+
+    return res.status(200).json(new ApiResponse(200, {
+        id: team._id,
+        name: team.name,
+        shortName: team.shortName ?? null,
+    }, req.t("TEAM_UPDATED")));
+});
+
+export { getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, updateTeamOrganization, updateTeamLogo };
