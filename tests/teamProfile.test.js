@@ -15,7 +15,7 @@ describe('GET /v1/team/:teamId', () => {
 
   beforeAll(async () => {
     await connectTestDb();
-    app = buildTestApp({ withTeam: true });
+    app = buildTestApp({ withTeam: true, withOrganization: true });
   });
 
   afterEach(async () => {
@@ -73,6 +73,45 @@ describe('GET /v1/team/:teamId', () => {
       name: 'Mumbai Indians',
       roster: [],
     });
+  });
+
+  it('canManage is true for the creator of a standalone team', async () => {
+    const { token } = await createTestUser();
+    const createRes = await request(app)
+      .post('/api/v1/match/create')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ teamAName: 'Mumbai Indians', teamBName: 'Chennai Super Kings', totalOvers: 5 });
+    const teamId = createRes.body.data.teamA.id;
+
+    const res = await getTeamProfile(token, teamId);
+
+    expect(res.body.data.canManage).toBe(true);
+  });
+
+  it('canManage is false for an organization member who is not the org owner', async () => {
+    const { token: ownerToken, user: owner } = await createTestUser({ email: 'owner@example.com' });
+    const orgRes = await request(app)
+      .post('/api/v1/organization')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ name: 'Riverside CC' });
+    const orgId = orgRes.body.data.id;
+
+    const { token: memberToken, user: member } = await createTestUser({ email: 'member@example.com' });
+    await request(app)
+      .post(`/api/v1/organization/${orgId}/members`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ email: 'member@example.com' });
+
+    const teamRes = await request(app)
+      .post(`/api/v1/organization/${orgId}/teams`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ name: 'Riverside U19' });
+    const teamId = teamRes.body.data.id;
+
+    const res = await getTeamProfile(memberToken, teamId);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.canManage).toBe(false);
   });
 
   it('returns a roster entry for each player rostered onto the team', async () => {

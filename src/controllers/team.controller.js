@@ -4,7 +4,7 @@ import ApiResponse from '../utils/ApiResponse.js';
 import { Team } from '../models/team.model.js';
 import { Match } from '../models/match.model.js';
 import { Organization } from '../models/organization.model.js';
-import { canAccessTeam, getMemberOrgIds } from '../utils/organizationAccess.js';
+import { canAccessTeam, canManageTeam, getMemberOrgIds } from '../utils/organizationAccess.js';
 import { DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT, serializeMatchHistoryItems } from './match.controller.js';
 import { uploadOnCloudinary } from '../utils/cloudinary.js';
 import { discardStagedFile } from '../utils/discardStagedFile.js';
@@ -50,6 +50,7 @@ const getTeamProfile = catchAsync(async (req, res) => {
         shortName: team.shortName ?? null,
         logoUrl: team.logoUrl ?? null,
         organization: toOrganizationSummary(team.organization),
+        canManage: await canManageTeam(team, req.user._id),
         // No feature currently soft-deletes a Player, but the roster
         // shouldn't surface one if that ever changes — same defensive
         // filter as every other isDeleted:false query in this codebase.
