@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 import { Organization } from '../src/models/organization.model.js';
 import { Team } from '../src/models/team.model.js';
-import { canAccessTeam, getMemberOrgIds, qualifyingOrgOwnerIds, canAssignScorer } from '../src/utils/organizationAccess.js';
+import { canAccessTeam, canManageTeam, getMemberOrgIds, qualifyingOrgOwnerIds, canAssignScorer } from '../src/utils/organizationAccess.js';
 
 describe('organizationAccess', () => {
   beforeAll(async () => {
@@ -62,6 +62,58 @@ describe('organizationAccess', () => {
     const team = await Team.create({ name: 'Riverside U19', createdBy: ownerId, organization: org._id });
 
     await expect(canAccessTeam(team, strangerId)).resolves.toBe(false);
+  });
+
+  it('canManageTeam is true for the creator of a standalone team', async () => {
+    const ownerId = new mongoose.Types.ObjectId();
+    const team = await Team.create({ name: 'A', createdBy: ownerId });
+
+    await expect(canManageTeam(team, ownerId)).resolves.toBe(true);
+  });
+
+  it('canManageTeam is false for a stranger to a standalone team', async () => {
+    const ownerId = new mongoose.Types.ObjectId();
+    const strangerId = new mongoose.Types.ObjectId();
+    const team = await Team.create({ name: 'A', createdBy: ownerId });
+
+    await expect(canManageTeam(team, strangerId)).resolves.toBe(false);
+  });
+
+  it("canManageTeam is true for an organization team's org owner", async () => {
+    const ownerId = new mongoose.Types.ObjectId();
+    const creatorId = new mongoose.Types.ObjectId();
+    const org = await Organization.create({
+      name: 'Riverside CC', nameLower: 'riverside cc', owner: ownerId,
+      members: [{ user: ownerId, role: 'owner' }, { user: creatorId, role: 'member' }],
+    });
+    const team = await Team.create({ name: 'Riverside U19', createdBy: creatorId, organization: org._id });
+
+    await expect(canManageTeam(team, ownerId)).resolves.toBe(true);
+  });
+
+  it("canManageTeam is false for the org team's own creator when they are not the org owner", async () => {
+    const ownerId = new mongoose.Types.ObjectId();
+    const creatorId = new mongoose.Types.ObjectId();
+    const org = await Organization.create({
+      name: 'Riverside CC', nameLower: 'riverside cc', owner: ownerId,
+      members: [{ user: ownerId, role: 'owner' }, { user: creatorId, role: 'member' }],
+    });
+    const team = await Team.create({ name: 'Riverside U19', createdBy: creatorId, organization: org._id });
+
+    await expect(canManageTeam(team, creatorId)).resolves.toBe(false);
+  });
+
+  it('canManageTeam is false for a plain member of an org team, even though they can view it', async () => {
+    const ownerId = new mongoose.Types.ObjectId();
+    const memberId = new mongoose.Types.ObjectId();
+    const org = await Organization.create({
+      name: 'Riverside CC', nameLower: 'riverside cc', owner: ownerId,
+      members: [{ user: ownerId, role: 'owner' }, { user: memberId, role: 'member' }],
+    });
+    const team = await Team.create({ name: 'Riverside U19', createdBy: ownerId, organization: org._id });
+
+    await expect(canAccessTeam(team, memberId)).resolves.toBe(true);
+    await expect(canManageTeam(team, memberId)).resolves.toBe(false);
   });
 
   it('getMemberOrgIds returns every non-deleted org the user belongs to, owner or member', async () => {

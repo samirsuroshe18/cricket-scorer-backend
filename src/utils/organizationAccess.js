@@ -20,6 +20,18 @@ export const canAccessTeam = async (team, userId) => {
     return org != null && isOrgMember(org, userId);
 };
 
+// True if `userId` may rename or delete `team` — narrower than
+// canAccessTeam (view/use): a standalone team's own creator, or an
+// organization team's organization owner. A plain org member can view and
+// re-logo a team without being able to manage it.
+export const canManageTeam = async (team, userId) => {
+    if (!team.organization) {
+        return team.createdBy?.equals(userId) ?? false;
+    }
+    const org = await Organization.findOne({ _id: team.organization, isDeleted: false });
+    return org != null && org.owner.equals(userId);
+};
+
 // Every non-deleted organization `userId` belongs to, owner or member —
 // backs the widened GET /v1/team query in listMyTeams.
 export const getMemberOrgIds = async (userId) => {

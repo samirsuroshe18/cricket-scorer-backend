@@ -4,7 +4,8 @@ import ApiResponse from '../utils/ApiResponse.js';
 import { Team } from '../models/team.model.js';
 import { Match } from '../models/match.model.js';
 import { Organization } from '../models/organization.model.js';
-import { canAccessTeam, getMemberOrgIds } from '../utils/organizationAccess.js';
+import { Tournament } from '../models/tournament.model.js';
+import { canAccessTeam, canManageTeam, getMemberOrgIds } from '../utils/organizationAccess.js';
 import { DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT, serializeMatchHistoryItems } from './match.controller.js';
 import { uploadOnCloudinary } from '../utils/cloudinary.js';
 import { discardStagedFile } from '../utils/discardStagedFile.js';
@@ -50,6 +51,7 @@ const getTeamProfile = catchAsync(async (req, res) => {
         shortName: team.shortName ?? null,
         logoUrl: team.logoUrl ?? null,
         organization: toOrganizationSummary(team.organization),
+        canManage: await canManageTeam(team, req.user._id),
         // No feature currently soft-deletes a Player, but the roster
         // shouldn't surface one if that ever changes — same defensive
         // filter as every other isDeleted:false query in this codebase.
@@ -217,4 +219,66 @@ const createTeam = catchAsync(async (req, res) => {
     }, req.t("TEAM_CREATED")));
 });
 
-export { getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeamOrganization, updateTeamLogo };
+// Rename (and/or re-set the short name of) a team the caller manages —
+// creator for a standalone team, organization owner for an org team. Reuses
+// parseTeamFields as-is: the edit sheet always sends both fields (prefilled
+// from the current profile), so there is no "omitted vs blank shortName"
+// distinction to make on the wire that create doesn't already handle.
+const updateTeam = catchAsync(async (req, res) => {
+    const { teamId } = req.params;
+    const team = await findOwnedTeam(teamId, req.user._id);
+    if (!(await canManageTeam(team, req.user._id))) {
+        throw new ApiError(403, "TEAM_NOT_MANAGEABLE");
+    }
+
+    const { name, shortName } = parseTeamFields(req.body);
+    team.name = name;
+    team.shortName = shortName;
+    await team.save();
+
+    return res.status(200).json(new ApiResponse(200, {
+        id: team._id,
+        name: team.name,
+        shortName: team.shortName ?? null,
+    }, req.t("TEAM_UPDATED")));
+});
+
+// Matches that count as "the team is in use" for delete — a completed or
+// abandoned match never blocks it; that's exactly the case this feature
+// exists for (retiring a team once its matches are done).
+const TEAM_BLOCKING_MATCH_STATUSES = ['upcoming', 'live', 'innings_break'];
+
+// Soft delete. Refused (409) rather than allowed-with-orphaning, unlike
+// deleteOrganization's team-orphaning: a team mid-match or mid-tournament
+// has live references a caller should resolve first, not silently break.
+const deleteTeam = catchAsync(async (req, res) => {
+    const { teamId } = req.params;
+    const team = await findOwnedTeam(teamId, req.user._id);
+    if (!(await canManageTeam(team, req.user._id))) {
+        throw new ApiError(403, "TEAM_NOT_MANAGEABLE");
+    }
+
+    const activeMatch = await Match.exists({
+        $or: [{ teamA: team._id }, { teamB: team._id }],
+        status: { $in: TEAM_BLOCKING_MATCH_STATUSES },
+        isDeleted: false,
+    });
+    if (activeMatch) {
+        throw new ApiError(409, "TEAM_IN_ACTIVE_MATCH");
+    }
+
+    const activeTournament = await Tournament.exists({
+        'teams.team': team._id,
+        isDeleted: false,
+    });
+    if (activeTournament) {
+        throw new ApiError(409, "TEAM_IN_TOURNAMENT");
+    }
+
+    team.isDeleted = true;
+    await team.save();
+
+    return res.status(200).json(new ApiResponse(200, { id: team._id }, req.t("TEAM_DELETED")));
+});
+
+export { getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };
