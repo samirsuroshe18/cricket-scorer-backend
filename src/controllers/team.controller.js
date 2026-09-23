@@ -100,17 +100,81 @@ const getTeamMatches = catchAsync(async (req, res) => {
     }, req.t("TEAM_MATCHES_FETCHED")));
 });
 
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// `Team.name`'s own maxlength: a longer search can never match, so it is a
+// malformed request rather than a search that happens to find nothing. Same
+// validation shape as getMatchHistory's own `?q=` (match.controller.js) —
+// duplicated rather than imported since that one is private to its file too.
+const MAX_TEAM_SEARCH_LENGTH = 50;
+const parseTeamSearchQuery = (raw) => {
+    if (raw === undefined) return null;
+    if (typeof raw !== 'string') {
+        throw new ApiError(400, "INVALID_SEARCH_QUERY", { params: { max: MAX_TEAM_SEARCH_LENGTH } });
+    }
+    const query = raw.trim();
+    if (query.length > MAX_TEAM_SEARCH_LENGTH) {
+        throw new ApiError(400, "INVALID_SEARCH_QUERY", { params: { max: MAX_TEAM_SEARCH_LENGTH } });
+    }
+    return query || null;
+};
+
+// `?owner=mine` — created by the caller directly. `?owner=others` — visible
+// only through organization membership, created by a different member (a
+// teammate's team, e.g. one the caller might now face as an opponent).
+// Omitted means no split, today's behavior.
+const TEAM_OWNER_SCOPES = ['mine', 'others'];
+const parseTeamOwnerScope = (raw) => {
+    if (raw === undefined) return null;
+    if (!TEAM_OWNER_SCOPES.includes(raw)) {
+        throw new ApiError(400, "INVALID_TEAM_OWNER_FILTER", { params: { allowed: TEAM_OWNER_SCOPES.join(', ') } });
+    }
+    return raw;
+};
+
 // Powers the "reuse an existing team" picker on match creation — the
 // scorer's own teams, so they can pass one back as teamAId/teamBId instead
 // of typing a name that createMatch would otherwise treat as brand new.
+// `?q=` narrows by name/shortName (case-insensitive substring); `page`/
+// `limit` follow the same shape as getTeamMatches/getMatchHistory so a
+// growing team list never comes back as one unbounded array.
 const listMyTeams = catchAsync(async (req, res) => {
+    const page = Number.parseInt(req.query.page, 10) || 1;
+    const limit = Number.parseInt(req.query.limit, 10) || DEFAULT_HISTORY_LIMIT;
+    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(limit) || limit < 1 || limit > MAX_HISTORY_LIMIT) {
+        throw new ApiError(400, "INVALID_PAGINATION", { params: { max: MAX_HISTORY_LIMIT } });
+    }
+    const query = parseTeamSearchQuery(req.query.q);
+    const ownerScope = parseTeamOwnerScope(req.query.owner);
+
     const orgIds = await getMemberOrgIds(req.user._id);
-    const teams = await Team.find({
-        isDeleted: false,
-        $or: [{ createdBy: req.user._id }, { organization: { $in: orgIds } }],
-    })
-        .sort({ createdAt: -1 })
-        .populate('organization', 'name');
+    const clauses = [
+        { isDeleted: false },
+        { $or: [{ createdBy: req.user._id }, { organization: { $in: orgIds } }] },
+    ];
+    if (query) {
+        clauses.push({
+            $or: [
+                { name: new RegExp(escapeRegex(query), 'i') },
+                { shortName: new RegExp(escapeRegex(query), 'i') },
+            ],
+        });
+    }
+    if (ownerScope === 'mine') {
+        clauses.push({ createdBy: req.user._id });
+    } else if (ownerScope === 'others') {
+        clauses.push({ createdBy: { $ne: req.user._id } });
+    }
+    const filter = { $and: clauses };
+
+    const [teams, total] = await Promise.all([
+        Team.find(filter)
+            .sort({ createdAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(limit)
+            .populate('organization', 'name'),
+        Team.countDocuments(filter),
+    ]);
 
     return res.status(200).json(new ApiResponse(200, {
         teams: teams.map((team) => ({
@@ -120,6 +184,9 @@ const listMyTeams = catchAsync(async (req, res) => {
             logoUrl: team.logoUrl ?? null,
             organization: toOrganizationSummary(team.organization),
         })),
+        page,
+        limit,
+        total,
     }, req.t("MY_TEAMS_FETCHED")));
 });
 
