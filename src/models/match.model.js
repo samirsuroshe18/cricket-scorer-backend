@@ -15,6 +15,19 @@ const matchResultSchema = new Schema(
   { _id: false }
 );
 
+// Per-match, not on Team: a reused Team or a Player (which persists across a
+// scorer's matches) must be able to captain one match and not the next. The
+// designation ids must each be in `players` — enforced by the squad endpoint.
+const squadSideSchema = new Schema(
+  {
+    players:       [{ type: Schema.Types.ObjectId, ref: 'Player' }],
+    captainId:     { type: Schema.Types.ObjectId, ref: 'Player', default: null },
+    viceCaptainId: { type: Schema.Types.ObjectId, ref: 'Player', default: null },
+    keeperId:      { type: Schema.Types.ObjectId, ref: 'Player', default: null },
+  },
+  { _id: false }
+);
+
 const matchSchema = new Schema(
   {
     title:           { type: String, trim: true, maxlength: 80 },
@@ -46,6 +59,10 @@ const matchSchema = new Schema(
     // ground comes back in whatever case the typist felt like.
     joinCode:        { type: String, uppercase: true, trim: true, minlength: 6, maxlength: 6 },
     result:          { type: matchResultSchema },
+    squads:          {
+      teamA: { type: squadSideSchema, default: () => ({}) },
+      teamB: { type: squadSideSchema, default: () => ({}) },
+    },
     syncStatus:      { type: String, default: 'local', enum: SYNC_STATUS },
     isDeleted:       { type: Boolean, default: false },
     completedAt:     { type: Date },
