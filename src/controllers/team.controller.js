@@ -10,6 +10,7 @@ import { DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT, serializeMatchHistoryItems } 
 import { uploadOnCloudinary } from '../utils/cloudinary.js';
 import { discardStagedFile } from '../utils/discardStagedFile.js';
 import { parseTeamFields } from '../utils/teamFields.js';
+import { computeTeamStats } from '../utils/teamStats.js';
 
 // Shared by getTeamProfile/getTeamMatches: both need the team to exist and
 // belong to the caller before doing anything else. A Team is only ever
@@ -45,6 +46,13 @@ const getTeamProfile = catchAsync(async (req, res) => {
     await team.populate('players');
     await team.populate('organization', 'name');
 
+    // Computed per request rather than stored — see teamStats.js. Newest first
+    // so `form` reads most-recent-result-first.
+    const completedMatches = await Match.find(
+        { $or: [{ teamA: teamId }, { teamB: teamId }], status: 'completed', isDeleted: false },
+        'teamA teamB result'
+    ).sort({ createdAt: -1 }).lean();
+
     return res.status(200).json(new ApiResponse(200, {
         teamId: team._id,
         name: team.name,
@@ -52,6 +60,7 @@ const getTeamProfile = catchAsync(async (req, res) => {
         logoUrl: team.logoUrl ?? null,
         organization: toOrganizationSummary(team.organization),
         canManage: await canManageTeam(team, req.user._id),
+        stats: computeTeamStats(team._id, completedMatches),
         // No feature currently soft-deletes a Player, but the roster
         // shouldn't surface one if that ever changes — same defensive
         // filter as every other isDeleted:false query in this codebase.
