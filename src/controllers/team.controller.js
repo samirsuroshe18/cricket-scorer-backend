@@ -78,6 +78,24 @@ const getTeamProfile = catchAsync(async (req, res) => {
 // — an $or across the two per-side indexes (match.model.js) instead of a
 // single createdBy filter, since a team can be either teamA or teamB. All
 // statuses are shown, same as match history: no completed-only filter.
+// `?status=` narrows the team's matches to one chip of the profile screen's
+// filter row. `live` groups innings_break with live — both reopen the scoring
+// console. Returns null for "no filter". A value that isn't one of these
+// (including a repeated/array param or an empty string) is malformed.
+const TEAM_MATCH_STATUS_GROUPS = {
+    all: null,
+    live: ['live', 'innings_break'],
+    upcoming: ['upcoming'],
+    completed: ['completed'],
+};
+const parseTeamMatchStatus = (raw) => {
+    if (raw === undefined) return null;
+    if (typeof raw !== 'string' || !Object.hasOwn(TEAM_MATCH_STATUS_GROUPS, raw)) {
+        throw new ApiError(400, "INVALID_STATUS_FILTER", { params: { allowed: Object.keys(TEAM_MATCH_STATUS_GROUPS).join(', ') } });
+    }
+    return TEAM_MATCH_STATUS_GROUPS[raw];
+};
+
 const getTeamMatches = catchAsync(async (req, res) => {
     const { teamId } = req.params;
     await findOwnedTeam(teamId, req.user._id);
@@ -89,7 +107,10 @@ const getTeamMatches = catchAsync(async (req, res) => {
         throw new ApiError(400, "INVALID_PAGINATION", { params: { max: MAX_HISTORY_LIMIT } });
     }
 
+    const statuses = parseTeamMatchStatus(req.query.status);
+
     const filter = { $or: [{ teamA: teamId }, { teamB: teamId }], isDeleted: false };
+    if (statuses) filter.status = { $in: statuses };
 
     const [matches, total] = await Promise.all([
         Match.find(filter)
