@@ -6,7 +6,8 @@ import { Match } from '../models/match.model.js';
 import { Organization } from '../models/organization.model.js';
 import { Tournament } from '../models/tournament.model.js';
 import { canAccessTeam, canManageTeam, getMemberOrgIds } from '../utils/organizationAccess.js';
-import { DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT, serializeMatchHistoryItems } from './match.controller.js';
+import { DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT, serializeMatchHistoryItems, findOrCreatePlayerRecord } from './match.controller.js';
+import { Player, PLAYER_ROLES } from '../models/player.model.js';
 import { uploadOnCloudinary } from '../utils/cloudinary.js';
 import { discardStagedFile } from '../utils/discardStagedFile.js';
 import { parseTeamFields } from '../utils/teamFields.js';
@@ -34,6 +35,18 @@ const findOwnedTeam = async (teamId, requesterId) => {
 // not the bare ObjectId Team.organization actually stores.
 const toOrganizationSummary = (organization) =>
     organization ? { id: organization._id, name: organization.name } : null;
+
+// One roster row — shared by the profile's `roster`, add-player and edit-player
+// so the shape lives in one place. `isCaptain`/`isViceCaptain` come from the
+// team-level defaults, never from a match's own squad.
+const toRosterRow = (player, team) => ({
+    playerId: player._id,
+    playerName: player.name,
+    jerseyNumber: player.jerseyNumber ?? null,
+    role: player.role,
+    isCaptain: team.captainId?.equals?.(player._id) ?? false,
+    isViceCaptain: team.viceCaptainId?.equals?.(player._id) ?? false,
+});
 
 // Same ownership pattern as getCareerStats: a malformed teamId throws a raw
 // Mongoose CastError from the query layer itself, which errorHandler already
@@ -64,12 +77,7 @@ const getTeamProfile = catchAsync(async (req, res) => {
         // No feature currently soft-deletes a Player, but the roster
         // shouldn't surface one if that ever changes — same defensive
         // filter as every other isDeleted:false query in this codebase.
-        roster: team.players.filter((player) => !player.isDeleted).map((player) => ({
-            playerId: player._id,
-            playerName: player.name,
-            jerseyNumber: player.jerseyNumber ?? null,
-            role: player.role,
-        })),
+        roster: team.players.filter((player) => !player.isDeleted).map((player) => toRosterRow(player, team)),
     }, req.t("TEAM_PROFILE_FETCHED")));
 });
 
@@ -378,4 +386,95 @@ const deleteTeam = catchAsync(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, { id: team._id }, req.t("TEAM_DELETED")));
 });
 
-export { getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };
+const MAX_PLAYER_NAME_LENGTH = 50;
+
+// Role and jersey number for the roster endpoints. `undefined` and `null` both
+// mean "not provided" (the client omits unset fields); anything else must be
+// valid, so a bad value is a 400 rather than silently dropped. Same rules as
+// PATCH /v1/player/:playerId.
+const parseRosterPlayerFields = (body) => {
+    const { role, jerseyNumber } = body ?? {};
+    const fields = {};
+
+    if (role !== undefined && role !== null) {
+        const trimmedRole = typeof role === 'string' ? role.trim() : '';
+        if (!PLAYER_ROLES.includes(trimmedRole)) {
+            throw new ApiError(400, "INVALID_PLAYER_ROLE");
+        }
+        fields.role = trimmedRole;
+    }
+
+    if (jerseyNumber !== undefined && jerseyNumber !== null) {
+        const num = Number(jerseyNumber);
+        if (typeof jerseyNumber === 'boolean' || jerseyNumber === '' || !Number.isInteger(num) || num < 0 || num > 999) {
+            throw new ApiError(400, "INVALID_JERSEY_NUMBER");
+        }
+        fields.jerseyNumber = num;
+    }
+
+    return fields;
+};
+
+const findManageableTeam = async (teamId, requesterId) => {
+    const team = await findOwnedTeam(teamId, requesterId);
+    if (!(await canManageTeam(team, requesterId))) {
+        throw new ApiError(403, "TEAM_NOT_MANAGEABLE");
+    }
+    return team;
+};
+
+// Add a player to the team's roster by name. Player identity is scorer-scoped
+// (`{createdBy, nameLower}`), so an existing name resolves to the same Player
+// rather than duplicating — the per-match opposing-team collision rule
+// (`rosterPlayer`) has no opposing side here and doesn't apply. 201 when the
+// player is newly on the roster, 200 when already there.
+const addTeamPlayer = catchAsync(async (req, res) => {
+    const team = await findManageableTeam(req.params.teamId, req.user._id);
+
+    const rawName = req.body?.name;
+    const name = typeof rawName === 'string' ? rawName.trim() : '';
+    if (!name || name.length > MAX_PLAYER_NAME_LENGTH) {
+        throw new ApiError(400, "TEAM_PLAYER_NAME_INVALID");
+    }
+    const fields = parseRosterPlayerFields(req.body);
+
+    const player = await findOrCreatePlayerRecord(name, req.user._id);
+    if (Object.keys(fields).length > 0) {
+        Object.assign(player, fields);
+        await player.save();
+    }
+
+    // Decided from the roster as loaded, not from updateOne's modifiedCount:
+    // Team's timestamps bump `updatedAt` on every update, so modifiedCount is
+    // 1 even when $addToSet added nothing.
+    const wasOnRoster = team.players.some((id) => id.equals(player._id));
+    await Team.updateOne({ _id: team._id }, { $addToSet: { players: player._id } });
+    const refreshed = await Team.findById(team._id);
+
+    const status = wasOnRoster ? 200 : 201;
+    return res.status(status).json(new ApiResponse(status, toRosterRow(player, refreshed), req.t("TEAM_PLAYER_ADDED")));
+});
+
+// Edit a rostered player's role/jersey through the team, so an organization
+// owner can manage a roster whose Players were created by another account —
+// PATCH /v1/player/:playerId stays creator-only.
+const updateTeamPlayer = catchAsync(async (req, res) => {
+    const { teamId, playerId } = req.params;
+    const team = await findManageableTeam(teamId, req.user._id);
+
+    if (!team.players.some((id) => String(id) === String(playerId))) {
+        throw new ApiError(404, "PLAYER_NOT_ON_TEAM");
+    }
+    const fields = parseRosterPlayerFields(req.body);
+
+    const player = await Player.findOne({ _id: playerId, isDeleted: false });
+    if (!player) {
+        throw new ApiError(404, "PLAYER_NOT_ON_TEAM");
+    }
+    Object.assign(player, fields);
+    await player.save();
+
+    return res.status(200).json(new ApiResponse(200, toRosterRow(player, team), req.t("PLAYER_UPDATED")));
+});
+
+export { addTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };

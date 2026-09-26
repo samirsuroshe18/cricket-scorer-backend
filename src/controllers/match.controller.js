@@ -3059,4 +3059,4 @@ const getMatchHistory = catchAsync(async (req, res) => {
     }, req.t("MATCH_HISTORY_FETCHED")));
 });
 
-export { createMatch, saveSquad, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, serializeMatchHistoryItems, assignScorer, getScorerCandidates, createMatchWithJoinCode, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };
+export { findOrCreatePlayerRecord, createMatch, saveSquad, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, serializeMatchHistoryItems, assignScorer, getScorerCandidates, createMatchWithJoinCode, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };
