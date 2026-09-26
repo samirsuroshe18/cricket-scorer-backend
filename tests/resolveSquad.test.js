@@ -64,8 +64,14 @@ describe('resolveSquad', () => {
         );
     });
 
-    it.each(['wicketkeeper', 'unknown', 'x', undefined])('rejects role %s', (role) => {
+    it.each(['wicketkeeper', 'unknown', 'x'])('rejects role %s', (role) => {
         expectCode(() => resolveSquad({ players: [{ name: 'Rohit', role }] }), 'INVALID_ROLE');
+    });
+
+    it('treats a missing role as "leave the player\'s stored role alone"', () => {
+        const result = resolveSquad({ players: [{ name: 'Rohit' }] });
+
+        expect(result.players).toEqual([{ name: 'Rohit' }]);
     });
 
     it.each(['', '   ', 'a'.repeat(51), 7])('rejects invalid player name %p', (name) => {

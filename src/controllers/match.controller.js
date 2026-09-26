@@ -96,7 +96,7 @@ const rosterPlayer = async (playerId, teamId, opposingTeamId) => {
 // transaction outright, so the retry could not run in-session. An orphan
 // Player from a later failure is harmless, exactly as an orphan Team is in
 // createMatch.
-const findOrCreatePlayer = async (name, teamId, opposingTeamId, createdBy) => {
+const findOrCreatePlayerRecord = async (name, createdBy) => {
     const nameLower = name.trim().toLowerCase();
     let player;
     try {
@@ -113,6 +113,11 @@ const findOrCreatePlayer = async (name, teamId, opposingTeamId, createdBy) => {
         }
     }
 
+    return player;
+};
+
+const findOrCreatePlayer = async (name, teamId, opposingTeamId, createdBy) => {
+    const player = await findOrCreatePlayerRecord(name, createdBy);
     await rosterPlayer(player._id, teamId, opposingTeamId);
     return player;
 };
@@ -240,11 +245,15 @@ const emptySquadSide = () => ({ players: [], captainId: null, viceCaptainId: nul
 
 // PUT /v1/match/:matchId/squad/:side — replaces one side's squad wholesale, so a
 // retry after a lost response converges on the same state. The match's squad is
-// the authority for who is in it; Team.players only ever grows (see
-// rosterPlayer), so a player dropped here stays rostered on the team for reuse.
-// Identity is by scorer-scoped name (findOrCreatePlayer), which is why a
-// request's `playerId` needs no separate lookup: it can only ever name the
-// Player the same name already resolves to.
+// the authority for who is in it; Team.players only ever grows, so a player
+// dropped here stays rostered on the team for reuse.
+//
+// Deliberately does not go through rosterPlayer's "already on the opposing
+// team" check: Team.players is cumulative across every match a reused team
+// has played, so that check would refuse a player who was merely moved between
+// sides, or who once played for the other team in a different match. The only
+// cross-side rule that means anything here is this match's own other squad,
+// checked below. Everything that can fail runs before the first write.
 const saveSquad = catchAsync(async (req, res) => {
     const { matchId, side } = req.params;
 
@@ -275,27 +284,46 @@ const saveSquad = catchAsync(async (req, res) => {
     }
 
     const otherSide = side === 'teamA' ? 'teamB' : 'teamA';
-    const otherIds = match.squads?.[otherSide]?.players ?? [];
-    if (otherIds.length > 0 && squad.players.length > 0) {
-        const clash = await Player.exists({
-            _id: { $in: otherIds },
-            nameLower: { $in: squad.players.map((player) => player.name.toLowerCase()) },
-        });
-        if (clash) {
-            throw new ApiError(400, "SQUAD_PLAYER_ON_BOTH_SIDES");
+    const teamId = match[side];
+
+    // A `playerId` naming a Player already on this team's roster wins over the
+    // by-name lookup: an organization's roster can hold Players created by a
+    // colleague, and resolving by this caller's name would mint a duplicate
+    // beside the original. The name must still match, so a stale id cannot
+    // silently swap in a different person.
+    const resolveEntry = async (entry) => {
+        if (entry.playerId && mongoose.Types.ObjectId.isValid(entry.playerId)) {
+            const known = await Player.findOne({ _id: entry.playerId, isDeleted: false });
+            const onRoster = known && await Team.exists({ _id: teamId, players: known._id });
+            if (onRoster && known.nameLower === entry.name.toLowerCase()) {
+                return known;
+            }
         }
+        return findOrCreatePlayerRecord(entry.name, req.user._id);
+    };
+
+    const players = [];
+    for (const entry of squad.players) {
+        players.push({ entry, player: await resolveEntry(entry) });
     }
 
-    const teamId = match[side];
-    const opposingTeamId = match[otherSide];
+    const otherIds = (match.squads?.[otherSide]?.players ?? []).map(String);
+    if (players.some(({ player }) => otherIds.includes(String(player._id)))) {
+        throw new ApiError(400, "SQUAD_PLAYER_ON_BOTH_SIDES");
+    }
+
+    if (players.length > 0) {
+        await Team.updateOne({ _id: teamId }, { $addToSet: { players: { $each: players.map(({ player }) => player._id) } } });
+    }
 
     const docs = [];
-    for (const entry of squad.players) {
-        const player = await findOrCreatePlayer(entry.name, teamId, opposingTeamId, req.user._id);
-        if (player.role !== entry.role) {
+    for (const { entry, player } of players) {
+        let role = player.role;
+        if (entry.role !== undefined && entry.role !== player.role) {
             await Player.updateOne({ _id: player._id }, { role: entry.role });
+            role = entry.role;
         }
-        docs.push({ id: player._id, name: player.name, role: entry.role, nameLower: player.nameLower });
+        docs.push({ id: player._id, name: player.name, role, nameLower: player.nameLower });
     }
 
     const idFor = (name) => (name ? docs.find((doc) => doc.nameLower === name.toLowerCase())?.id ?? null : null);

@@ -27,7 +27,11 @@ export const resolveSquad = (body = {}) => {
         if (!name || name.length > MAX_PLAYER_NAME_LENGTH) {
             throw new ApiError(400, 'SQUAD_PLAYER_NAME_INVALID');
         }
-        if (!SQUAD_ROLES.includes(entry.role)) {
+        // Optional: a role is only ever written when the scorer chose one. A
+        // returning player's stored role (which may be `wicketkeeper` or
+        // `unknown`, outside SQUAD_ROLES) is shared across every match and
+        // must survive a squad save that never touched it.
+        if (entry.role !== undefined && !SQUAD_ROLES.includes(entry.role)) {
             throw new ApiError(400, 'INVALID_ROLE');
         }
         const key = normalise(name);
@@ -36,7 +40,8 @@ export const resolveSquad = (body = {}) => {
         }
         seen.add(key);
 
-        const player = { name, role: entry.role };
+        const player = { name };
+        if (entry.role !== undefined) player.role = entry.role;
         if (entry.playerId) player.playerId = entry.playerId;
         return player;
     });

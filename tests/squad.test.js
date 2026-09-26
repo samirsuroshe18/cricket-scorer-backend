@@ -183,4 +183,55 @@ describe('PUT /:matchId/squad/:side', () => {
     const empty = { players: [], captainId: null, viceCaptainId: null, keeperId: null };
     expect(res.body.data.squads).toEqual({ teamA: empty, teamB: empty });
   });
+
+  it('lets a player move from one side to the other after being dropped', async () => {
+    const { token, matchId } = await setup();
+    await putSquad(token, matchId, 'teamA', { players: [{ name: 'Rahul', role: 'batsman' }] });
+    await putSquad(token, matchId, 'teamA', { players: [] });
+
+    const res = await putSquad(token, matchId, 'teamB', { players: [{ name: 'Rahul', role: 'batsman' }] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.players.map((p) => p.name)).toEqual(['Rahul']);
+  });
+
+  it('is not blocked by a player already on the opposing team roster from another match', async () => {
+    const { token, matchId } = await setup();
+    const first = await putSquad(token, matchId, 'teamA', { players: [{ name: 'Rahul', role: 'batsman' }] });
+    const match = await Match.findById(matchId);
+    await Team.updateOne({ _id: match.teamB }, { $addToSet: { players: first.body.data.players[0].playerId } });
+
+    const res = await putSquad(token, matchId, 'teamA', { players: [{ name: 'Rahul', role: 'batsman' }] });
+
+    expect(res.status).toBe(200);
+  });
+
+  it('leaves a stored role alone when the request omits it', async () => {
+    const { token, user, matchId } = await setup();
+    const pant = await Player.create({ name: 'Pant', nameLower: 'pant', createdBy: user._id, role: 'wicketkeeper' });
+
+    const res = await putSquad(token, matchId, 'teamA', { players: [{ name: 'Pant' }], keeper: 'Pant' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.players[0].playerId).toBe(String(pant._id));
+    expect(res.body.data.players[0].role).toBe('wicketkeeper');
+    expect((await Player.findById(pant._id)).role).toBe('wicketkeeper');
+  });
+
+  it("reuses a teammate's Player by playerId instead of creating a duplicate under the caller", async () => {
+    const { token, matchId } = await setup();
+    const { user: colleague } = await createTestUser();
+    const shared = await Player.create({ name: 'Rahul', nameLower: 'rahul', createdBy: colleague._id, role: 'bowler' });
+    const match = await Match.findById(matchId);
+    await Team.updateOne({ _id: match.teamA }, { $addToSet: { players: shared._id } });
+    const before = await Player.countDocuments();
+
+    const res = await putSquad(token, matchId, 'teamA', {
+      players: [{ playerId: String(shared._id), name: 'Rahul', role: 'bowler' }],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.players[0].playerId).toBe(String(shared._id));
+    expect(await Player.countDocuments()).toBe(before);
+  });
 });
