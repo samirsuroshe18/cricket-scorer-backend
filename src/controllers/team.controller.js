@@ -1,4 +1,5 @@
 import catchAsync from '../utils/catchAsync.js';
+import mongoose from 'mongoose';
 import ApiError from '../utils/ApiError.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import { Team } from '../models/team.model.js';
@@ -66,6 +67,8 @@ const getTeamProfile = catchAsync(async (req, res) => {
         'teamA teamB result'
     ).sort({ createdAt: -1 }).lean();
 
+    const activeRoster = team.players.filter((player) => !player.isDeleted);
+
     return res.status(200).json(new ApiResponse(200, {
         teamId: team._id,
         name: team.name,
@@ -77,7 +80,11 @@ const getTeamProfile = catchAsync(async (req, res) => {
         // No feature currently soft-deletes a Player, but the roster
         // shouldn't surface one if that ever changes — same defensive
         // filter as every other isDeleted:false query in this codebase.
-        roster: team.players.filter((player) => !player.isDeleted).map((player) => toRosterRow(player, team)),
+        // A leader whose Player was soft-deleted is no longer on the visible
+        // roster, so it reads back as null rather than a dangling id.
+        captainId: activeRoster.find((player) => team.captainId?.equals(player._id))?._id ?? null,
+        viceCaptainId: activeRoster.find((player) => team.viceCaptainId?.equals(player._id))?._id ?? null,
+        roster: activeRoster.map((player) => toRosterRow(player, team)),
     }, req.t("TEAM_PROFILE_FETCHED")));
 });
 
@@ -329,6 +336,38 @@ const createTeam = catchAsync(async (req, res) => {
 // parseTeamFields as-is: the edit sheet always sends both fields (prefilled
 // from the current profile), so there is no "omitted vs blank shortName"
 // distinction to make on the wire that create doesn't already handle.
+// `captainId`/`viceCaptainId` on PATCH /v1/team/:teamId. A key that is absent
+// leaves that leader untouched, `null` clears it, anything else must be a
+// roster member's id. Returns only the keys that were sent, and validates the
+// resulting pair against the stored other leader so setting just one key still
+// can't make the two the same player. Runs before any assignment, so a
+// rejected leader also discards the rename sent alongside it.
+const parseTeamLeaders = (body, team) => {
+    const leaders = {};
+    for (const key of ['captainId', 'viceCaptainId']) {
+        if (!Object.hasOwn(body ?? {}, key)) continue;
+        const value = body[key];
+        if (value === null) {
+            leaders[key] = null;
+            continue;
+        }
+        if (typeof value !== 'string' || !mongoose.isValidObjectId(value)) {
+            throw new ApiError(400, "INVALID_PLAYER_ID");
+        }
+        if (!team.players.some((id) => String(id) === value)) {
+            throw new ApiError(400, "TEAM_LEADER_NOT_ON_ROSTER");
+        }
+        leaders[key] = value;
+    }
+
+    const captain = 'captainId' in leaders ? leaders.captainId : team.captainId;
+    const viceCaptain = 'viceCaptainId' in leaders ? leaders.viceCaptainId : team.viceCaptainId;
+    if (captain && viceCaptain && String(captain) === String(viceCaptain)) {
+        throw new ApiError(400, "TEAM_LEADERS_MUST_DIFFER");
+    }
+    return leaders;
+};
+
 const updateTeam = catchAsync(async (req, res) => {
     const { teamId } = req.params;
     const team = await findOwnedTeam(teamId, req.user._id);
@@ -337,8 +376,10 @@ const updateTeam = catchAsync(async (req, res) => {
     }
 
     const { name, shortName } = parseTeamFields(req.body);
+    const leaders = parseTeamLeaders(req.body, team);
     team.name = name;
     team.shortName = shortName;
+    Object.assign(team, leaders);
     await team.save();
 
     return res.status(200).json(new ApiResponse(200, {

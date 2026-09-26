@@ -98,6 +98,8 @@
   "TEAM_PLAYER_NAME_INVALID": "Enter a player name of up to 50 characters",
   "TEAM_PLAYER_ADDED": "Player added to the team",
   "PLAYER_NOT_ON_TEAM": "That player isn't on this team's roster",
+  "TEAM_LEADER_NOT_ON_ROSTER": "The captain and vice-captain must be players on the team's roster",
+  "TEAM_LEADERS_MUST_DIFFER": "The captain and vice-captain must be different players",
   "INVALID_SEARCH_QUERY": "Search text must be a single value of at most {{max}} characters",
   "INVALID_TEAM_OWNER_FILTER": "Owner filter must be one of: {{allowed}}",
   "INVALID_STATUS_FILTER": "Status filter must be one of: {{allowed}}",
