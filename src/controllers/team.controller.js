@@ -433,7 +433,7 @@ const MAX_PLAYER_NAME_LENGTH = 50;
 // mean "not provided" (the client omits unset fields); anything else must be
 // valid, so a bad value is a 400 rather than silently dropped. Same rules as
 // PATCH /v1/player/:playerId.
-const parseRosterPlayerFields = (body) => {
+const parseRosterPlayerFields = (body, { allowClear = false } = {}) => {
     const { role, jerseyNumber } = body ?? {};
     const fields = {};
 
@@ -445,7 +445,12 @@ const parseRosterPlayerFields = (body) => {
         fields.role = trimmedRole;
     }
 
-    if (jerseyNumber !== undefined && jerseyNumber !== null) {
+    // On the edit endpoint an explicit `null` removes the number (an omitted
+    // key leaves it); add-player has nothing to remove, so null there just
+    // means "not provided".
+    if (allowClear && jerseyNumber === null) {
+        fields.clearJerseyNumber = true;
+    } else if (jerseyNumber !== undefined && jerseyNumber !== null) {
         const num = Number(jerseyNumber);
         if (typeof jerseyNumber === 'boolean' || jerseyNumber === '' || !Number.isInteger(num) || num < 0 || num > 999) {
             throw new ApiError(400, "INVALID_JERSEY_NUMBER");
@@ -479,7 +484,16 @@ const addTeamPlayer = catchAsync(async (req, res) => {
     }
     const fields = parseRosterPlayerFields(req.body);
 
-    const player = await findOrCreatePlayerRecord(name, req.user._id);
+    // Player identity is scorer-scoped, so a player on this roster may belong
+    // to another account (an org member who scored a match for the team).
+    // Resolve against the roster first, or the owner adding "Rahul" would
+    // create a second Rahul next to the member's.
+    const rostered = await Player.findOne({
+        _id: { $in: team.players },
+        nameLower: name.toLowerCase(),
+        isDeleted: false,
+    });
+    const player = rostered ?? await findOrCreatePlayerRecord(name, req.user._id);
     if (Object.keys(fields).length > 0) {
         Object.assign(player, fields);
         await player.save();
@@ -506,13 +520,14 @@ const updateTeamPlayer = catchAsync(async (req, res) => {
     if (!team.players.some((id) => String(id) === String(playerId))) {
         throw new ApiError(404, "PLAYER_NOT_ON_TEAM");
     }
-    const fields = parseRosterPlayerFields(req.body);
+    const { clearJerseyNumber, ...fields } = parseRosterPlayerFields(req.body, { allowClear: true });
 
     const player = await Player.findOne({ _id: playerId, isDeleted: false });
     if (!player) {
         throw new ApiError(404, "PLAYER_NOT_ON_TEAM");
     }
     Object.assign(player, fields);
+    if (clearJerseyNumber) player.jerseyNumber = undefined;
     await player.save();
 
     return res.status(200).json(new ApiResponse(200, toRosterRow(player, team), req.t("PLAYER_UPDATED")));

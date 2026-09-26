@@ -4,6 +4,7 @@ import { createTestUser } from './helpers/authTestUser.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 import { Player } from '../src/models/player.model.js';
 import { Team } from '../src/models/team.model.js';
+import { User } from '../src/models/user.model.js';
 
 describe('team roster endpoints', () => {
     let app;
@@ -138,6 +139,21 @@ describe('team roster endpoints', () => {
             expect(allowed.status).toBe(201);
         });
 
+        it('reuses a rostered player another account created instead of duplicating it', async () => {
+            const { ownerToken, teamId } = await createOrgTeam();
+            const member = await User.findOne({ email: 'member@example.com' });
+            // A player the org member rostered while scoring — Player identity is
+            // scorer-scoped, so it belongs to the member, not the owner.
+            const memberPlayer = await Player.create({ name: 'Rahul', nameLower: 'rahul', createdBy: member._id });
+            await Team.updateOne({ _id: teamId }, { $addToSet: { players: memberPlayer._id } });
+
+            const res = await addPlayer(ownerToken, teamId, { name: 'rahul' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.data.playerId).toBe(String(memberPlayer._id));
+            expect(await Player.countDocuments({ nameLower: 'rahul' })).toBe(1);
+        });
+
         it('added player appears in GET /v1/team/:id roster', async () => {
             const { token } = await createTestUser();
             const teamId = await createTeam(token);
@@ -161,6 +177,22 @@ describe('team roster endpoints', () => {
 
             expect(res.status).toBe(200);
             expect(res.body.data).toMatchObject({ playerId: body.data.playerId, role: 'bowler', jerseyNumber: 7 });
+        });
+
+        it('an explicit null jerseyNumber clears it, while an omitted key leaves it', async () => {
+            const { token } = await createTestUser();
+            const teamId = await createTeam(token);
+            const { body } = await addPlayer(token, teamId, { name: 'Rohit', jerseyNumber: 45 });
+
+            const untouched = await patchPlayer(token, teamId, body.data.playerId, { role: 'bowler' });
+            expect(untouched.body.data.jerseyNumber).toBe(45);
+
+            const cleared = await patchPlayer(token, teamId, body.data.playerId, { jerseyNumber: null });
+            expect(cleared.status).toBe(200);
+            expect(cleared.body.data.jerseyNumber).toBeNull();
+            expect(cleared.body.data.role).toBe('bowler');
+            const stored = await Player.findById(body.data.playerId);
+            expect(stored.jerseyNumber).toBeUndefined();
         });
 
         it('leaves omitted fields untouched', async () => {
