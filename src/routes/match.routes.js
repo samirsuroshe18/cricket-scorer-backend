@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createMatch, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, assignScorer, getScorerCandidates } from "../controllers/match.controller.js";
+import { createMatch, saveSquad, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, assignScorer, getScorerCandidates } from "../controllers/match.controller.js";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
 
 const router = Router();
@@ -21,6 +21,7 @@ router.route('/create').post(verifyJwt, createMatch);
 // collide with a `:matchId` param route at the same single-segment depth as
 // long as no bare `GET /:matchId` is ever added at this level.
 router.route('/history').get(verifyJwt, getMatchHistory);
+router.route('/:matchId/squad/:side').put(verifyJwt, saveSquad);
 router.route('/:matchId/start-innings').post(verifyJwt, startInnings);
 router.route('/:matchId/select-bowler').post(verifyJwt, selectBowler);
 router.route('/:matchId/score-ball').post(verifyJwt, scoreBall);
