@@ -281,5 +281,13 @@
   "UNREAD_COUNT_FETCHED": "अपठित गिनती प्राप्त हुई",
   "NOTIFICATION_NOT_FOUND": "वह सूचना नहीं मिली",
   "NOTIFICATION_MARKED_READ": "सूचना को पढ़ा हुआ चिह्नित किया गया",
-  "ALL_NOTIFICATIONS_MARKED_READ": "सभी सूचनाएं पढ़ी हुई चिह्नित की गईं"
+  "ALL_NOTIFICATIONS_MARKED_READ": "सभी सूचनाएं पढ़ी हुई चिह्नित की गईं",
+  "SQUAD_SAVED": "स्क्वाड सेव हो गया",
+  "SQUAD_PLAYER_NAMES_MUST_DIFFER": "स्क्वाड के हर खिलाड़ी का नाम अलग होना चाहिए",
+  "SQUAD_PLAYER_NAME_INVALID": "हर खिलाड़ी का नाम आवश्यक है (अधिकतम 50 अक्षर)",
+  "SQUAD_PLAYER_ON_BOTH_SIDES": "यह खिलाड़ी पहले से दूसरी टीम के स्क्वाड में है — यदि यह कोई और व्यक्ति है तो अलग नाम डालें",
+  "SQUAD_CAPTAIN_VC_MUST_DIFFER": "कप्तान और उप-कप्तान अलग-अलग खिलाड़ी होने चाहिए",
+  "SQUAD_DESIGNATION_NOT_IN_SQUAD": "कप्तान, उप-कप्तान और विकेटकीपर स्क्वाड के खिलाड़ी होने चाहिए",
+  "INVALID_SIDE": "साइड teamA या teamB होनी चाहिए",
+  "INVALID_ROLE": "खिलाड़ी की भूमिका बल्लेबाज़, गेंदबाज़ या ऑलराउंडर होनी चाहिए"
 }

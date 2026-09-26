@@ -18,6 +18,7 @@ import { resolveDelivery, EXTRA_TYPES, RUNS_FROM } from '../utils/resolveDeliver
 import { resolveUndo, resolveMatchUndo } from '../utils/resolveUndo.js';
 import { resolveMatchResult } from '../utils/resolveMatchResult.js';
 import { resolveToss } from '../utils/resolveToss.js';
+import { resolveSquad } from '../utils/resolveSquad.js';
 import { resolveSyncDecision } from '../utils/resolveSync.js';
 import { generateScorecard, liveStrikeFigures } from '../utils/scorecard.js';
 import { applyCareerStatsIncrement } from '../utils/careerStats.js';
@@ -228,8 +229,92 @@ const createMatch = catchAsync(async (req, res) => {
         tossDecision: match.tossDecision ?? null,
         status: match.status,
         syncStatus: match.syncStatus,
+        squads: { teamA: emptySquadSide(), teamB: emptySquadSide() },
         createdAt: match.createdAt,
     }, req.t("MATCH_CREATED")));
+});
+
+const TEAM_SIDES = ['teamA', 'teamB'];
+
+const emptySquadSide = () => ({ players: [], captainId: null, viceCaptainId: null, keeperId: null });
+
+// PUT /v1/match/:matchId/squad/:side — replaces one side's squad wholesale, so a
+// retry after a lost response converges on the same state. The match's squad is
+// the authority for who is in it; Team.players only ever grows (see
+// rosterPlayer), so a player dropped here stays rostered on the team for reuse.
+// Identity is by scorer-scoped name (findOrCreatePlayer), which is why a
+// request's `playerId` needs no separate lookup: it can only ever name the
+// Player the same name already resolves to.
+const saveSquad = catchAsync(async (req, res) => {
+    const { matchId, side } = req.params;
+
+    if (!TEAM_SIDES.includes(side)) {
+        throw new ApiError(400, "INVALID_SIDE");
+    }
+
+    const squad = resolveSquad(req.body);
+
+    if (!mongoose.Types.ObjectId.isValid(matchId)) {
+        throw new ApiError(404, "MATCH_NOT_FOUND");
+    }
+    const match = await Match.findOne({ _id: matchId, isDeleted: false });
+    if (!match) {
+        throw new ApiError(404, "MATCH_NOT_FOUND");
+    }
+
+    if (!match.createdBy?.equals(req.user._id) && !match.assignedScorer?.equals(req.user._id)) {
+        throw new ApiError(403, "MATCH_NOT_OWNED");
+    }
+
+    if (match.status === 'completed' || match.status === 'abandoned') {
+        throw new ApiError(400, "MATCH_ALREADY_COMPLETED");
+    }
+
+    if (await Inning.exists({ matchId: match._id })) {
+        throw new ApiError(409, "INNINGS_ALREADY_STARTED");
+    }
+
+    const otherSide = side === 'teamA' ? 'teamB' : 'teamA';
+    const otherIds = match.squads?.[otherSide]?.players ?? [];
+    if (otherIds.length > 0 && squad.players.length > 0) {
+        const clash = await Player.exists({
+            _id: { $in: otherIds },
+            nameLower: { $in: squad.players.map((player) => player.name.toLowerCase()) },
+        });
+        if (clash) {
+            throw new ApiError(400, "SQUAD_PLAYER_ON_BOTH_SIDES");
+        }
+    }
+
+    const teamId = match[side];
+    const opposingTeamId = match[otherSide];
+
+    const docs = [];
+    for (const entry of squad.players) {
+        const player = await findOrCreatePlayer(entry.name, teamId, opposingTeamId, req.user._id);
+        if (player.role !== entry.role) {
+            await Player.updateOne({ _id: player._id }, { role: entry.role });
+        }
+        docs.push({ id: player._id, name: player.name, role: entry.role, nameLower: player.nameLower });
+    }
+
+    const idFor = (name) => (name ? docs.find((doc) => doc.nameLower === name.toLowerCase())?.id ?? null : null);
+    const saved = {
+        players: docs.map((doc) => doc.id),
+        captainId: idFor(squad.captain),
+        viceCaptainId: idFor(squad.viceCaptain),
+        keeperId: idFor(squad.keeper),
+    };
+
+    await Match.updateOne({ _id: match._id }, { $set: { [`squads.${side}`]: saved } });
+
+    return res.status(200).json(new ApiResponse(200, {
+        side,
+        players: docs.map((doc) => ({ playerId: doc.id, name: doc.name, role: doc.role })),
+        captainId: saved.captainId,
+        viceCaptainId: saved.viceCaptainId,
+        keeperId: saved.keeperId,
+    }, req.t("SQUAD_SAVED")));
 });
 
 // Explicit pick rather than spreading the Mongoose subdoc, which would leak internals.
@@ -2946,4 +3031,4 @@ const getMatchHistory = catchAsync(async (req, res) => {
     }, req.t("MATCH_HISTORY_FETCHED")));
 });
 
-export { createMatch, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, serializeMatchHistoryItems, assignScorer, getScorerCandidates, createMatchWithJoinCode, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };
+export { createMatch, saveSquad, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, serializeMatchHistoryItems, assignScorer, getScorerCandidates, createMatchWithJoinCode, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };

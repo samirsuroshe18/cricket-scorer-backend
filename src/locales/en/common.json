@@ -281,5 +281,13 @@
   "UNREAD_COUNT_FETCHED": "Unread count fetched",
   "NOTIFICATION_NOT_FOUND": "That notification couldn't be found",
   "NOTIFICATION_MARKED_READ": "Notification marked as read",
-  "ALL_NOTIFICATIONS_MARKED_READ": "All notifications marked as read"
+  "ALL_NOTIFICATIONS_MARKED_READ": "All notifications marked as read",
+  "SQUAD_SAVED": "Squad saved",
+  "SQUAD_PLAYER_NAMES_MUST_DIFFER": "Each player in a squad needs a different name",
+  "SQUAD_PLAYER_NAME_INVALID": "Every player needs a name of up to 50 characters",
+  "SQUAD_PLAYER_ON_BOTH_SIDES": "That player is already in the other team's squad — enter a different name if this is someone else",
+  "SQUAD_CAPTAIN_VC_MUST_DIFFER": "The captain and vice-captain must be different players",
+  "SQUAD_DESIGNATION_NOT_IN_SQUAD": "The captain, vice-captain and wicketkeeper must be players in the squad",
+  "INVALID_SIDE": "Side must be teamA or teamB",
+  "INVALID_ROLE": "Player role must be batsman, bowler or allrounder"
 }
