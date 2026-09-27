@@ -294,5 +294,18 @@
   "SQUAD_CAPTAIN_VC_MUST_DIFFER": "कप्तान और उप-कप्तान अलग-अलग खिलाड़ी होने चाहिए",
   "SQUAD_DESIGNATION_NOT_IN_SQUAD": "कप्तान, उप-कप्तान और विकेटकीपर स्क्वाड के खिलाड़ी होने चाहिए",
   "INVALID_SIDE": "साइड teamA या teamB होनी चाहिए",
-  "INVALID_ROLE": "खिलाड़ी की भूमिका बल्लेबाज़, गेंदबाज़ या ऑलराउंडर होनी चाहिए"
+  "INVALID_ROLE": "खिलाड़ी की भूमिका बल्लेबाज़, गेंदबाज़ या ऑलराउंडर होनी चाहिए",
+  "INVALID_EMAIL": "कृपया एक मान्य ईमेल पता दर्ज करें",
+  "CANNOT_INVITE_SELF": "आप स्वयं को आमंत्रित नहीं कर सकते",
+  "INVITE_NOT_FOUND": "वह आमंत्रण नहीं मिला",
+  "INVITE_ALREADY_DECLINED": "वह आमंत्रण पहले ही अस्वीकार किया जा चुका है",
+  "INVITE_ALREADY_ACCEPTED": "वह आमंत्रण पहले ही स्वीकार किया जा चुका है",
+  "PLAYER_LIST_FETCHED": "खिलाड़ियों की सूची सफलतापूर्वक प्राप्त हुई",
+  "USER_LOOKED_UP": "उपयोगकर्ता मिल गया",
+  "PLAYER_INVITE_SENT": "आमंत्रण भेज दिया गया",
+  "PLAYER_INVITE_FETCHED": "आमंत्रण सफलतापूर्वक प्राप्त हुआ",
+  "PLAYER_INVITE_ACCEPTED": "आमंत्रण स्वीकार किया गया",
+  "PLAYER_INVITE_DECLINED": "आमंत्रण अस्वीकार किया गया",
+  "NOTIFICATION_PLAYER_INVITE_TITLE": "{{inviter}} ने आपको {{team}} में शामिल होने के लिए आमंत्रित किया",
+  "NOTIFICATION_PLAYER_INVITE_BODY": "अपने खाते को अपनी खिलाड़ी प्रोफ़ाइल से जोड़ने के लिए स्वीकार करें।"
 }

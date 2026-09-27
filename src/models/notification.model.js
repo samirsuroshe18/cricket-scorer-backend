@@ -12,6 +12,7 @@ export const NOTIFICATION_TYPES = [
     'your_turn_to_bowl',
     'auction_started',
     'lot_sold',
+    'player_invite',
 ];
 
 const notificationSchema = new Schema(
