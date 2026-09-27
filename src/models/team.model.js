@@ -13,6 +13,12 @@ const teamSchema = new Schema(
     // not team-scoped (see player.model.js). Maintained via $addToSet by
     // findOrCreatePlayer/resolveBowler, never read/written directly here.
     players:    [{ type: Schema.Types.ObjectId, ref: 'Player' }],
+    // Team-level defaults, distinct from the per-match Match.squads
+    // designations. Each must be in `players` — enforced by PATCH
+    // /v1/team/:teamId, and re-checked on read (a soft-deleted player reads
+    // back as null).
+    captainId:     { type: Schema.Types.ObjectId, ref: 'Player', default: null },
+    viceCaptainId: { type: Schema.Types.ObjectId, ref: 'Player', default: null },
     createdBy:  { type: Schema.Types.ObjectId, ref: 'User' },
     // Optional — null is the default and the only value every team created
     // before this feature, or created ad-hoc since, ever has. Set only via
