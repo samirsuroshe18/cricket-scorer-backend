@@ -783,4 +783,33 @@ const updateTeamPlayer = catchAsync(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, toRosterRow(player, team, await findPendingInvitePlayerIds(team._id)), req.t("PLAYER_UPDATED")));
 });
 
-export { listPlayingForTeams, getTeamPlayerView, getTeamPlayerMatches, findOwnedTeam, inviteTeamPlayer, addTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };
+// Removes a player from the roster the scorer no longer wants — never the
+// Player document itself, which is scorer-owned data that may sit on other
+// teams. Clears a leadership slot that pointed at them, and cancels — not
+// declines — any invite still waiting on their answer: they never got to
+// respond, the scorer withdrew it.
+const removeTeamPlayer = catchAsync(async (req, res) => {
+    const { teamId, playerId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(playerId)) {
+        throw new ApiError(400, "INVALID_ID");
+    }
+    const team = await findManageableTeam(teamId, req.user._id);
+
+    if (!team.players.some((id) => String(id) === String(playerId))) {
+        throw new ApiError(404, "PLAYER_NOT_ON_TEAM");
+    }
+
+    const update = { $pull: { players: playerId } };
+    if (team.captainId?.equals(playerId)) update.captainId = null;
+    if (team.viceCaptainId?.equals(playerId)) update.viceCaptainId = null;
+    await Team.updateOne({ _id: teamId }, update);
+
+    await PlayerInvite.updateMany(
+        { team: teamId, player: playerId, status: 'pending' },
+        { $set: { status: 'cancelled', respondedAt: new Date() } }
+    );
+
+    return res.status(200).json(new ApiResponse(200, { playerId }, req.t("PLAYER_REMOVED")));
+});
+
+export { listPlayingForTeams, getTeamPlayerView, getTeamPlayerMatches, removeTeamPlayer, findOwnedTeam, inviteTeamPlayer, addTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };
