@@ -172,18 +172,17 @@ const parseTeamMatchStatus = (raw) => {
     return TEAM_MATCH_STATUS_GROUPS[raw];
 };
 
-const getTeamMatches = catchAsync(async (req, res) => {
-    const { teamId } = req.params;
-    await findOwnedTeam(teamId, req.user._id);
-
-    const page = Number.parseInt(req.query.page, 10) || 1;
-    const limit = Number.parseInt(req.query.limit, 10) || DEFAULT_HISTORY_LIMIT;
+// Validation, filtering and pagination shared by the owner's and the linked
+// player's match lists; only the guard in front and the shaping after differ.
+const fetchTeamMatchPage = async (teamId, query) => {
+    const page = Number.parseInt(query.page, 10) || 1;
+    const limit = Number.parseInt(query.limit, 10) || DEFAULT_HISTORY_LIMIT;
 
     if (!Number.isInteger(page) || page < 1 || !Number.isInteger(limit) || limit < 1 || limit > MAX_HISTORY_LIMIT) {
         throw new ApiError(400, "INVALID_PAGINATION", { params: { max: MAX_HISTORY_LIMIT } });
     }
 
-    const statuses = parseTeamMatchStatus(req.query.status);
+    const statuses = parseTeamMatchStatus(query.status);
 
     const filter = { $or: [{ teamA: teamId }, { teamB: teamId }], isDeleted: false };
     if (statuses) filter.status = { $in: statuses };
@@ -196,10 +195,33 @@ const getTeamMatches = catchAsync(async (req, res) => {
         Match.countDocuments(filter),
     ]);
 
-    const items = await serializeMatchHistoryItems(matches);
+    return { items: await serializeMatchHistoryItems(matches), page, limit, total };
+};
+
+const getTeamMatches = catchAsync(async (req, res) => {
+    const { teamId } = req.params;
+    await findOwnedTeam(teamId, req.user._id);
+
+    const { items, page, limit, total } = await fetchTeamMatchPage(teamId, req.query);
 
     return res.status(200).json(new ApiResponse(200, {
         matches: items,
+        page,
+        limit,
+        total,
+    }, req.t("TEAM_MATCHES_FETCHED")));
+});
+
+// A linked player sees the matches but not the scorer-side bookkeeping: who
+// created or was assigned to score, and the offline-sync state. `joinCode`
+// stays so a live match can be opened in the spectator view.
+const getTeamPlayerMatches = catchAsync(async (req, res) => {
+    const team = await findPlayerTeam(req.params.teamId, req.user._id);
+
+    const { items, page, limit, total } = await fetchTeamMatchPage(team._id, req.query);
+
+    return res.status(200).json(new ApiResponse(200, {
+        matches: items.map(({ createdBy, assignedScorer, syncStatus, ...visible }) => visible),
         page,
         limit,
         total,
@@ -757,4 +779,4 @@ const updateTeamPlayer = catchAsync(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, toRosterRow(player, team, await findPendingInvitePlayerIds(team._id)), req.t("PLAYER_UPDATED")));
 });
 
-export { listPlayingForTeams, getTeamPlayerView, findOwnedTeam, inviteTeamPlayer, addTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };
+export { listPlayingForTeams, getTeamPlayerView, getTeamPlayerMatches, findOwnedTeam, inviteTeamPlayer, addTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };
