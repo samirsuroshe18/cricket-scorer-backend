@@ -469,7 +469,35 @@ const findManageableTeam = async (teamId, requesterId) => {
     return team;
 };
 
-// Add a player to the team's roster by name. Player identity is scorer-scoped
+// Resolves which Player an add-player request means: `playerId` names one of
+// the caller's own players; otherwise `name` is resolved against the roster
+// first (Player identity is scorer-scoped, so a rostered player may belong to
+// another account — e.g. an org member who scored a match for the team — and
+// the owner adding "Rahul" must not create a second Rahul next to it), then
+// find-or-create by name.
+const resolveRosterPlayer = async (team, body, requesterId) => {
+    if (body?.playerId !== undefined && body?.playerId !== null) {
+        const player = await Player.findOne({ _id: body.playerId, createdBy: requesterId, isDeleted: false });
+        if (!player) {
+            throw new ApiError(404, "PLAYER_NOT_FOUND");
+        }
+        return player;
+    }
+
+    const rawName = body?.name;
+    const name = typeof rawName === 'string' ? rawName.trim() : '';
+    if (!name || name.length > MAX_PLAYER_NAME_LENGTH) {
+        throw new ApiError(400, "TEAM_PLAYER_NAME_INVALID");
+    }
+    const rostered = await Player.findOne({
+        _id: { $in: team.players },
+        nameLower: name.toLowerCase(),
+        isDeleted: false,
+    });
+    return rostered ?? findOrCreatePlayerRecord(name, requesterId);
+};
+
+// Add a player to the team's roster by `playerId` or by name. Player identity is scorer-scoped
 // (`{createdBy, nameLower}`), so an existing name resolves to the same Player
 // rather than duplicating — the per-match opposing-team collision rule
 // (`rosterPlayer`) has no opposing side here and doesn't apply. 201 when the
@@ -477,23 +505,14 @@ const findManageableTeam = async (teamId, requesterId) => {
 const addTeamPlayer = catchAsync(async (req, res) => {
     const team = await findManageableTeam(req.params.teamId, req.user._id);
 
-    const rawName = req.body?.name;
-    const name = typeof rawName === 'string' ? rawName.trim() : '';
-    if (!name || name.length > MAX_PLAYER_NAME_LENGTH) {
-        throw new ApiError(400, "TEAM_PLAYER_NAME_INVALID");
-    }
+    // An existing player picked from the scorer's own list is added by id; a
+    // typed name goes through the roster-first find-or-create below. Only the
+    // scorer's own players qualify by id — another account's player reaches a
+    // roster by name, through the roster-first resolution.
+    // Fields are parsed before resolving so an invalid role/jersey 400s
+    // without a find-or-create having already written a Player.
     const fields = parseRosterPlayerFields(req.body);
-
-    // Player identity is scorer-scoped, so a player on this roster may belong
-    // to another account (an org member who scored a match for the team).
-    // Resolve against the roster first, or the owner adding "Rahul" would
-    // create a second Rahul next to the member's.
-    const rostered = await Player.findOne({
-        _id: { $in: team.players },
-        nameLower: name.toLowerCase(),
-        isDeleted: false,
-    });
-    const player = rostered ?? await findOrCreatePlayerRecord(name, req.user._id);
+    const player = await resolveRosterPlayer(team, req.body, req.user._id);
     if (Object.keys(fields).length > 0) {
         Object.assign(player, fields);
         await player.save();
