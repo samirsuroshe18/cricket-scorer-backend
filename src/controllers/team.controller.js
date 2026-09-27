@@ -543,6 +543,38 @@ const addTeamPlayer = catchAsync(async (req, res) => {
     return res.status(status).json(new ApiResponse(status, toRosterRow(player, refreshed, await findPendingInvitePlayerIds(team._id)), req.t("TEAM_PLAYER_ADDED")));
 });
 
+// How many name variants ("Rahul Sharma", "Rahul Sharma (2)", ...) an invite
+// tries before giving up.
+const MAX_INVITE_NAME_ATTEMPTS = 20;
+
+// The Player an invite is for. Player identity is scorer-scoped by name, but
+// two different people can share a full name — so the natural Player
+// ("Rahul Sharma") is only used when it is free for THIS invitee: unlinked
+// with no pending invite to someone else, or already theirs. Otherwise the next
+// numbered variant is tried, so each person gets a Player of their own and one
+// person accepting can never strand another's invite on the same Player. A
+// Player pending for the same invitee (another team, or a repeat) is reused.
+const resolveInvitePlayer = async (team, invitee, scorerId) => {
+    const baseName = invitee.fullName.trim();
+    for (let attempt = 1; attempt <= MAX_INVITE_NAME_ATTEMPTS; attempt += 1) {
+        const suffix = attempt === 1 ? '' : ` (${attempt})`;
+        const name = `${baseName.slice(0, MAX_PLAYER_NAME_LENGTH - suffix.length)}${suffix}`;
+        const player = await resolveRosterPlayer(team, { name }, scorerId);
+
+        if (player.linkedUserId) {
+            if (player.linkedUserId.equals(invitee._id)) return player;
+            continue;
+        }
+        const rival = await PlayerInvite.exists({
+            player: player._id,
+            status: 'pending',
+            invitedUser: { $ne: invitee._id },
+        });
+        if (!rival) return player;
+    }
+    throw new ApiError(409, "PLAYER_ALREADY_CLAIMED");
+};
+
 // Invite an existing app user onto the roster. The roster gets a normal,
 // scorer-owned Player named after the person immediately; linking that Player
 // to their account is theirs to accept (see player-invite accept), never set
@@ -565,12 +597,7 @@ const inviteTeamPlayer = catchAsync(async (req, res) => {
         throw new ApiError(404, "USER_NOT_FOUND");
     }
 
-    const name = invitee.fullName.trim().slice(0, MAX_PLAYER_NAME_LENGTH);
-    const player = await resolveRosterPlayer(team, { name }, req.user._id);
-
-    if (player.linkedUserId && !player.linkedUserId.equals(invitee._id)) {
-        throw new ApiError(409, "PLAYER_ALREADY_CLAIMED");
-    }
+    const player = await resolveInvitePlayer(team, invitee, req.user._id);
 
     await Team.updateOne({ _id: team._id }, { $addToSet: { players: player._id } });
     const refreshed = await Team.findById(team._id);

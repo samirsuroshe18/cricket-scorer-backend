@@ -107,6 +107,21 @@ describe('/v1/player-invite', () => {
       expect(again.body.data.status).toBe('accepted');
     });
 
+    it('lets two people with the same full name each accept and link their own player', async () => {
+      const { scorerToken, invitee, token, team, inviteId, playerId } = await setup();
+      const { user: second, token: secondToken } = await createTestUser({ email: 'rahul2@example.com', fullName: 'Rahul Sharma' });
+      const other = await request(app).post(`/api/v1/team/${team._id}/invites`).set(auth(scorerToken)).send({ userId: String(second._id) });
+
+      const first = await accept(token, inviteId);
+      const secondRes = await accept(secondToken, other.body.data.inviteId);
+
+      expect(first.status).toBe(200);
+      expect(secondRes.status).toBe(200);
+      expect(other.body.data.player.playerId).not.toBe(playerId);
+      expect(String((await Player.findById(playerId)).linkedUserId)).toBe(String(invitee._id));
+      expect(String((await Player.findById(other.body.data.player.playerId)).linkedUserId)).toBe(String(second._id));
+    });
+
     it('returns 409 INVITE_ALREADY_DECLINED after a decline', async () => {
       const { token, inviteId } = await setup();
       await decline(token, inviteId);

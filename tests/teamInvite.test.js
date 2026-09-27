@@ -121,17 +121,81 @@ describe('POST /v1/team/:teamId/invites', () => {
     expect(await PlayerInvite.countDocuments({ status: 'pending' })).toBe(1);
   });
 
-  it('returns 409 PLAYER_ALREADY_CLAIMED when that name\'s player is linked to another account', async () => {
+  it('gives a different person with the same name their own player when the name is already linked to another account', async () => {
     const { scorer, token, invitee, team } = await setup();
     const { user: holder } = await createTestUser();
-    await Player.create({ name: 'Rahul Sharma', nameLower: 'rahul sharma', createdBy: scorer._id, linkedUserId: holder._id });
+    const original = await Player.create({ name: 'Rahul Sharma', nameLower: 'rahul sharma', createdBy: scorer._id, linkedUserId: holder._id });
+
+    const res = await invite(token, team._id, { userId: String(invitee._id) });
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.player.playerName).toBe('Rahul Sharma (2)');
+    expect(res.body.data.player.playerId).not.toBe(String(original._id));
+    expect(String((await Player.findById(original._id)).linkedUserId)).toBe(String(holder._id));
+    const created = await Player.findById(res.body.data.player.playerId);
+    expect(created.linkedUserId).toBeNull();
+    const stored = await PlayerInvite.findById(res.body.data.inviteId);
+    expect(String(stored.player)).toBe(String(created._id));
+    expect(String(stored.invitedUser)).toBe(String(invitee._id));
+  });
+
+  it('gives two different people with the same name each their own player and pending invite', async () => {
+    const { token, invitee, team } = await setup();
+    const { user: second } = await createTestUser({ email: 'rahul2@example.com', fullName: 'Rahul Sharma' });
+
+    const first = await invite(token, team._id, { userId: String(invitee._id) });
+    const other = await invite(token, team._id, { userId: String(second._id) });
+
+    expect(first.status).toBe(201);
+    expect(other.status).toBe(201);
+    expect(first.body.data.player.playerName).toBe('Rahul Sharma');
+    expect(other.body.data.player.playerName).toBe('Rahul Sharma (2)');
+    expect(first.body.data.player.playerId).not.toBe(other.body.data.player.playerId);
+    expect((await Team.findById(team._id)).players).toHaveLength(2);
+    expect(await PlayerInvite.countDocuments({ status: 'pending' })).toBe(2);
+    // one pending invite per player, so accepting one can never strand the other
+    const perPlayer = await PlayerInvite.aggregate([{ $group: { _id: '$player', n: { $sum: 1 } } }]);
+    expect(perPlayer.every((row) => row.n === 1)).toBe(true);
+  });
+
+  it('reuses the same player when the same person is invited to a second team', async () => {
+    const { scorer, token, invitee, team } = await setup();
+    const secondTeam = await Team.create({ name: 'Riverside 2nd XI', createdBy: scorer._id });
+    const first = await invite(token, team._id, { userId: String(invitee._id) });
+
+    const again = await invite(token, secondTeam._id, { userId: String(invitee._id) });
+
+    expect(again.status).toBe(201);
+    expect(again.body.data.player.playerId).toBe(first.body.data.player.playerId);
+    expect(again.body.data.inviteId).not.toBe(first.body.data.inviteId);
+  });
+
+  it('keeps a long full name within the 50-character player limit when a suffix is added', async () => {
+    const { scorer, token, team } = await setup();
+    const longName = 'A'.repeat(50);
+    const { user: a } = await createTestUser({ fullName: longName });
+    const { user: b } = await createTestUser({ fullName: longName });
+
+    await invite(token, team._id, { userId: String(a._id) });
+    const res = await invite(token, team._id, { userId: String(b._id) });
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.player.playerName.length).toBeLessThanOrEqual(50);
+    expect(res.body.data.player.playerName.endsWith(' (2)')).toBe(true);
+    expect(await Player.countDocuments({ createdBy: scorer._id })).toBe(2);
+  });
+
+  it('returns 409 PLAYER_ALREADY_CLAIMED once every candidate name is taken by other accounts', async () => {
+    const { scorer, token, invitee, team } = await setup();
+    const { user: holder } = await createTestUser();
+    const names = ['Rahul Sharma', ...Array.from({ length: 19 }, (_, i) => `Rahul Sharma (${i + 2})`)];
+    await Player.insertMany(names.map((name) => ({ name, nameLower: name.toLowerCase(), createdBy: scorer._id, linkedUserId: holder._id })));
 
     const res = await invite(token, team._id, { userId: String(invitee._id) });
 
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('PLAYER_ALREADY_CLAIMED');
     expect(await PlayerInvite.countDocuments({})).toBe(0);
-    expect(await Notification.countDocuments({})).toBe(0);
   });
 
   it('adds the roster entry without an invite or notification when the player is already linked to the invitee', async () => {
