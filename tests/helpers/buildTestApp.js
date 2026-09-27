@@ -11,6 +11,7 @@ import organizationRouter from '../../src/routes/organization.routes.js';
 import tournamentRouter from '../../src/routes/tournament.routes.js';
 import searchRouter from '../../src/routes/search.routes.js';
 import notificationRouter from '../../src/routes/notification.routes.js';
+import userRouter from '../../src/routes/user.routes.js';
 
 /**
  * A minimal Express app, not the real `src/app.js` — that file initializes
@@ -44,7 +45,7 @@ import notificationRouter from '../../src/routes/notification.routes.js';
  * file, never explicitly closed) doesn't hold the event loop open and hang
  * Jest's own process exit at the end of a run.
  */
-export const buildTestApp = ({ withTranslations = false, withPlayer = false, withTeam = false, withOrganization = false, withTournament = false, withSearch = false, withNotifications = false } = {}) => {
+export const buildTestApp = ({ withTranslations = false, withPlayer = false, withTeam = false, withOrganization = false, withTournament = false, withSearch = false, withNotifications = false, withUser = false } = {}) => {
   const app = express();
   app.use(express.json());
   app.use(sanitizeMiddleware);
@@ -70,6 +71,9 @@ export const buildTestApp = ({ withTranslations = false, withPlayer = false, wit
   }
   if (withNotifications) {
     app.use('/api/v1/notifications', notificationRouter);
+  }
+  if (withUser) {
+    app.use('/api/v1/user', userRouter);
   }
   app.use(errorHandler);
 

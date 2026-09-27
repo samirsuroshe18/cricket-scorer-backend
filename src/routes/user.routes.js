@@ -1,9 +1,9 @@
 import { Router } from "express";
-import { changeCurrentPassword, forgotPassword, getCurrentUser, getUserLanguage, loginUser, logoutUser, refreshAccessToken, registerUser, resendOtp, setPassword, updateFCMToken, updateProfile, updateUserLanguage, verifyOtp } from "../controllers/user.controller.js";
+import { changeCurrentPassword, forgotPassword, getCurrentUser, getUserLanguage, loginUser, logoutUser, refreshAccessToken, registerUser, resendOtp, setPassword, updateFCMToken, updateProfile, updateUserLanguage, verifyOtp, lookupUserByEmail } from "../controllers/user.controller.js";
 import { getMyCareerStats } from "../controllers/player.controller.js";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
 import { upload } from "../middlewares/multer.middleware.js";
-import { authLimiter } from "../middlewares/rateLimit.middleware.js";
+import { authLimiter, lookupLimiter } from "../middlewares/rateLimit.middleware.js";
 
 const router = Router();
 
@@ -23,6 +23,7 @@ router.route('/update-fcm').post(verifyJwt, updateFCMToken);
 router.route('/get-current-user').get(verifyJwt, getCurrentUser);
 router.route('/change-password').post(verifyJwt, changeCurrentPassword);
 router.route('/update-profile').post(verifyJwt, upload.single('file'), updateProfile);
+router.route('/lookup').get(verifyJwt, lookupLimiter, lookupUserByEmail);
 router.route('/me/career-stats').get(verifyJwt, getMyCareerStats);
 
 export default router;
