@@ -16,6 +16,7 @@ import { computeTeamStats } from '../utils/teamStats.js';
 import { User } from '../models/user.model.js';
 import { PlayerInvite } from '../models/playerInvite.model.js';
 import { notifyUser } from '../utils/notify.js';
+import { seedPlayerFromProfile } from '../utils/seedPlayerFromProfile.js';
 
 // Shared by getTeamProfile/getTeamMatches: both need the team to exist and
 // belong to the caller before doing anything else. A Team is only ever
@@ -709,7 +710,10 @@ const inviteTeamPlayer = catchAsync(async (req, res) => {
         throw new ApiError(404, "USER_NOT_FOUND");
     }
 
-    const player = await resolveInvitePlayer(team, invitee, req.user._id);
+    const player = await seedPlayerFromProfile(
+        await resolveInvitePlayer(team, invitee, req.user._id),
+        invitee,
+    );
 
     await Team.updateOne({ _id: team._id }, { $addToSet: { players: player._id } });
     const refreshed = await Team.findById(team._id);
