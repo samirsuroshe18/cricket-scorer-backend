@@ -122,6 +122,25 @@ const findOrCreatePlayer = async (name, teamId, opposingTeamId, createdBy) => {
     return player;
 };
 
+// Resolves one opener/opening-bowler slot either by an explicit Player id (a
+// scorer picking an exact, already-rostered player — the same disambiguation
+// resolveBowler gives a returning bowler) or, absent an id, by the existing
+// name-based findOrCreatePlayer. Like resolveBowler's own id branch, an id
+// match skips the opposing-roster check entirely: naming a player by id is
+// already a precise identity claim, not a name that could collide.
+const resolveOpener = async ({ playerId, name, teamId, opposingTeamId, createdBy, notFoundCode }) => {
+    if (playerId) {
+        const player = await Player.findOne({ _id: playerId, createdBy });
+        const rostered = player && await Team.exists({ _id: teamId, players: player._id });
+        if (!player || !rostered) {
+            throw new ApiError(404, notFoundCode);
+        }
+        return player;
+    }
+
+    return findOrCreatePlayer(name, teamId, opposingTeamId, createdBy);
+};
+
 // Six characters over a 30-character alphabet is ~729 million codes, so a
 // collision is vanishingly rare — but "vanishingly rare" is not "impossible",
 // and the unique index on Match.joinCode is what makes retrying correct rather
@@ -640,7 +659,7 @@ const respondWithExistingBall = async (match, idempotencyKey, res, req) => {
 // that cannot apply to over 1, since there is no previous over.
 const startInnings = catchAsync(async (req, res) => {
     const { matchId } = req.params;
-    const { strikerName, nonStrikerName, bowlerName } = req.body;
+    const { strikerName, nonStrikerName, bowlerName, strikerId, nonStrikerId, bowlerId } = req.body;
 
     if (!asString(strikerName).trim() || !asString(nonStrikerName).trim()) {
         throw new ApiError(400, "OPENER_NAMES_REQUIRED");
@@ -661,6 +680,20 @@ const startInnings = catchAsync(async (req, res) => {
 
     if (!bowler || bowler.length > MAX_PLAYER_NAME_LENGTH) {
         throw new ApiError(400, "BOWLER_NAME_REQUIRED");
+    }
+
+    // Each id is optional — present, it names an exact rostered player (a
+    // scorer picking from the roster instead of typing); absent, the
+    // corresponding *Name field is resolved the existing find-or-create way.
+    // See validateBowlerInput for the same shape check on selectBowler.
+    if (strikerId != null && !mongoose.isValidObjectId(strikerId)) {
+        throw new ApiError(400, "INVALID_STRIKER_ID");
+    }
+    if (nonStrikerId != null && !mongoose.isValidObjectId(nonStrikerId)) {
+        throw new ApiError(400, "INVALID_NON_STRIKER_ID");
+    }
+    if (bowlerId != null && !mongoose.isValidObjectId(bowlerId)) {
+        throw new ApiError(400, "INVALID_BOWLER_ID");
     }
 
     const match = await Match.findOne({ _id: matchId, isDeleted: false });
@@ -708,9 +741,18 @@ const startInnings = catchAsync(async (req, res) => {
     // undetected. Innings 1 never has anything to collide with (both rosters
     // start empty); innings 2 can, once the sides have swapped and the other
     // team's roster from innings 1 is already committed.
-    const strikerDoc = await findOrCreatePlayer(striker, battingTeamId, bowlingTeamId, req.user._id);
-    const nonStrikerDoc = await findOrCreatePlayer(nonStriker, battingTeamId, bowlingTeamId, req.user._id);
-    const bowlerDoc = await findOrCreatePlayer(bowler, bowlingTeamId, battingTeamId, req.user._id);
+    const strikerDoc = await resolveOpener({
+        playerId: strikerId ?? null, name: striker, teamId: battingTeamId, opposingTeamId: bowlingTeamId,
+        createdBy: req.user._id, notFoundCode: "STRIKER_NOT_FOUND",
+    });
+    const nonStrikerDoc = await resolveOpener({
+        playerId: nonStrikerId ?? null, name: nonStriker, teamId: battingTeamId, opposingTeamId: bowlingTeamId,
+        createdBy: req.user._id, notFoundCode: "NON_STRIKER_NOT_FOUND",
+    });
+    const bowlerDoc = await resolveOpener({
+        playerId: bowlerId ?? null, name: bowler, teamId: bowlingTeamId, opposingTeamId: battingTeamId,
+        createdBy: req.user._id, notFoundCode: "BOWLER_NOT_FOUND",
+    });
 
     const session = await mongoose.startSession();
     try {
