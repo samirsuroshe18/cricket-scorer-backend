@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { addTeamPlayer, inviteTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo } from "../controllers/team.controller.js";
+import { listPlayingForTeams, addTeamPlayer, inviteTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo } from "../controllers/team.controller.js";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
 import { upload } from "../middlewares/multer.middleware.js";
 
@@ -7,6 +7,7 @@ const router = Router();
 
 router.route('/').post(verifyJwt, createTeam);
 router.route('/').get(verifyJwt, listMyTeams);
+router.route('/playing-for').get(verifyJwt, listPlayingForTeams);
 router.route('/:teamId')
     .get(verifyJwt, getTeamProfile)
     .patch(verifyJwt, updateTeam)

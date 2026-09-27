@@ -6,7 +6,7 @@ import { Team } from '../models/team.model.js';
 import { Match } from '../models/match.model.js';
 import { Organization } from '../models/organization.model.js';
 import { Tournament } from '../models/tournament.model.js';
-import { canAccessTeam, canManageTeam, getMemberOrgIds } from '../utils/organizationAccess.js';
+import { canAccessTeam, canManageTeam, getMemberOrgIds, isRosterPlayer } from '../utils/organizationAccess.js';
 import { DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT, serializeMatchHistoryItems, findOrCreatePlayerRecord } from './match.controller.js';
 import { Player, PLAYER_ROLES } from '../models/player.model.js';
 import { uploadOnCloudinary } from '../utils/cloudinary.js';
@@ -247,6 +247,49 @@ const listMyTeams = catchAsync(async (req, res) => {
         limit,
         total,
     }, req.t("MY_TEAMS_FETCHED")));
+});
+
+// Teams the caller is on the roster of through a linked Player — the "Teams I
+// play for" list. Teams the caller can already reach as creator or
+// organization member are left out so nothing shows twice; those live in
+// listMyTeams.
+const listPlayingForTeams = catchAsync(async (req, res) => {
+    const page = Number.parseInt(req.query.page, 10) || 1;
+    const limit = Number.parseInt(req.query.limit, 10) || DEFAULT_HISTORY_LIMIT;
+    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(limit) || limit < 1 || limit > MAX_HISTORY_LIMIT) {
+        throw new ApiError(400, "INVALID_PAGINATION", { params: { max: MAX_HISTORY_LIMIT } });
+    }
+
+    const myPlayers = await Player.find({ linkedUserId: req.user._id, isDeleted: false }, 'name');
+    const orgIds = await getMemberOrgIds(req.user._id);
+    const filter = {
+        isDeleted: false,
+        players: { $in: myPlayers.map((player) => player._id) },
+        createdBy: { $ne: req.user._id },
+        organization: { $nin: orgIds },
+    };
+
+    const [teams, total] = await Promise.all([
+        Team.find(filter)
+            .sort({ createdAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(limit),
+        Team.countDocuments(filter),
+    ]);
+
+    const nameById = new Map(myPlayers.map((player) => [String(player._id), player.name]));
+    return res.status(200).json(new ApiResponse(200, {
+        teams: teams.map((team) => ({
+            id: team._id,
+            name: team.name,
+            shortName: team.shortName ?? null,
+            logoUrl: team.logoUrl ?? null,
+            myPlayerName: nameById.get(String(team.players.find((id) => nameById.has(String(id))))) ?? null,
+        })),
+        page,
+        limit,
+        total,
+    }, req.t("PLAYING_FOR_TEAMS_FETCHED")));
 });
 
 // Attach an existing standalone team to an organization the caller owns, or
@@ -667,4 +710,4 @@ const updateTeamPlayer = catchAsync(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, toRosterRow(player, team, await findPendingInvitePlayerIds(team._id)), req.t("PLAYER_UPDATED")));
 });
 
-export { findOwnedTeam, inviteTeamPlayer, addTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };
+export { listPlayingForTeams, findOwnedTeam, inviteTeamPlayer, addTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };
