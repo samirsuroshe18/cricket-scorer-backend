@@ -1,4 +1,5 @@
 import { Organization } from '../models/organization.model.js';
+import { Player } from '../models/player.model.js';
 
 // True when `userId` is present in `org.members`, regardless of role — an
 // owner is always also a member entry (see organization.controller.js's
@@ -65,4 +66,17 @@ export const canAssignScorer = async (match, teamA, teamB, userId) => {
     }
     const ownerIds = await qualifyingOrgOwnerIds(teamA, teamB);
     return ownerIds.includes(String(userId));
+};
+
+// True if `userId` is linked to a non-deleted Player on `team`'s roster. The
+// link (Player.linkedUserId) is only ever set by the account holder's own
+// accept/claim, so a pending or declined invite grants nothing. Read-only
+// access only — never use this to guard a write.
+export const isRosterPlayer = async (team, userId) => {
+    const linked = await Player.exists({
+        _id: { $in: team.players },
+        linkedUserId: userId,
+        isDeleted: false,
+    });
+    return linked != null;
 };

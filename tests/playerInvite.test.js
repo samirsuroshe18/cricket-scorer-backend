@@ -162,6 +162,16 @@ describe('/v1/player-invite', () => {
 
       expect(res.status).toBe(401);
     });
+
+    it('returns 409 INVITE_CANCELLED once the scorer removes the player', async () => {
+      const { scorerToken, token, inviteId, team, playerId } = await setup();
+      await request(app).delete(`/api/v1/team/${team._id}/players/${playerId}`).set(auth(scorerToken));
+
+      const res = await accept(token, inviteId);
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('INVITE_CANCELLED');
+    });
   });
 
   describe('POST /:inviteId/decline', () => {
@@ -207,6 +217,16 @@ describe('/v1/player-invite', () => {
 
       expect(res.status).toBe(404);
       expect((await PlayerInvite.findById(inviteId)).status).toBe('pending');
+    });
+
+    it('returns 409 INVITE_CANCELLED once the scorer removes the player', async () => {
+      const { scorerToken, token, inviteId, team, playerId } = await setup();
+      await request(app).delete(`/api/v1/team/${team._id}/players/${playerId}`).set(auth(scorerToken));
+
+      const res = await decline(token, inviteId);
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('INVITE_CANCELLED');
     });
   });
 });
