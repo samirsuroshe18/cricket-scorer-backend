@@ -6,6 +6,7 @@ import teamRouter from '../src/routes/team.routes.js';
 import organizationRouter from '../src/routes/organization.routes.js';
 import tournamentRouter from '../src/routes/tournament.routes.js';
 import searchRouter from '../src/routes/search.routes.js';
+import playerInviteRouter from '../src/routes/playerInvite.routes.js';
 import { verifyJwt } from '../src/middlewares/auth.middleware.js';
 
 // Auth in this app is opt-in, per-route and positional: `verifyJwt` is an
@@ -71,6 +72,9 @@ const PUBLIC_ROUTES = {
     // Search requires login like everything else in this app, even though
     // its results themselves carry no membership restriction.
     search: [],
+    // Every player-invite route reads or answers the signed-in invitee's own
+    // invite, so none belong on this allowlist.
+    playerInvite: [],
 };
 
 // `catchAsync` returns an anonymous arrow, so `verifyJwt.name` is the empty
@@ -114,6 +118,7 @@ const ROUTERS = {
     organization: organizationRouter,
     tournament: tournamentRouter,
     search: searchRouter,
+    playerInvite: playerInviteRouter,
 };
 
 describe('every route is authenticated unless explicitly allowlisted', () => {
