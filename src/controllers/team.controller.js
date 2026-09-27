@@ -13,6 +13,9 @@ import { uploadOnCloudinary } from '../utils/cloudinary.js';
 import { discardStagedFile } from '../utils/discardStagedFile.js';
 import { parseTeamFields } from '../utils/teamFields.js';
 import { computeTeamStats } from '../utils/teamStats.js';
+import { User } from '../models/user.model.js';
+import { PlayerInvite } from '../models/playerInvite.model.js';
+import { notifyUser } from '../utils/notify.js';
 
 // Shared by getTeamProfile/getTeamMatches: both need the team to exist and
 // belong to the caller before doing anything else. A Team is only ever
@@ -529,6 +532,80 @@ const addTeamPlayer = catchAsync(async (req, res) => {
     return res.status(status).json(new ApiResponse(status, toRosterRow(player, refreshed), req.t("TEAM_PLAYER_ADDED")));
 });
 
+// Invite an existing app user onto the roster. The roster gets a normal,
+// scorer-owned Player named after the person immediately; linking that Player
+// to their account is theirs to accept (see player-invite accept), never set
+// here — `Player.linkedUserId` is what your-turn pushes go to. Repeating an
+// invite for someone with a pending one is a harmless 200 no-op.
+const inviteTeamPlayer = catchAsync(async (req, res) => {
+    const team = await findManageableTeam(req.params.teamId, req.user._id);
+
+    const userId = req.body?.userId;
+    if (typeof userId !== 'string' || userId === '') {
+        throw new ApiError(400, "INVALID_ID");
+    }
+    if (userId === String(req.user._id)) {
+        throw new ApiError(400, "CANNOT_INVITE_SELF");
+    }
+    // Same visibility rule as the email lookup: only an active, verified,
+    // non-deleted account can be invited.
+    const invitee = await User.findOne({ _id: userId, accountStatus: 'active', isDeleted: false, isEmailVerified: true });
+    if (!invitee) {
+        throw new ApiError(404, "USER_NOT_FOUND");
+    }
+
+    const name = invitee.fullName.trim().slice(0, MAX_PLAYER_NAME_LENGTH);
+    const player = await resolveRosterPlayer(team, { name }, req.user._id);
+
+    if (player.linkedUserId && !player.linkedUserId.equals(invitee._id)) {
+        throw new ApiError(409, "PLAYER_ALREADY_CLAIMED");
+    }
+
+    await Team.updateOne({ _id: team._id }, { $addToSet: { players: player._id } });
+    const refreshed = await Team.findById(team._id);
+    const respond = (status, inviteId, inviteStatus) =>
+        res.status(status).json(new ApiResponse(status, {
+            inviteId,
+            status: inviteStatus,
+            player: toRosterRow(player, refreshed),
+        }, req.t("PLAYER_INVITE_SENT")));
+
+    // Already linked to this very person: nothing to ask, they are on the roster.
+    if (player.linkedUserId) {
+        return respond(200, null, 'accepted');
+    }
+
+    let created;
+    try {
+        created = await PlayerInvite.create({
+            player: player._id,
+            team: team._id,
+            invitedUser: invitee._id,
+            invitedBy: req.user._id,
+        });
+    } catch (err) {
+        if (err.code !== 11000) throw err;
+        const pending = await PlayerInvite.findOne({ team: team._id, invitedUser: invitee._id, status: 'pending' });
+        return respond(200, pending._id, 'pending');
+    }
+
+    await notifyUser({
+        recipientId: invitee._id,
+        type: 'player_invite',
+        titleKey: 'NOTIFICATION_PLAYER_INVITE_TITLE',
+        bodyKey: 'NOTIFICATION_PLAYER_INVITE_BODY',
+        params: { inviter: req.user.fullName, team: team.name },
+        data: {
+            type: 'player_invite',
+            inviteId: String(created._id),
+            teamId: String(team._id),
+            teamName: team.name,
+        },
+    });
+
+    return respond(201, created._id, 'pending');
+});
+
 // Edit a rostered player's role/jersey through the team, so an organization
 // owner can manage a roster whose Players were created by another account —
 // PATCH /v1/player/:playerId stays creator-only.
@@ -552,4 +629,4 @@ const updateTeamPlayer = catchAsync(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, toRosterRow(player, team), req.t("PLAYER_UPDATED")));
 });
 
-export { findOwnedTeam, addTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };
+export { findOwnedTeam, inviteTeamPlayer, addTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };
