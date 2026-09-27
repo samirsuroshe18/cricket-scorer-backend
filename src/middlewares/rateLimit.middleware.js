@@ -26,3 +26,15 @@ export const authLimiter = rateLimit({
     skipSuccessfulRequests: true,
     handler,
 });
+
+// Exact-email lookup is a "does this address have an account" probe, so it gets
+// its own budget, keyed by the signed-in user (verifyJwt runs first) rather than
+// IP: every request counts, successful or not, since a hit is the leak.
+export const lookupLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 30,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    keyGenerator: (req) => String(req.user._id),
+    handler,
+});

@@ -675,7 +675,44 @@ const updateUserLanguage = catchAsync(async (req, res) => {
     );
 });
 
+// RFC 5322 atext local part, dots only between atoms, so a value that is really
+// a pattern (".*@x.com") is rejected here. The lookup itself is always equality.
+const LOOKUP_EMAIL_PATTERN = /^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$/;
+
+// Invite-by-email's "find the real user" step: one account by exact address,
+// never a search. The response is pinned to what a scorer needs to confirm
+// they have the right person; a missing, deleted, blocked, suspended or
+// unverified account all answer the same 404 so the reply doesn't say why.
+const lookupUserByEmail = catchAsync(async (req, res) => {
+    const raw = req.query.email;
+    const email = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    if (!LOOKUP_EMAIL_PATTERN.test(email)) {
+        throw new ApiError(400, "INVALID_EMAIL");
+    }
+    if (email === req.user.email) {
+        throw new ApiError(400, "CANNOT_INVITE_SELF");
+    }
+
+    const user = await User.findOne({
+        email,
+        accountStatus: 'active',
+        isDeleted: false,
+        isEmailVerified: true,
+    });
+    if (!user) {
+        throw new ApiError(404, "USER_NOT_FOUND");
+    }
+
+    return res.status(200).json(new ApiResponse(200, {
+        userId: user._id,
+        fullName: user.fullName,
+        userName: user.userName ?? null,
+        photoUrl: user.photoUrl ?? null,
+    }, req.t("USER_LOOKED_UP")));
+});
+
 export {
+    lookupUserByEmail,
     registerUser,
     loginUser,
     logoutUser,

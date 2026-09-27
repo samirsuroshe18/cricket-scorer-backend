@@ -63,6 +63,7 @@ describe('team roster endpoints', () => {
                 role: 'batsman',
                 isCaptain: false,
                 isViceCaptain: false,
+                inviteStatus: null,
             });
         });
 

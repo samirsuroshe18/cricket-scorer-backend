@@ -64,12 +64,14 @@ import organizationRouter from './routes/organization.routes.js';
 import tournamentRouter from './routes/tournament.routes.js';
 import searchRouter from './routes/search.routes.js';
 import notificationRouter from './routes/notification.routes.js';
+import playerInviteRouter from './routes/playerInvite.routes.js';
 
 //Routes declaration
 app.use("/api/v1/user", userRouter);
 app.use("/api/v1/translations", translationRouter);
 app.use("/api/v1/match", matchRouter);
 app.use("/api/v1/player", playerRouter);
+app.use("/api/v1/player-invite", playerInviteRouter);
 app.use("/api/v1/team", teamRouter);
 app.use("/api/v1/tournament", tournamentRouter);
 app.use("/api/v1/organization", organizationRouter);

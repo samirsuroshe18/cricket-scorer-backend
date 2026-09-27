@@ -5,6 +5,9 @@ import { Player, PLAYER_ROLES } from '../models/player.model.js';
 import { CareerStats } from '../models/careerStats.model.js';
 import { BATTING_STYLES, BOWLING_STYLES } from '../models/user.model.js';
 import { battingAverage, strikeRate, economy } from '../utils/careerStats.js';
+import { linkPlayerToUser } from '../utils/linkPlayerToUser.js';
+import { findOwnedTeam } from './team.controller.js';
+import { DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT } from './match.controller.js';
 
 // A Player with no CareerStats row (never finished a match) is not an error
 // — the zero-value shape a screen renders as "no matches yet" rather than an
@@ -174,35 +177,11 @@ const updatePlayer = catchAsync(async (req, res) => {
 // never silently relink someone else's claimed identity out from under
 // them.
 const claimPlayer = catchAsync(async (req, res) => {
-    const { playerId } = req.params;
-
-    const player = await Player.findOne({ _id: playerId, isDeleted: false });
-    if (!player) {
-        throw new ApiError(404, "PLAYER_NOT_FOUND");
-    }
-
-    if (player.linkedUserId?.equals(req.user._id)) {
-        return res.status(200).json(new ApiResponse(200, {
-            playerId: player._id,
-            linkedUserId: player.linkedUserId,
-        }, req.t("PLAYER_CLAIMED")));
-    }
-
-    // Atomic compare-and-swap rather than a read-then-write on the doc
-    // already fetched above — closes the race where two different accounts
-    // claim the same still-unlinked Player at the same moment.
-    const updated = await Player.findOneAndUpdate(
-        { _id: playerId, linkedUserId: null },
-        { $set: { linkedUserId: req.user._id } },
-        { new: true }
-    );
-    if (!updated) {
-        throw new ApiError(409, "PLAYER_ALREADY_CLAIMED");
-    }
+    const player = await linkPlayerToUser(req.params.playerId, req.user._id);
 
     return res.status(200).json(new ApiResponse(200, {
-        playerId: updated._id,
-        linkedUserId: updated.linkedUserId,
+        playerId: player._id,
+        linkedUserId: player.linkedUserId,
     }, req.t("PLAYER_CLAIMED")));
 });
 
@@ -271,4 +250,52 @@ const getMyCareerStats = catchAsync(async (req, res) => {
     }, req.t("MY_CAREER_STATS_FETCHED")));
 });
 
-export { getCareerStats, updatePlayer, claimPlayer, unclaimPlayer, getMyCareerStats };
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// The add-player picker's "My players" source: every Player this scorer has
+// created, across all their teams and matches. Scoped to `createdBy` only —
+// Player identity is scorer-scoped, so another account's same-named player is
+// a different document and never shows here. With `teamId`, each row says
+// whether it is already on that team's roster so the picker can disable it.
+// `isClaimed` is a boolean only, same disclosure rule as getCareerStats.
+const listMyPlayers = catchAsync(async (req, res) => {
+    const page = Number.parseInt(req.query.page, 10) || 1;
+    const limit = Number.parseInt(req.query.limit, 10) || DEFAULT_HISTORY_LIMIT;
+    if (page < 1 || limit < 1 || limit > MAX_HISTORY_LIMIT) {
+        throw new ApiError(400, "INVALID_PAGINATION", { params: { max: MAX_HISTORY_LIMIT } });
+    }
+
+    const filter = { createdBy: req.user._id, isDeleted: false };
+    const q = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : '';
+    if (q) {
+        filter.nameLower = new RegExp(escapeRegex(q));
+    }
+
+    const teamId = typeof req.query.teamId === 'string' ? req.query.teamId : null;
+    const team = teamId ? await findOwnedTeam(teamId, req.user._id) : null;
+    const rostered = new Set((team?.players ?? []).map(String));
+
+    const [players, total] = await Promise.all([
+        Player.find(filter)
+            .sort({ nameLower: 1 })
+            .skip((page - 1) * limit)
+            .limit(limit),
+        Player.countDocuments(filter),
+    ]);
+
+    return res.status(200).json(new ApiResponse(200, {
+        players: players.map((player) => ({
+            playerId: player._id,
+            playerName: player.name,
+            role: player.role,
+            jerseyNumber: player.jerseyNumber ?? null,
+            isClaimed: player.linkedUserId != null,
+            ...(team ? { onTeam: rostered.has(String(player._id)) } : {}),
+        })),
+        page,
+        limit,
+        total,
+    }, req.t("PLAYER_LIST_FETCHED")));
+});
+
+export { getCareerStats, updatePlayer, claimPlayer, unclaimPlayer, getMyCareerStats, listMyPlayers };

@@ -13,6 +13,9 @@ import { uploadOnCloudinary } from '../utils/cloudinary.js';
 import { discardStagedFile } from '../utils/discardStagedFile.js';
 import { parseTeamFields } from '../utils/teamFields.js';
 import { computeTeamStats } from '../utils/teamStats.js';
+import { User } from '../models/user.model.js';
+import { PlayerInvite } from '../models/playerInvite.model.js';
+import { notifyUser } from '../utils/notify.js';
 
 // Shared by getTeamProfile/getTeamMatches: both need the team to exist and
 // belong to the caller before doing anything else. A Team is only ever
@@ -37,16 +40,26 @@ const findOwnedTeam = async (teamId, requesterId) => {
 const toOrganizationSummary = (organization) =>
     organization ? { id: organization._id, name: organization.name } : null;
 
+// The players on `teamId` with an unanswered invite, as string ids — one query
+// per request, never per row. Accepted and declined invites are not "pending":
+// an accepted one already reads as `isClaimed`, a declined one is just a
+// named player again.
+const findPendingInvitePlayerIds = async (teamId) => {
+    const invites = await PlayerInvite.find({ team: teamId, status: 'pending' }, 'player');
+    return new Set(invites.map((invite) => String(invite.player)));
+};
+
 // One roster row — shared by the profile's `roster`, add-player and edit-player
 // so the shape lives in one place. `isCaptain`/`isViceCaptain` come from the
 // team-level defaults, never from a match's own squad.
-const toRosterRow = (player, team) => ({
+const toRosterRow = (player, team, pendingInvitePlayerIds = new Set()) => ({
     playerId: player._id,
     playerName: player.name,
     jerseyNumber: player.jerseyNumber ?? null,
     role: player.role,
     isCaptain: team.captainId?.equals?.(player._id) ?? false,
     isViceCaptain: team.viceCaptainId?.equals?.(player._id) ?? false,
+    inviteStatus: pendingInvitePlayerIds.has(String(player._id)) ? 'pending' : null,
 });
 
 // Same ownership pattern as getCareerStats: a malformed teamId throws a raw
@@ -68,6 +81,7 @@ const getTeamProfile = catchAsync(async (req, res) => {
     ).sort({ createdAt: -1 }).lean();
 
     const activeRoster = team.players.filter((player) => !player.isDeleted);
+    const pendingInvitePlayerIds = await findPendingInvitePlayerIds(team._id);
 
     return res.status(200).json(new ApiResponse(200, {
         teamId: team._id,
@@ -84,7 +98,7 @@ const getTeamProfile = catchAsync(async (req, res) => {
         // roster, so it reads back as null rather than a dangling id.
         captainId: activeRoster.find((player) => team.captainId?.equals(player._id))?._id ?? null,
         viceCaptainId: activeRoster.find((player) => team.viceCaptainId?.equals(player._id))?._id ?? null,
-        roster: activeRoster.map((player) => toRosterRow(player, team)),
+        roster: activeRoster.map((player) => toRosterRow(player, team, pendingInvitePlayerIds)),
     }, req.t("TEAM_PROFILE_FETCHED")));
 });
 
@@ -469,7 +483,35 @@ const findManageableTeam = async (teamId, requesterId) => {
     return team;
 };
 
-// Add a player to the team's roster by name. Player identity is scorer-scoped
+// Resolves which Player an add-player request means: `playerId` names one of
+// the caller's own players; otherwise `name` is resolved against the roster
+// first (Player identity is scorer-scoped, so a rostered player may belong to
+// another account — e.g. an org member who scored a match for the team — and
+// the owner adding "Rahul" must not create a second Rahul next to it), then
+// find-or-create by name.
+const resolveRosterPlayer = async (team, body, requesterId) => {
+    if (body?.playerId !== undefined && body?.playerId !== null) {
+        const player = await Player.findOne({ _id: body.playerId, createdBy: requesterId, isDeleted: false });
+        if (!player) {
+            throw new ApiError(404, "PLAYER_NOT_FOUND");
+        }
+        return player;
+    }
+
+    const rawName = body?.name;
+    const name = typeof rawName === 'string' ? rawName.trim() : '';
+    if (!name || name.length > MAX_PLAYER_NAME_LENGTH) {
+        throw new ApiError(400, "TEAM_PLAYER_NAME_INVALID");
+    }
+    const rostered = await Player.findOne({
+        _id: { $in: team.players },
+        nameLower: name.toLowerCase(),
+        isDeleted: false,
+    });
+    return rostered ?? findOrCreatePlayerRecord(name, requesterId);
+};
+
+// Add a player to the team's roster by `playerId` or by name. Player identity is scorer-scoped
 // (`{createdBy, nameLower}`), so an existing name resolves to the same Player
 // rather than duplicating — the per-match opposing-team collision rule
 // (`rosterPlayer`) has no opposing side here and doesn't apply. 201 when the
@@ -477,23 +519,14 @@ const findManageableTeam = async (teamId, requesterId) => {
 const addTeamPlayer = catchAsync(async (req, res) => {
     const team = await findManageableTeam(req.params.teamId, req.user._id);
 
-    const rawName = req.body?.name;
-    const name = typeof rawName === 'string' ? rawName.trim() : '';
-    if (!name || name.length > MAX_PLAYER_NAME_LENGTH) {
-        throw new ApiError(400, "TEAM_PLAYER_NAME_INVALID");
-    }
+    // An existing player picked from the scorer's own list is added by id; a
+    // typed name goes through the roster-first find-or-create below. Only the
+    // scorer's own players qualify by id — another account's player reaches a
+    // roster by name, through the roster-first resolution.
+    // Fields are parsed before resolving so an invalid role/jersey 400s
+    // without a find-or-create having already written a Player.
     const fields = parseRosterPlayerFields(req.body);
-
-    // Player identity is scorer-scoped, so a player on this roster may belong
-    // to another account (an org member who scored a match for the team).
-    // Resolve against the roster first, or the owner adding "Rahul" would
-    // create a second Rahul next to the member's.
-    const rostered = await Player.findOne({
-        _id: { $in: team.players },
-        nameLower: name.toLowerCase(),
-        isDeleted: false,
-    });
-    const player = rostered ?? await findOrCreatePlayerRecord(name, req.user._id);
+    const player = await resolveRosterPlayer(team, req.body, req.user._id);
     if (Object.keys(fields).length > 0) {
         Object.assign(player, fields);
         await player.save();
@@ -507,7 +540,108 @@ const addTeamPlayer = catchAsync(async (req, res) => {
     const refreshed = await Team.findById(team._id);
 
     const status = wasOnRoster ? 200 : 201;
-    return res.status(status).json(new ApiResponse(status, toRosterRow(player, refreshed), req.t("TEAM_PLAYER_ADDED")));
+    return res.status(status).json(new ApiResponse(status, toRosterRow(player, refreshed, await findPendingInvitePlayerIds(team._id)), req.t("TEAM_PLAYER_ADDED")));
+});
+
+// How many name variants ("Rahul Sharma", "Rahul Sharma (2)", ...) an invite
+// tries before giving up.
+const MAX_INVITE_NAME_ATTEMPTS = 20;
+
+// The Player an invite is for. Player identity is scorer-scoped by name, but
+// two different people can share a full name — so the natural Player
+// ("Rahul Sharma") is only used when it is free for THIS invitee: unlinked
+// with no pending invite to someone else, or already theirs. Otherwise the next
+// numbered variant is tried, so each person gets a Player of their own and one
+// person accepting can never strand another's invite on the same Player. A
+// Player pending for the same invitee (another team, or a repeat) is reused.
+const resolveInvitePlayer = async (team, invitee, scorerId) => {
+    const baseName = invitee.fullName.trim();
+    for (let attempt = 1; attempt <= MAX_INVITE_NAME_ATTEMPTS; attempt += 1) {
+        const suffix = attempt === 1 ? '' : ` (${attempt})`;
+        const name = `${baseName.slice(0, MAX_PLAYER_NAME_LENGTH - suffix.length)}${suffix}`;
+        const player = await resolveRosterPlayer(team, { name }, scorerId);
+
+        if (player.linkedUserId) {
+            if (player.linkedUserId.equals(invitee._id)) return player;
+            continue;
+        }
+        const rival = await PlayerInvite.exists({
+            player: player._id,
+            status: 'pending',
+            invitedUser: { $ne: invitee._id },
+        });
+        if (!rival) return player;
+    }
+    throw new ApiError(409, "PLAYER_ALREADY_CLAIMED");
+};
+
+// Invite an existing app user onto the roster. The roster gets a normal,
+// scorer-owned Player named after the person immediately; linking that Player
+// to their account is theirs to accept (see player-invite accept), never set
+// here — `Player.linkedUserId` is what your-turn pushes go to. Repeating an
+// invite for someone with a pending one is a harmless 200 no-op.
+const inviteTeamPlayer = catchAsync(async (req, res) => {
+    const team = await findManageableTeam(req.params.teamId, req.user._id);
+
+    const userId = req.body?.userId;
+    if (typeof userId !== 'string' || userId === '') {
+        throw new ApiError(400, "INVALID_ID");
+    }
+    if (userId === String(req.user._id)) {
+        throw new ApiError(400, "CANNOT_INVITE_SELF");
+    }
+    // Same visibility rule as the email lookup: only an active, verified,
+    // non-deleted account can be invited.
+    const invitee = await User.findOne({ _id: userId, accountStatus: 'active', isDeleted: false, isEmailVerified: true });
+    if (!invitee) {
+        throw new ApiError(404, "USER_NOT_FOUND");
+    }
+
+    const player = await resolveInvitePlayer(team, invitee, req.user._id);
+
+    await Team.updateOne({ _id: team._id }, { $addToSet: { players: player._id } });
+    const refreshed = await Team.findById(team._id);
+    const respond = (status, inviteId, inviteStatus) =>
+        res.status(status).json(new ApiResponse(status, {
+            inviteId,
+            status: inviteStatus,
+            player: toRosterRow(player, refreshed, inviteStatus === 'pending' ? new Set([String(player._id)]) : new Set()),
+        }, req.t("PLAYER_INVITE_SENT")));
+
+    // Already linked to this very person: nothing to ask, they are on the roster.
+    if (player.linkedUserId) {
+        return respond(200, null, 'accepted');
+    }
+
+    let created;
+    try {
+        created = await PlayerInvite.create({
+            player: player._id,
+            team: team._id,
+            invitedUser: invitee._id,
+            invitedBy: req.user._id,
+        });
+    } catch (err) {
+        if (err.code !== 11000) throw err;
+        const pending = await PlayerInvite.findOne({ team: team._id, invitedUser: invitee._id, status: 'pending' });
+        return respond(200, pending._id, 'pending');
+    }
+
+    await notifyUser({
+        recipientId: invitee._id,
+        type: 'player_invite',
+        titleKey: 'NOTIFICATION_PLAYER_INVITE_TITLE',
+        bodyKey: 'NOTIFICATION_PLAYER_INVITE_BODY',
+        params: { inviter: req.user.fullName, team: team.name },
+        data: {
+            type: 'player_invite',
+            inviteId: String(created._id),
+            teamId: String(team._id),
+            teamName: team.name,
+        },
+    });
+
+    return respond(201, created._id, 'pending');
 });
 
 // Edit a rostered player's role/jersey through the team, so an organization
@@ -530,7 +664,7 @@ const updateTeamPlayer = catchAsync(async (req, res) => {
     if (clearJerseyNumber) player.jerseyNumber = undefined;
     await player.save();
 
-    return res.status(200).json(new ApiResponse(200, toRosterRow(player, team), req.t("PLAYER_UPDATED")));
+    return res.status(200).json(new ApiResponse(200, toRosterRow(player, team, await findPendingInvitePlayerIds(team._id)), req.t("PLAYER_UPDATED")));
 });
 
-export { addTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };
+export { findOwnedTeam, inviteTeamPlayer, addTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };

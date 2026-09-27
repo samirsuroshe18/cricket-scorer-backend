@@ -294,5 +294,18 @@
   "SQUAD_CAPTAIN_VC_MUST_DIFFER": "The captain and vice-captain must be different players",
   "SQUAD_DESIGNATION_NOT_IN_SQUAD": "The captain, vice-captain and wicketkeeper must be players in the squad",
   "INVALID_SIDE": "Side must be teamA or teamB",
-  "INVALID_ROLE": "Player role must be batsman, bowler or allrounder"
+  "INVALID_ROLE": "Player role must be batsman, bowler or allrounder",
+  "INVALID_EMAIL": "Enter a valid email address",
+  "CANNOT_INVITE_SELF": "You can't invite yourself",
+  "INVITE_NOT_FOUND": "That invite couldn't be found",
+  "INVITE_ALREADY_DECLINED": "That invite was already declined",
+  "INVITE_ALREADY_ACCEPTED": "That invite was already accepted",
+  "PLAYER_LIST_FETCHED": "Players fetched successfully",
+  "USER_LOOKED_UP": "User found",
+  "PLAYER_INVITE_SENT": "Invite sent",
+  "PLAYER_INVITE_FETCHED": "Invite fetched successfully",
+  "PLAYER_INVITE_ACCEPTED": "Invite accepted",
+  "PLAYER_INVITE_DECLINED": "Invite declined",
+  "NOTIFICATION_PLAYER_INVITE_TITLE": "{{inviter}} invited you to join {{team}}",
+  "NOTIFICATION_PLAYER_INVITE_BODY": "Accept to link your account to your player profile."
 }
