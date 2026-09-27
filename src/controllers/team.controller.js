@@ -6,7 +6,7 @@ import { Team } from '../models/team.model.js';
 import { Match } from '../models/match.model.js';
 import { Organization } from '../models/organization.model.js';
 import { Tournament } from '../models/tournament.model.js';
-import { canAccessTeam, canManageTeam, getMemberOrgIds } from '../utils/organizationAccess.js';
+import { canAccessTeam, canManageTeam, getMemberOrgIds, isRosterPlayer } from '../utils/organizationAccess.js';
 import { DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT, serializeMatchHistoryItems, findOrCreatePlayerRecord } from './match.controller.js';
 import { Player, PLAYER_ROLES } from '../models/player.model.js';
 import { uploadOnCloudinary } from '../utils/cloudinary.js';
@@ -16,6 +16,7 @@ import { computeTeamStats } from '../utils/teamStats.js';
 import { User } from '../models/user.model.js';
 import { PlayerInvite } from '../models/playerInvite.model.js';
 import { notifyUser } from '../utils/notify.js';
+import { seedPlayerFromProfile } from '../utils/seedPlayerFromProfile.js';
 
 // Shared by getTeamProfile/getTeamMatches: both need the team to exist and
 // belong to the caller before doing anything else. A Team is only ever
@@ -102,6 +103,53 @@ const getTeamProfile = catchAsync(async (req, res) => {
     }, req.t("TEAM_PROFILE_FETCHED")));
 });
 
+// The guard for the read-only "team I play for" endpoints — the counterpart of
+// findOwnedTeam, which stays the only guard for anything that writes.
+const findPlayerTeam = async (teamId, userId) => {
+    const team = await Team.findOne({ _id: teamId, isDeleted: false });
+    if (!team) {
+        throw new ApiError(404, "TEAM_NOT_FOUND");
+    }
+    if (!(await isRosterPlayer(team, userId))) {
+        throw new ApiError(403, "TEAM_NOT_A_PLAYER");
+    }
+    return team;
+};
+
+// What a linked player may see of a roster row: no invite state, no claim
+// state — those belong to the scorer who runs the team.
+const toPlayerRosterRow = (player, team) => ({
+    playerId: player._id,
+    playerName: player.name,
+    role: player.role,
+    jerseyNumber: player.jerseyNumber ?? null,
+    isCaptain: team.captainId?.equals?.(player._id) ?? false,
+    isViceCaptain: team.viceCaptainId?.equals?.(player._id) ?? false,
+});
+
+const getTeamPlayerView = catchAsync(async (req, res) => {
+    const team = await findPlayerTeam(req.params.teamId, req.user._id);
+    await team.populate('players');
+
+    const completedMatches = await Match.find(
+        { $or: [{ teamA: team._id }, { teamB: team._id }], status: 'completed', isDeleted: false },
+        'teamA teamB result'
+    ).sort({ createdAt: -1 }).lean();
+
+    const activeRoster = team.players.filter((player) => !player.isDeleted);
+
+    return res.status(200).json(new ApiResponse(200, {
+        teamId: team._id,
+        name: team.name,
+        shortName: team.shortName ?? null,
+        logoUrl: team.logoUrl ?? null,
+        stats: computeTeamStats(team._id, completedMatches),
+        captainId: activeRoster.find((player) => team.captainId?.equals(player._id))?._id ?? null,
+        viceCaptainId: activeRoster.find((player) => team.viceCaptainId?.equals(player._id))?._id ?? null,
+        roster: activeRoster.map((player) => toPlayerRosterRow(player, team)),
+    }, req.t("TEAM_PLAYER_VIEW_FETCHED")));
+});
+
 // Identical shape/validation to GET /v1/match/history (see getMatchHistory;
 // the per-match serializer is shared, since the client parses both with one model)
 // — an $or across the two per-side indexes (match.model.js) instead of a
@@ -125,18 +173,17 @@ const parseTeamMatchStatus = (raw) => {
     return TEAM_MATCH_STATUS_GROUPS[raw];
 };
 
-const getTeamMatches = catchAsync(async (req, res) => {
-    const { teamId } = req.params;
-    await findOwnedTeam(teamId, req.user._id);
-
-    const page = Number.parseInt(req.query.page, 10) || 1;
-    const limit = Number.parseInt(req.query.limit, 10) || DEFAULT_HISTORY_LIMIT;
+// Validation, filtering and pagination shared by the owner's and the linked
+// player's match lists; only the guard in front and the shaping after differ.
+const fetchTeamMatchPage = async (teamId, query) => {
+    const page = Number.parseInt(query.page, 10) || 1;
+    const limit = Number.parseInt(query.limit, 10) || DEFAULT_HISTORY_LIMIT;
 
     if (!Number.isInteger(page) || page < 1 || !Number.isInteger(limit) || limit < 1 || limit > MAX_HISTORY_LIMIT) {
         throw new ApiError(400, "INVALID_PAGINATION", { params: { max: MAX_HISTORY_LIMIT } });
     }
 
-    const statuses = parseTeamMatchStatus(req.query.status);
+    const statuses = parseTeamMatchStatus(query.status);
 
     const filter = { $or: [{ teamA: teamId }, { teamB: teamId }], isDeleted: false };
     if (statuses) filter.status = { $in: statuses };
@@ -149,10 +196,33 @@ const getTeamMatches = catchAsync(async (req, res) => {
         Match.countDocuments(filter),
     ]);
 
-    const items = await serializeMatchHistoryItems(matches);
+    return { items: await serializeMatchHistoryItems(matches), page, limit, total };
+};
+
+const getTeamMatches = catchAsync(async (req, res) => {
+    const { teamId } = req.params;
+    await findOwnedTeam(teamId, req.user._id);
+
+    const { items, page, limit, total } = await fetchTeamMatchPage(teamId, req.query);
 
     return res.status(200).json(new ApiResponse(200, {
         matches: items,
+        page,
+        limit,
+        total,
+    }, req.t("TEAM_MATCHES_FETCHED")));
+});
+
+// A linked player sees the matches but not the scorer-side bookkeeping: who
+// created or was assigned to score, and the offline-sync state. `joinCode`
+// stays so a live match can be opened in the spectator view.
+const getTeamPlayerMatches = catchAsync(async (req, res) => {
+    const team = await findPlayerTeam(req.params.teamId, req.user._id);
+
+    const { items, page, limit, total } = await fetchTeamMatchPage(team._id, req.query);
+
+    return res.status(200).json(new ApiResponse(200, {
+        matches: items.map(({ createdBy, assignedScorer, syncStatus, ...visible }) => visible),
         page,
         limit,
         total,
@@ -247,6 +317,49 @@ const listMyTeams = catchAsync(async (req, res) => {
         limit,
         total,
     }, req.t("MY_TEAMS_FETCHED")));
+});
+
+// Teams the caller is on the roster of through a linked Player — the "Teams I
+// play for" list. Teams the caller can already reach as creator or
+// organization member are left out so nothing shows twice; those live in
+// listMyTeams.
+const listPlayingForTeams = catchAsync(async (req, res) => {
+    const page = Number.parseInt(req.query.page, 10) || 1;
+    const limit = Number.parseInt(req.query.limit, 10) || DEFAULT_HISTORY_LIMIT;
+    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(limit) || limit < 1 || limit > MAX_HISTORY_LIMIT) {
+        throw new ApiError(400, "INVALID_PAGINATION", { params: { max: MAX_HISTORY_LIMIT } });
+    }
+
+    const myPlayers = await Player.find({ linkedUserId: req.user._id, isDeleted: false }, 'name');
+    const orgIds = await getMemberOrgIds(req.user._id);
+    const filter = {
+        isDeleted: false,
+        players: { $in: myPlayers.map((player) => player._id) },
+        createdBy: { $ne: req.user._id },
+        organization: { $nin: orgIds },
+    };
+
+    const [teams, total] = await Promise.all([
+        Team.find(filter)
+            .sort({ createdAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(limit),
+        Team.countDocuments(filter),
+    ]);
+
+    const nameById = new Map(myPlayers.map((player) => [String(player._id), player.name]));
+    return res.status(200).json(new ApiResponse(200, {
+        teams: teams.map((team) => ({
+            id: team._id,
+            name: team.name,
+            shortName: team.shortName ?? null,
+            logoUrl: team.logoUrl ?? null,
+            myPlayerName: nameById.get(String(team.players.find((id) => nameById.has(String(id))))) ?? null,
+        })),
+        page,
+        limit,
+        total,
+    }, req.t("PLAYING_FOR_TEAMS_FETCHED")));
 });
 
 // Attach an existing standalone team to an organization the caller owns, or
@@ -597,7 +710,10 @@ const inviteTeamPlayer = catchAsync(async (req, res) => {
         throw new ApiError(404, "USER_NOT_FOUND");
     }
 
-    const player = await resolveInvitePlayer(team, invitee, req.user._id);
+    const player = await seedPlayerFromProfile(
+        await resolveInvitePlayer(team, invitee, req.user._id),
+        invitee,
+    );
 
     await Team.updateOne({ _id: team._id }, { $addToSet: { players: player._id } });
     const refreshed = await Team.findById(team._id);
@@ -667,4 +783,33 @@ const updateTeamPlayer = catchAsync(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, toRosterRow(player, team, await findPendingInvitePlayerIds(team._id)), req.t("PLAYER_UPDATED")));
 });
 
-export { findOwnedTeam, inviteTeamPlayer, addTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };
+// Removes a player from the roster the scorer no longer wants — never the
+// Player document itself, which is scorer-owned data that may sit on other
+// teams. Clears a leadership slot that pointed at them, and cancels — not
+// declines — any invite still waiting on their answer: they never got to
+// respond, the scorer withdrew it.
+const removeTeamPlayer = catchAsync(async (req, res) => {
+    const { teamId, playerId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(playerId)) {
+        throw new ApiError(400, "INVALID_ID");
+    }
+    const team = await findManageableTeam(teamId, req.user._id);
+
+    if (!team.players.some((id) => String(id) === String(playerId))) {
+        throw new ApiError(404, "PLAYER_NOT_ON_TEAM");
+    }
+
+    const update = { $pull: { players: playerId } };
+    if (team.captainId?.equals(playerId)) update.captainId = null;
+    if (team.viceCaptainId?.equals(playerId)) update.viceCaptainId = null;
+    await Team.updateOne({ _id: teamId }, update);
+
+    await PlayerInvite.updateMany(
+        { team: teamId, player: playerId, status: 'pending' },
+        { $set: { status: 'cancelled', respondedAt: new Date() } }
+    );
+
+    return res.status(200).json(new ApiResponse(200, { playerId }, req.t("PLAYER_REMOVED")));
+});
+
+export { listPlayingForTeams, getTeamPlayerView, getTeamPlayerMatches, removeTeamPlayer, findOwnedTeam, inviteTeamPlayer, addTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };

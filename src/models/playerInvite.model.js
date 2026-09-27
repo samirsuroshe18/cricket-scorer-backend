@@ -1,8 +1,11 @@
 import mongoose, { Schema } from "mongoose";
 
-export const PLAYER_INVITE_STATUSES = ['pending', 'accepted', 'declined'];
+export const PLAYER_INVITE_STATUSES = ['pending', 'accepted', 'declined', 'cancelled'];
 
 // A scorer's request that an existing app user be linked to a roster Player.
+// 'cancelled' is the scorer withdrawing it themselves — by removing the
+// invited player from the roster — never something the invitee did, which is
+// why it gets its own status instead of reusing 'declined'.
 // Accepting it is what sets Player.linkedUserId (through the same
 // compare-and-swap the self-claim flow uses); this row only records the ask
 // and its outcome. Kept after a response rather than deleted so a decline is

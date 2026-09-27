@@ -43,6 +43,9 @@ const acceptPlayerInvite = catchAsync(async (req, res) => {
     if (invite.status === 'declined') {
         throw new ApiError(409, "INVITE_ALREADY_DECLINED");
     }
+    if (invite.status === 'cancelled') {
+        throw new ApiError(409, "INVITE_CANCELLED");
+    }
     if (invite.status === 'pending') {
         await linkPlayerToUser(invite.player._id, req.user._id);
         await PlayerInvite.updateOne(
@@ -65,6 +68,9 @@ const declinePlayerInvite = catchAsync(async (req, res) => {
 
     if (invite.status === 'accepted') {
         throw new ApiError(409, "INVITE_ALREADY_ACCEPTED");
+    }
+    if (invite.status === 'cancelled') {
+        throw new ApiError(409, "INVITE_CANCELLED");
     }
     if (invite.status === 'pending') {
         await PlayerInvite.updateOne(
