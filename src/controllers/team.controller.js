@@ -102,6 +102,53 @@ const getTeamProfile = catchAsync(async (req, res) => {
     }, req.t("TEAM_PROFILE_FETCHED")));
 });
 
+// The guard for the read-only "team I play for" endpoints — the counterpart of
+// findOwnedTeam, which stays the only guard for anything that writes.
+const findPlayerTeam = async (teamId, userId) => {
+    const team = await Team.findOne({ _id: teamId, isDeleted: false });
+    if (!team) {
+        throw new ApiError(404, "TEAM_NOT_FOUND");
+    }
+    if (!(await isRosterPlayer(team, userId))) {
+        throw new ApiError(403, "TEAM_NOT_A_PLAYER");
+    }
+    return team;
+};
+
+// What a linked player may see of a roster row: no invite state, no claim
+// state — those belong to the scorer who runs the team.
+const toPlayerRosterRow = (player, team) => ({
+    playerId: player._id,
+    playerName: player.name,
+    role: player.role,
+    jerseyNumber: player.jerseyNumber ?? null,
+    isCaptain: team.captainId?.equals?.(player._id) ?? false,
+    isViceCaptain: team.viceCaptainId?.equals?.(player._id) ?? false,
+});
+
+const getTeamPlayerView = catchAsync(async (req, res) => {
+    const team = await findPlayerTeam(req.params.teamId, req.user._id);
+    await team.populate('players');
+
+    const completedMatches = await Match.find(
+        { $or: [{ teamA: team._id }, { teamB: team._id }], status: 'completed', isDeleted: false },
+        'teamA teamB result'
+    ).sort({ createdAt: -1 }).lean();
+
+    const activeRoster = team.players.filter((player) => !player.isDeleted);
+
+    return res.status(200).json(new ApiResponse(200, {
+        teamId: team._id,
+        name: team.name,
+        shortName: team.shortName ?? null,
+        logoUrl: team.logoUrl ?? null,
+        stats: computeTeamStats(team._id, completedMatches),
+        captainId: activeRoster.find((player) => team.captainId?.equals(player._id))?._id ?? null,
+        viceCaptainId: activeRoster.find((player) => team.viceCaptainId?.equals(player._id))?._id ?? null,
+        roster: activeRoster.map((player) => toPlayerRosterRow(player, team)),
+    }, req.t("TEAM_PLAYER_VIEW_FETCHED")));
+});
+
 // Identical shape/validation to GET /v1/match/history (see getMatchHistory;
 // the per-match serializer is shared, since the client parses both with one model)
 // — an $or across the two per-side indexes (match.model.js) instead of a
@@ -710,4 +757,4 @@ const updateTeamPlayer = catchAsync(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, toRosterRow(player, team, await findPendingInvitePlayerIds(team._id)), req.t("PLAYER_UPDATED")));
 });
 
-export { listPlayingForTeams, findOwnedTeam, inviteTeamPlayer, addTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };
+export { listPlayingForTeams, getTeamPlayerView, findOwnedTeam, inviteTeamPlayer, addTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };

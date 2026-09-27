@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { listPlayingForTeams, addTeamPlayer, inviteTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo } from "../controllers/team.controller.js";
+import { listPlayingForTeams, getTeamPlayerView, addTeamPlayer, inviteTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo } from "../controllers/team.controller.js";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
 import { upload } from "../middlewares/multer.middleware.js";
 
@@ -12,6 +12,7 @@ router.route('/:teamId')
     .get(verifyJwt, getTeamProfile)
     .patch(verifyJwt, updateTeam)
     .delete(verifyJwt, deleteTeam);
+router.route('/:teamId/player-view').get(verifyJwt, getTeamPlayerView);
 router.route('/:teamId/matches').get(verifyJwt, getTeamMatches);
 router.route('/:teamId/players').post(verifyJwt, addTeamPlayer);
 router.route('/:teamId/invites').post(verifyJwt, inviteTeamPlayer);
