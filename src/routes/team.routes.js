@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { listPlayingForTeams, getTeamPlayerView, getTeamPlayerMatches, removeTeamPlayer, addTeamPlayer, inviteTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo } from "../controllers/team.controller.js";
+import { listTeamInvites, cancelTeamInvite, listPlayingForTeams, getTeamPlayerView, getTeamPlayerMatches, removeTeamPlayer, addTeamPlayer, inviteTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo } from "../controllers/team.controller.js";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
 import { upload } from "../middlewares/multer.middleware.js";
 
@@ -16,7 +16,10 @@ router.route('/:teamId/player-view').get(verifyJwt, getTeamPlayerView);
 router.route('/:teamId/player-view/matches').get(verifyJwt, getTeamPlayerMatches);
 router.route('/:teamId/matches').get(verifyJwt, getTeamMatches);
 router.route('/:teamId/players').post(verifyJwt, addTeamPlayer);
-router.route('/:teamId/invites').post(verifyJwt, inviteTeamPlayer);
+router.route('/:teamId/invites')
+    .post(verifyJwt, inviteTeamPlayer)
+    .get(verifyJwt, listTeamInvites);
+router.route('/:teamId/invites/:inviteId').delete(verifyJwt, cancelTeamInvite);
 router.route('/:teamId/players/:playerId')
     .patch(verifyJwt, updateTeamPlayer)
     .delete(verifyJwt, removeTeamPlayer);

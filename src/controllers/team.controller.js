@@ -751,6 +751,64 @@ const inviteTeamPlayer = catchAsync(async (req, res) => {
     return respond(201, created._id, 'pending');
 });
 
+// The team's invitations as the scorer sees them: one row per invitee — their
+// newest invite of any status — and none at all when that newest one was
+// cancelled, so a withdrawn invite never resurfaces an older declined one.
+// Newest activity first.
+const listTeamInvites = catchAsync(async (req, res) => {
+    const team = await findManageableTeam(req.params.teamId, req.user._id);
+
+    const invites = await PlayerInvite.find({ team: team._id })
+        .sort({ updatedAt: -1, _id: -1 })
+        .populate('invitedUser', 'fullName photoUrl')
+        .populate('player', 'name');
+
+    const seen = new Set();
+    const rows = [];
+    for (const invite of invites) {
+        const key = String(invite.invitedUser?._id ?? invite.invitedUser);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (invite.status === 'cancelled' || !invite.invitedUser || !invite.player) continue;
+
+        rows.push({
+            inviteId: invite._id,
+            status: invite.status,
+            respondedAt: invite.respondedAt ?? null,
+            player: { playerId: invite.player._id, playerName: invite.player.name },
+            invitee: {
+                userId: invite.invitedUser._id,
+                fullName: invite.invitedUser.fullName,
+                photoUrl: invite.invitedUser.photoUrl ?? null,
+            },
+        });
+    }
+
+    return res.status(200).json(new ApiResponse(200, { invites: rows }, req.t("TEAM_INVITES_FETCHED")));
+});
+
+// The scorer withdrawing an invite that has not been answered. The conditional
+// update is what makes a race with the invitee's own accept/decline safe: only
+// one of them can move the invite out of `pending`.
+const cancelTeamInvite = catchAsync(async (req, res) => {
+    const team = await findManageableTeam(req.params.teamId, req.user._id);
+
+    const invite = await PlayerInvite.findOne({ _id: req.params.inviteId, team: team._id });
+    if (!invite) {
+        throw new ApiError(404, "INVITE_NOT_FOUND");
+    }
+
+    const { modifiedCount } = await PlayerInvite.updateOne(
+        { _id: invite._id, status: 'pending' },
+        { $set: { status: 'cancelled', respondedAt: new Date() } }
+    );
+    if (modifiedCount !== 1) {
+        throw new ApiError(409, "INVITE_NOT_PENDING");
+    }
+
+    return res.status(200).json(new ApiResponse(200, { inviteId: invite._id, status: 'cancelled' }, req.t("PLAYER_INVITE_CANCELLED")));
+});
+
 // Edit a rostered player's role/jersey through the team, so an organization
 // owner can manage a roster whose Players were created by another account —
 // PATCH /v1/player/:playerId stays creator-only.
@@ -803,4 +861,4 @@ const removeTeamPlayer = catchAsync(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, { playerId }, req.t("PLAYER_REMOVED")));
 });
 
-export { listPlayingForTeams, getTeamPlayerView, getTeamPlayerMatches, removeTeamPlayer, findOwnedTeam, inviteTeamPlayer, addTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };
+export { listTeamInvites, cancelTeamInvite, listPlayingForTeams, getTeamPlayerView, getTeamPlayerMatches, removeTeamPlayer, findOwnedTeam, inviteTeamPlayer, addTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };
