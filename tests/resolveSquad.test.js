@@ -90,4 +90,34 @@ describe('resolveSquad', () => {
     it('rejects a non-array players field', () => {
         expectCode(() => resolveSquad({ players: 'Rohit' }), 'SQUAD_PLAYER_NAME_INVALID');
     });
+
+    describe('playingXI', () => {
+        const players = [{ name: 'Rohit' }, { name: 'Bumrah' }, { name: 'Pant' }];
+
+        it('is undefined when absent, null when null, and [] when empty', () => {
+            expect(resolveSquad({ players }).playingXI).toBeUndefined();
+            expect(resolveSquad({ players, playingXI: null }).playingXI).toBeNull();
+            expect(resolveSquad({ players, playingXI: [] }).playingXI).toEqual([]);
+        });
+
+        it("returns the squad's own spelling and collapses duplicates case-insensitively", () => {
+            expect(resolveSquad({ players, playingXI: [' rohit ', 'ROHIT', 'Pant'] }).playingXI)
+                .toEqual(['Rohit', 'Pant']);
+        });
+
+        it('rejects a name that is not in the squad', () => {
+            expectCode(() => resolveSquad({ players, playingXI: ['Kohli'] }), 'SQUAD_XI_NOT_IN_SQUAD');
+        });
+
+        it('rejects a non-array or a non-string entry', () => {
+            expectCode(() => resolveSquad({ players, playingXI: 'Rohit' }), 'SQUAD_XI_NOT_IN_SQUAD');
+            expectCode(() => resolveSquad({ players, playingXI: [42] }), 'SQUAD_XI_NOT_IN_SQUAD');
+        });
+
+        it('has no size cap', () => {
+            const many = Array.from({ length: 14 }, (_, i) => ({ name: `Player ${i}` }));
+            const xi = resolveSquad({ players: many, playingXI: many.map((p) => p.name) }).playingXI;
+            expect(xi).toHaveLength(14);
+        });
+    });
 });

@@ -19,6 +19,8 @@ import { resolveUndo, resolveMatchUndo } from '../utils/resolveUndo.js';
 import { resolveMatchResult } from '../utils/resolveMatchResult.js';
 import { resolveToss } from '../utils/resolveToss.js';
 import { resolveSquad } from '../utils/resolveSquad.js';
+import { mergePlayingXi, assertInPlayingXi } from '../utils/playingXi.js';
+import { toSquadSideView } from '../utils/squadView.js';
 import { resolveSyncDecision } from '../utils/resolveSync.js';
 import { generateScorecard, liveStrikeFigures } from '../utils/scorecard.js';
 import { applyCareerStatsIncrement } from '../utils/careerStats.js';
@@ -346,11 +348,25 @@ const saveSquad = catchAsync(async (req, res) => {
     }
 
     const idFor = (name) => (name ? docs.find((doc) => doc.nameLower === name.toLowerCase())?.id ?? null : null);
+    const savedIds = docs.map((doc) => doc.id);
+    const requestedXi = Array.isArray(squad.playingXI)
+        ? squad.playingXI.map(idFor)
+        : squad.playingXI;
+    const playingXI = mergePlayingXi({
+        requested: requestedXi,
+        existing: match.squads?.[side]?.playingXI,
+        savedIds,
+    });
+
     const saved = {
-        players: docs.map((doc) => doc.id),
+        players: savedIds,
         captainId: idFor(squad.captain),
         viceCaptainId: idFor(squad.viceCaptain),
         keeperId: idFor(squad.keeper),
+        savedAt: new Date(),
+        // Omitted (not `[]`) when unset: `$set` replaces the whole side, so
+        // leaving it out is what keeps it un-set.
+        ...(playingXI !== undefined && { playingXI }),
     };
 
     await Match.updateOne({ _id: match._id }, { $set: { [`squads.${side}`]: saved } });
@@ -361,7 +377,117 @@ const saveSquad = catchAsync(async (req, res) => {
         captainId: saved.captainId,
         viceCaptainId: saved.viceCaptainId,
         keeperId: saved.keeperId,
+        playingXI: playingXI === undefined ? null : playingXI.map(String),
     }, req.t("SQUAD_SAVED")));
+});
+
+// Match lookup + the creator / assigned-scorer gate the squad endpoints share.
+// A malformed id is the same 404 as an unknown one.
+const loadOwnedMatch = async (matchId, userId) => {
+    if (!mongoose.Types.ObjectId.isValid(matchId)) {
+        throw new ApiError(404, "MATCH_NOT_FOUND");
+    }
+    const match = await Match.findOne({ _id: matchId, isDeleted: false });
+    if (!match) {
+        throw new ApiError(404, "MATCH_NOT_FOUND");
+    }
+    if (!match.createdBy?.equals(userId) && !match.assignedScorer?.equals(userId)) {
+        throw new ApiError(403, "MATCH_NOT_OWNED");
+    }
+    return match;
+};
+
+// GET /v1/match/:matchId/squad — both sides as saved, plus whether an innings
+// exists (which decides whether the client saves with PUT or the playing-xi
+// PATCH). Readable in any match status.
+const getMatchSquad = catchAsync(async (req, res) => {
+    const match = await loadOwnedMatch(req.params.matchId, req.user._id);
+
+    const ids = TEAM_SIDES.flatMap((side) => match.squads?.[side]?.players ?? []);
+    const [players, inningsStarted] = await Promise.all([
+        Player.find({ _id: { $in: ids } }),
+        Inning.exists({ matchId: match._id }),
+    ]);
+
+    return res.status(200).json(new ApiResponse(200, {
+        matchId: match._id,
+        inningsStarted: Boolean(inningsStarted),
+        teamA: toSquadSideView(match, 'teamA', players),
+        teamB: toSquadSideView(match, 'teamB', players),
+    }, req.t("SQUAD_FETCHED")));
+});
+
+// POST /v1/match/:matchId/squad/acknowledge — records that the scorer has dealt
+// with the Squad screen for this match, so the client stops offering it. The
+// conditional update makes it idempotent (a repeat keeps the first timestamp)
+// and safe to race; it matches a missing field too, so a match that predates
+// the field can be acknowledged. Allowed in any match status.
+const acknowledgeSquad = catchAsync(async (req, res) => {
+    const match = await loadOwnedMatch(req.params.matchId, req.user._id);
+
+    await Match.updateOne(
+        { _id: match._id, squadAcknowledgedAt: null },
+        { $set: { squadAcknowledgedAt: new Date() } }
+    );
+    const stored = await Match.findById(match._id, 'squadAcknowledgedAt');
+
+    return res.status(200).json(new ApiResponse(200, {
+        matchId: match._id,
+        squadAcknowledgedAt: stored.squadAcknowledgedAt,
+    }, req.t("SQUAD_ACKNOWLEDGED")));
+});
+
+// PATCH /v1/match/:matchId/squad/:side/playing-xi — moves players between the
+// Playing XI and the Bench at any point short of a finished match, including
+// after scoring starts (which PUT /squad refuses). Takes ids only: the squad's
+// composition is otherwise PUT's business, so an id must already be on this
+// side's team roster, and one not yet in the squad's `players` is appended to
+// it — that is how an invitee who accepted mid-match gets promoted. Does not
+// touch `savedAt`, which only PUT stamps.
+const savePlayingXi = catchAsync(async (req, res) => {
+    const { matchId, side } = req.params;
+
+    if (!TEAM_SIDES.includes(side)) {
+        throw new ApiError(400, "INVALID_SIDE");
+    }
+    const requested = req.body?.playingXI;
+    if (!Array.isArray(requested)
+        || requested.some((id) => typeof id !== 'string' || !mongoose.Types.ObjectId.isValid(id))) {
+        throw new ApiError(400, "INVALID_ID");
+    }
+
+    const match = await loadOwnedMatch(matchId, req.user._id);
+    if (match.status === 'completed' || match.status === 'abandoned') {
+        throw new ApiError(400, "MATCH_ALREADY_COMPLETED");
+    }
+
+    const ids = [...new Set(requested)];
+    const team = await Team.findById(match[side], 'players');
+    const rostered = new Set((team?.players ?? []).map(String));
+    const found = await Player.countDocuments({ _id: { $in: ids }, isDeleted: false });
+    if (found !== ids.length || ids.some((id) => !rostered.has(id))) {
+        throw new ApiError(404, "PLAYER_NOT_ON_TEAM");
+    }
+
+    const otherSide = side === 'teamA' ? 'teamB' : 'teamA';
+    const onOtherSide = new Set((match.squads?.[otherSide]?.players ?? []).map(String));
+    if (ids.some((id) => onOtherSide.has(id))) {
+        throw new ApiError(400, "SQUAD_PLAYER_ON_BOTH_SIDES");
+    }
+
+    const current = (match.squads?.[side]?.players ?? []).map(String);
+    const squadPlayers = [...current, ...ids.filter((id) => !current.includes(id))];
+
+    await Match.updateOne({ _id: match._id }, {
+        $set: { [`squads.${side}.players`]: squadPlayers, [`squads.${side}.playingXI`]: ids },
+    });
+
+    const fresh = await Match.findById(match._id);
+    const players = await Player.find({ _id: { $in: squadPlayers } });
+    return res.status(200).json(new ApiResponse(200, {
+        side,
+        ...toSquadSideView(fresh, side, players),
+    }, req.t("PLAYING_XI_SAVED")));
 });
 
 // Explicit pick rather than spreading the Mongoose subdoc, which would leak internals.
@@ -741,6 +867,12 @@ const startInnings = catchAsync(async (req, res) => {
     // undetected. Innings 1 never has anything to collide with (both rosters
     // start empty); innings 2 can, once the sides have swapped and the other
     // team's roster from innings 1 is already committed.
+    // The Playing XI, when set for a side, is the only pool its players come
+    // from. Checked before resolveOpener so a rejected name is never created.
+    await assertInPlayingXi({ match, side: battingTeam, playerId: strikerId, name: striker });
+    await assertInPlayingXi({ match, side: battingTeam, playerId: nonStrikerId, name: nonStriker });
+    await assertInPlayingXi({ match, side: bowlingTeam, playerId: bowlerId, name: bowler });
+
     const strikerDoc = await resolveOpener({
         playerId: strikerId ?? null, name: striker, teamId: battingTeamId, opposingTeamId: bowlingTeamId,
         createdBy: req.user._id, notFoundCode: "STRIKER_NOT_FOUND",
@@ -1031,7 +1163,7 @@ const resolveBowler = async ({ bowlerId, bowlerName, teamId, opposingTeamId, cre
 // session-scoped alongside whatever deliveries surround it in the same
 // transaction. Mutates and saves `inning` in place; the caller decides what
 // else, if anything, needs saving in the same round trip.
-const applyBowlerSelection = async ({ match, inning, session, req, bowlerName, bowlerId }) => {
+const applyBowlerSelection = async ({ match, inning, session, req, bowlerName, bowlerId, enforcePlayingXi = false }) => {
     if (inning.status === 'completed') {
         throw new ApiError(400, "INNINGS_COMPLETED");
     }
@@ -1059,6 +1191,12 @@ const applyBowlerSelection = async ({ match, inning, session, req, bowlerName, b
     const previousBowlerId = previousOver?.bowlerId ?? null;
     const bowlingTeamId = inning.bowlingTeam === 'teamA' ? match.teamA : match.teamB;
     const battingTeamId = inning.battingTeam === 'teamA' ? match.teamA : match.teamB;
+
+    // Opt-in: selectBowler passes it, syncMatch never does — a queued bowler
+    // event was chosen from the XI as it stood when it was queued.
+    if (enforcePlayingXi) {
+        await assertInPlayingXi({ match, side: inning.bowlingTeam, playerId: bowlerId, name: bowlerName });
+    }
 
     // Checked by name, ahead of resolveBowler, only when no bowlerId was
     // given: typing the previous over's bowler's name straight back is the
@@ -1147,6 +1285,7 @@ const selectBowler = catchAsync(async (req, res) => {
         req,
         bowlerName,
         bowlerId,
+        enforcePlayingXi: true,
     });
 
     // "Your turn to bowl" — online path only, same reasoning as scoreBall's
@@ -1297,7 +1436,7 @@ const assertMatchWritable = (match, { allowCompleted }) => {
 // it. That is what lets a `bowler` event earlier in the batch satisfy
 // BOWLER_NOT_SELECTED for a `ball` event later in it, and what makes an
 // innings that completes mid-batch correctly refuse everything queued after.
-const applyDelivery = async ({ match, inning, session, req, delivery }) => {
+const applyDelivery = async ({ match, inning, session, req, delivery, enforcePlayingXi = false }) => {
     const { runs, extraType, runsFrom, wicketType, dismissedBatsman, incomingBatsmanName, idempotencyKey } = delivery;
 
     // Re-checked here rather than trusted from an earlier read: for scoreBall
@@ -1364,6 +1503,10 @@ const applyDelivery = async ({ match, inning, session, req, delivery }) => {
             // orphan Player (or orphan roster entry) from a delivery that
             // fails later in this same call is harmless, exactly as
             // elsewhere in this file.
+            // Opt-in, like applyBowlerSelection's: scoreBall passes it, sync doesn't.
+            if (enforcePlayingXi) {
+                await assertInPlayingXi({ match, side: inning.battingTeam, name: trimmedIncoming });
+            }
             incomingPlayer = await findOrCreatePlayer(trimmedIncoming, battingTeamId, bowlingTeamId, req.user._id);
         }
     }
@@ -1743,7 +1886,7 @@ const scoreBall = catchAsync(async (req, res) => {
                 throw new ApiError(400, "INNINGS_NOT_STARTED");
             }
 
-            result = await applyDelivery({ match, inning, session, req, delivery: input });
+            result = await applyDelivery({ match, inning, session, req, delivery: input, enforcePlayingXi: true });
         });
 
         const view = await finishBallDelivery({ match, req, result });
@@ -2966,6 +3109,9 @@ const serializeMatchHistoryItems = async (matches) => {
             // without re-entering the scoring console, per the offline-sync
             // reject-and-alert design.
             syncStatus: match.syncStatus,
+            // True once the scorer has dealt with the Squad screen (see
+            // Match.squadAcknowledgedAt); false for a match that predates it.
+            squadAcknowledged: Boolean(match.squadAcknowledgedAt),
             currentInnings: currentInning
                 ? {
                     inningsNumber: currentInning.inningsNumber,
@@ -3101,4 +3247,4 @@ const getMatchHistory = catchAsync(async (req, res) => {
     }, req.t("MATCH_HISTORY_FETCHED")));
 });
 
-export { findOrCreatePlayerRecord, createMatch, saveSquad, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, serializeMatchHistoryItems, assignScorer, getScorerCandidates, createMatchWithJoinCode, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };
+export { findOrCreatePlayerRecord, createMatch, saveSquad, getMatchSquad, savePlayingXi, acknowledgeSquad, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, serializeMatchHistoryItems, assignScorer, getScorerCandidates, createMatchWithJoinCode, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };

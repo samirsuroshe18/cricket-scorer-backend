@@ -234,4 +234,76 @@ describe('PUT /:matchId/squad/:side', () => {
     expect(res.body.data.players[0].playerId).toBe(String(shared._id));
     expect(await Player.countDocuments()).toBe(before);
   });
+
+  describe('playingXI and savedAt', () => {
+    const idsOf = (res) => Object.fromEntries(res.body.data.players.map((p) => [p.name, p.playerId]));
+
+    it('stores playingXI as ids and returns them; a side never given one reads back null', async () => {
+      const { token, matchId } = await setup();
+
+      const res = await putSquad(token, matchId, 'teamA', squadBody({ playingXI: ['Rohit Sharma', 'Rishabh Pant'] }));
+
+      expect(res.status).toBe(200);
+      const ids = idsOf(res);
+      expect(res.body.data.playingXI).toEqual([ids['Rohit Sharma'], ids['Rishabh Pant']]);
+      const match = await Match.findById(matchId);
+      expect(match.squads.teamA.playingXI.map(String)).toEqual([ids['Rohit Sharma'], ids['Rishabh Pant']]);
+
+      const other = await putSquad(token, matchId, 'teamB', { players: [{ name: 'Kohli' }] });
+      expect(other.body.data.playingXI).toBeNull();
+      expect((await Match.findById(matchId)).squads.teamB.playingXI).toBeUndefined();
+    });
+
+    it('keeps a stored XI when a later PUT omits the key', async () => {
+      const { token, matchId } = await setup();
+      const first = await putSquad(token, matchId, 'teamA', squadBody({ playingXI: ['Rohit Sharma'] }));
+
+      const res = await putSquad(token, matchId, 'teamA', squadBody());
+
+      expect(res.body.data.playingXI).toEqual(first.body.data.playingXI);
+    });
+
+    it('removes a player dropped from the squad from the XI', async () => {
+      const { token, matchId } = await setup();
+      await putSquad(token, matchId, 'teamA', squadBody({ playingXI: ['Rohit Sharma', 'Rishabh Pant'] }));
+
+      const res = await putSquad(token, matchId, 'teamA', { players: [{ name: 'Rohit Sharma' }] });
+
+      expect(res.body.data.playingXI).toEqual([idsOf(res)['Rohit Sharma']]);
+    });
+
+    it('un-sets the XI on null and keeps an empty XI distinct from unset', async () => {
+      const { token, matchId } = await setup();
+      await putSquad(token, matchId, 'teamA', squadBody({ playingXI: ['Rohit Sharma'] }));
+
+      const empty = await putSquad(token, matchId, 'teamA', squadBody({ playingXI: [] }));
+      expect(empty.body.data.playingXI).toEqual([]);
+
+      const unset = await putSquad(token, matchId, 'teamA', squadBody({ playingXI: null }));
+      expect(unset.body.data.playingXI).toBeNull();
+      expect((await Match.findById(matchId)).squads.teamA.playingXI).toBeUndefined();
+    });
+
+    it('rejects an XI name that is not in the squad', async () => {
+      const { token, matchId } = await setup();
+
+      const res = await putSquad(token, matchId, 'teamA', squadBody({ playingXI: ['Nobody'] }));
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('SQUAD_XI_NOT_IN_SQUAD');
+    });
+
+    it('stamps savedAt on every PUT', async () => {
+      const { token, matchId } = await setup();
+      expect((await Match.findById(matchId)).squads.teamA.savedAt).toBeNull();
+
+      await putSquad(token, matchId, 'teamA', squadBody());
+      const first = (await Match.findById(matchId)).squads.teamA.savedAt;
+      expect(first).toBeInstanceOf(Date);
+
+      await putSquad(token, matchId, 'teamA', squadBody());
+      const second = (await Match.findById(matchId)).squads.teamA.savedAt;
+      expect(second.getTime()).toBeGreaterThanOrEqual(first.getTime());
+    });
+  });
 });

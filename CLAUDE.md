@@ -131,6 +131,14 @@ Full contract, including why `Player` has no default notification target: [docs/
 
 Covered by `tests/notificationTriggers.test.js` (8), `tests/notifications.test.js` (6), plus additions to `assignScorer`/`auctionStart`/`auctionSweep`/`careerStatsEndpoint`/`matchHistory` test files — 928/928 passing (verified 2026-09-17).
 
+## Team invitations & the Playing XI
+
+**Roster-on-accept.** `POST /v1/team/:teamId/invites` creates the `Player` and a pending `PlayerInvite` but does **not** touch `Team.players` (the one exception: a player already linked to that very invitee goes straight on). `POST /v1/player-invite/:id/accept` links the account (CAS), `$addToSet`s the player onto `Team.players`, then marks the invite accepted — three idempotent steps, no transaction, so a retry converges. Accept and decline each notify the inviter (`player_invite_accepted` / `player_invite_declined`, only when the status actually changed); their `data` is `{ type, teamId, teamName }` and **must not carry `inviteId`** — the client opens the invitee's Accept/Decline sheet for any payload that has one. A declined invitee's `Player` document is kept (the scorer's own), just off the roster. `GET /v1/team/:teamId/invites` lists one row per invitee (newest invite; omitted when that is `cancelled`); `DELETE …/invites/:inviteId` cancels a pending one. Roster rows no longer carry `inviteStatus`.
+
+**Playing XI.** `Match.squads.<side>.playingXI` is a subset of `players`, `undefined` until first set (unset = no restriction; `[]` = set-but-empty = nobody allowed). `PUT /squad/:side` (pre-innings only) accepts `playingXI` names and stamps `savedAt`; `PATCH /squad/:side/playing-xi` (ids, any time short of a finished match, appends rostered ids to `players`, never touches `savedAt`) is how XI moves happen once scoring has started; `GET /squad` reads both sides plus `inningsStarted`. `assertInPlayingXi` (`src/utils/playingXi.js`) is applied by `startInnings`, `selectBowler` and `scoreBall`'s incoming batsman through an **opt-in** `enforcePlayingXi` flag on `applyBowlerSelection`/`applyDelivery` — those two are shared with `syncMatch`, which deliberately never checks the XI (a queued event was chosen from the XI as it stood when queued). `tests/playingXiEnforcement.test.js` fails if `sync` starts enforcing it.
+
+Contract: [docs/api.md](../docs/api.md) → `## PUT /v1/match/:matchId/squad/:side`, `## GET …/squad`, `## PATCH …/playing-xi`, `### POST/GET/DELETE /v1/team/:teamId/invites`, `## Player invites`.
+
 ## Naming Conventions
 
 - Files: `<resource>.<role>.js` — `user.controller.js`, `user.routes.js`, `auth.middleware.js`, `match.model.js`, `otp.constants.js`. Lowercase resource, dot-separated role.

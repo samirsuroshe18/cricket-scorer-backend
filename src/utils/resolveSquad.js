@@ -15,7 +15,7 @@ const normalise = (name) => name.trim().toLowerCase();
  * Throws bare i18n keys as ApiError messages.
  */
 export const resolveSquad = (body = {}) => {
-    const { players = [], captain, viceCaptain, keeper } = body;
+    const { players = [], captain, viceCaptain, keeper, playingXI } = body;
 
     if (!Array.isArray(players)) {
         throw new ApiError(400, 'SQUAD_PLAYER_NAME_INVALID');
@@ -65,10 +65,30 @@ export const resolveSquad = (body = {}) => {
         throw new ApiError(400, 'SQUAD_CAPTAIN_VC_MUST_DIFFER');
     }
 
+    // Unlike the designations, absence matters here: `undefined` leaves a stored
+    // XI alone, `null` un-sets it, and `[]` is a deliberately empty XI. Unset
+    // and empty are different states — only a set XI restricts scoring.
+    const resolveXi = (value) => {
+        if (value === undefined || value === null) return value;
+        if (!Array.isArray(value)) {
+            throw new ApiError(400, 'SQUAD_XI_NOT_IN_SQUAD');
+        }
+        const names = [];
+        for (const entry of value) {
+            const name = typeof entry === 'string' ? byKey.get(normalise(entry)) : undefined;
+            if (!name) {
+                throw new ApiError(400, 'SQUAD_XI_NOT_IN_SQUAD');
+            }
+            if (!names.includes(name)) names.push(name);
+        }
+        return names;
+    };
+
     return {
         players: resolved,
         captain: resolvedCaptain,
         viceCaptain: resolvedViceCaptain,
         keeper: resolvedKeeper,
+        playingXI: resolveXi(playingXI),
     };
 };

@@ -41,26 +41,17 @@ const findOwnedTeam = async (teamId, requesterId) => {
 const toOrganizationSummary = (organization) =>
     organization ? { id: organization._id, name: organization.name } : null;
 
-// The players on `teamId` with an unanswered invite, as string ids — one query
-// per request, never per row. Accepted and declined invites are not "pending":
-// an accepted one already reads as `isClaimed`, a declined one is just a
-// named player again.
-const findPendingInvitePlayerIds = async (teamId) => {
-    const invites = await PlayerInvite.find({ team: teamId, status: 'pending' }, 'player');
-    return new Set(invites.map((invite) => String(invite.player)));
-};
-
 // One roster row — shared by the profile's `roster`, add-player and edit-player
 // so the shape lives in one place. `isCaptain`/`isViceCaptain` come from the
-// team-level defaults, never from a match's own squad.
-const toRosterRow = (player, team, pendingInvitePlayerIds = new Set()) => ({
+// team-level defaults, never from a match's own squad. There is no invite state
+// here: an invitee is not on the roster until they accept.
+const toRosterRow = (player, team) => ({
     playerId: player._id,
     playerName: player.name,
     jerseyNumber: player.jerseyNumber ?? null,
     role: player.role,
     isCaptain: team.captainId?.equals?.(player._id) ?? false,
     isViceCaptain: team.viceCaptainId?.equals?.(player._id) ?? false,
-    inviteStatus: pendingInvitePlayerIds.has(String(player._id)) ? 'pending' : null,
 });
 
 // Same ownership pattern as getCareerStats: a malformed teamId throws a raw
@@ -82,7 +73,6 @@ const getTeamProfile = catchAsync(async (req, res) => {
     ).sort({ createdAt: -1 }).lean();
 
     const activeRoster = team.players.filter((player) => !player.isDeleted);
-    const pendingInvitePlayerIds = await findPendingInvitePlayerIds(team._id);
 
     return res.status(200).json(new ApiResponse(200, {
         teamId: team._id,
@@ -99,7 +89,7 @@ const getTeamProfile = catchAsync(async (req, res) => {
         // roster, so it reads back as null rather than a dangling id.
         captainId: activeRoster.find((player) => team.captainId?.equals(player._id))?._id ?? null,
         viceCaptainId: activeRoster.find((player) => team.viceCaptainId?.equals(player._id))?._id ?? null,
-        roster: activeRoster.map((player) => toRosterRow(player, team, pendingInvitePlayerIds)),
+        roster: activeRoster.map((player) => toRosterRow(player, team)),
     }, req.t("TEAM_PROFILE_FETCHED")));
 });
 
@@ -653,7 +643,7 @@ const addTeamPlayer = catchAsync(async (req, res) => {
     const refreshed = await Team.findById(team._id);
 
     const status = wasOnRoster ? 200 : 201;
-    return res.status(status).json(new ApiResponse(status, toRosterRow(player, refreshed, await findPendingInvitePlayerIds(team._id)), req.t("TEAM_PLAYER_ADDED")));
+    return res.status(status).json(new ApiResponse(status, toRosterRow(player, refreshed), req.t("TEAM_PLAYER_ADDED")));
 });
 
 // How many name variants ("Rahul Sharma", "Rahul Sharma (2)", ...) an invite
@@ -688,11 +678,12 @@ const resolveInvitePlayer = async (team, invitee, scorerId) => {
     throw new ApiError(409, "PLAYER_ALREADY_CLAIMED");
 };
 
-// Invite an existing app user onto the roster. The roster gets a normal,
-// scorer-owned Player named after the person immediately; linking that Player
-// to their account is theirs to accept (see player-invite accept), never set
-// here — `Player.linkedUserId` is what your-turn pushes go to. Repeating an
-// invite for someone with a pending one is a harmless 200 no-op.
+// Invite an existing app user to the team. A normal, scorer-owned Player named
+// after the person is created for the invite, but it is NOT put on the roster:
+// the invitee joins `Team.players` and links that Player to their account only
+// by accepting (see player-invite accept). `Player.linkedUserId` is never set
+// here — it is what your-turn pushes go to. Repeating an invite for someone
+// with a pending one is a harmless 200 no-op.
 const inviteTeamPlayer = catchAsync(async (req, res) => {
     const team = await findManageableTeam(req.params.teamId, req.user._id);
 
@@ -715,17 +706,17 @@ const inviteTeamPlayer = catchAsync(async (req, res) => {
         invitee,
     );
 
-    await Team.updateOne({ _id: team._id }, { $addToSet: { players: player._id } });
-    const refreshed = await Team.findById(team._id);
     const respond = (status, inviteId, inviteStatus) =>
         res.status(status).json(new ApiResponse(status, {
             inviteId,
             status: inviteStatus,
-            player: toRosterRow(player, refreshed, inviteStatus === 'pending' ? new Set([String(player._id)]) : new Set()),
+            player: toRosterRow(player, team),
         }, req.t("PLAYER_INVITE_SENT")));
 
-    // Already linked to this very person: nothing to ask, they are on the roster.
+    // Already linked to this very person: nothing to ask, so they go straight
+    // onto the roster. Any other invitee joins it only by accepting.
     if (player.linkedUserId) {
+        await Team.updateOne({ _id: team._id }, { $addToSet: { players: player._id } });
         return respond(200, null, 'accepted');
     }
 
@@ -760,6 +751,64 @@ const inviteTeamPlayer = catchAsync(async (req, res) => {
     return respond(201, created._id, 'pending');
 });
 
+// The team's invitations as the scorer sees them: one row per invitee — their
+// newest invite of any status — and none at all when that newest one was
+// cancelled, so a withdrawn invite never resurfaces an older declined one.
+// Newest activity first.
+const listTeamInvites = catchAsync(async (req, res) => {
+    const team = await findManageableTeam(req.params.teamId, req.user._id);
+
+    const invites = await PlayerInvite.find({ team: team._id })
+        .sort({ updatedAt: -1, _id: -1 })
+        .populate('invitedUser', 'fullName photoUrl')
+        .populate('player', 'name');
+
+    const seen = new Set();
+    const rows = [];
+    for (const invite of invites) {
+        const key = String(invite.invitedUser?._id ?? invite.invitedUser);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (invite.status === 'cancelled' || !invite.invitedUser || !invite.player) continue;
+
+        rows.push({
+            inviteId: invite._id,
+            status: invite.status,
+            respondedAt: invite.respondedAt ?? null,
+            player: { playerId: invite.player._id, playerName: invite.player.name },
+            invitee: {
+                userId: invite.invitedUser._id,
+                fullName: invite.invitedUser.fullName,
+                photoUrl: invite.invitedUser.photoUrl ?? null,
+            },
+        });
+    }
+
+    return res.status(200).json(new ApiResponse(200, { invites: rows }, req.t("TEAM_INVITES_FETCHED")));
+});
+
+// The scorer withdrawing an invite that has not been answered. The conditional
+// update is what makes a race with the invitee's own accept/decline safe: only
+// one of them can move the invite out of `pending`.
+const cancelTeamInvite = catchAsync(async (req, res) => {
+    const team = await findManageableTeam(req.params.teamId, req.user._id);
+
+    const invite = await PlayerInvite.findOne({ _id: req.params.inviteId, team: team._id });
+    if (!invite) {
+        throw new ApiError(404, "INVITE_NOT_FOUND");
+    }
+
+    const { modifiedCount } = await PlayerInvite.updateOne(
+        { _id: invite._id, status: 'pending' },
+        { $set: { status: 'cancelled', respondedAt: new Date() } }
+    );
+    if (modifiedCount !== 1) {
+        throw new ApiError(409, "INVITE_NOT_PENDING");
+    }
+
+    return res.status(200).json(new ApiResponse(200, { inviteId: invite._id, status: 'cancelled' }, req.t("PLAYER_INVITE_CANCELLED")));
+});
+
 // Edit a rostered player's role/jersey through the team, so an organization
 // owner can manage a roster whose Players were created by another account —
 // PATCH /v1/player/:playerId stays creator-only.
@@ -780,7 +829,7 @@ const updateTeamPlayer = catchAsync(async (req, res) => {
     if (clearJerseyNumber) player.jerseyNumber = undefined;
     await player.save();
 
-    return res.status(200).json(new ApiResponse(200, toRosterRow(player, team, await findPendingInvitePlayerIds(team._id)), req.t("PLAYER_UPDATED")));
+    return res.status(200).json(new ApiResponse(200, toRosterRow(player, team), req.t("PLAYER_UPDATED")));
 });
 
 // Removes a player from the roster the scorer no longer wants — never the
@@ -812,4 +861,4 @@ const removeTeamPlayer = catchAsync(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, { playerId }, req.t("PLAYER_REMOVED")));
 });
 
-export { listPlayingForTeams, getTeamPlayerView, getTeamPlayerMatches, removeTeamPlayer, findOwnedTeam, inviteTeamPlayer, addTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };
+export { listTeamInvites, cancelTeamInvite, listPlayingForTeams, getTeamPlayerView, getTeamPlayerMatches, removeTeamPlayer, findOwnedTeam, inviteTeamPlayer, addTeamPlayer, updateTeamPlayer, getTeamProfile, getTeamMatches, listMyTeams, createTeam, updateTeam, deleteTeam, updateTeamOrganization, updateTeamLogo };

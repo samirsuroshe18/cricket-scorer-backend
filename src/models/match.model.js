@@ -24,6 +24,13 @@ const squadSideSchema = new Schema(
     captainId:     { type: Schema.Types.ObjectId, ref: 'Player', default: null },
     viceCaptainId: { type: Schema.Types.ObjectId, ref: 'Player', default: null },
     keeperId:      { type: Schema.Types.ObjectId, ref: 'Player', default: null },
+    // Subset of `players`; the Bench is `players` minus this, computed. Left
+    // `undefined` (not `[]`) until the scorer first chooses one: unset means
+    // "no restriction", while a set-but-empty XI restricts scoring to nobody.
+    playingXI:     { type: [{ type: Schema.Types.ObjectId, ref: 'Player' }], default: undefined },
+    // Stamped by PUT /squad/:side only — the client compares it with an invite's
+    // `respondedAt` to tell which accepted invitees are new since this save.
+    savedAt:       { type: Date, default: null },
   },
   { _id: false }
 );
@@ -63,6 +70,11 @@ const matchSchema = new Schema(
       teamA: { type: squadSideSchema, default: () => ({}) },
       teamB: { type: squadSideSchema, default: () => ({}) },
     },
+    // Set once, by POST /v1/match/:matchId/squad/acknowledge, when the scorer
+    // has dealt with the Squad screen (Skip, or Save & continue). The client
+    // shows that screen for an upcoming match until this is set. Null on every
+    // match that predates it, which is deliberate: each shows the screen once.
+    squadAcknowledgedAt: { type: Date, default: null },
     syncStatus:      { type: String, default: 'local', enum: SYNC_STATUS },
     isDeleted:       { type: Boolean, default: false },
     completedAt:     { type: Date },
