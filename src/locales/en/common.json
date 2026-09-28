@@ -301,6 +301,7 @@
   "SQUAD_PLAYER_ON_BOTH_SIDES": "That player is already in the other team's squad — enter a different name if this is someone else",
   "SQUAD_CAPTAIN_VC_MUST_DIFFER": "The captain and vice-captain must be different players",
   "SQUAD_DESIGNATION_NOT_IN_SQUAD": "The captain, vice-captain and wicketkeeper must be players in the squad",
+  "SQUAD_XI_NOT_IN_SQUAD": "The Playing XI must only contain players in the squad",
   "INVALID_SIDE": "Side must be teamA or teamB",
   "INVALID_ROLE": "Player role must be batsman, bowler or allrounder",
   "INVALID_EMAIL": "Enter a valid email address",
