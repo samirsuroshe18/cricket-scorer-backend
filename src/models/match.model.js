@@ -70,6 +70,11 @@ const matchSchema = new Schema(
       teamA: { type: squadSideSchema, default: () => ({}) },
       teamB: { type: squadSideSchema, default: () => ({}) },
     },
+    // Set once, by POST /v1/match/:matchId/squad/acknowledge, when the scorer
+    // has dealt with the Squad screen (Skip, or Save & continue). The client
+    // shows that screen for an upcoming match until this is set. Null on every
+    // match that predates it, which is deliberate: each shows the screen once.
+    squadAcknowledgedAt: { type: Date, default: null },
     syncStatus:      { type: String, default: 'local', enum: SYNC_STATUS },
     isDeleted:       { type: Boolean, default: false },
     completedAt:     { type: Date },

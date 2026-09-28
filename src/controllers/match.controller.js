@@ -417,6 +417,26 @@ const getMatchSquad = catchAsync(async (req, res) => {
     }, req.t("SQUAD_FETCHED")));
 });
 
+// POST /v1/match/:matchId/squad/acknowledge — records that the scorer has dealt
+// with the Squad screen for this match, so the client stops offering it. The
+// conditional update makes it idempotent (a repeat keeps the first timestamp)
+// and safe to race; it matches a missing field too, so a match that predates
+// the field can be acknowledged. Allowed in any match status.
+const acknowledgeSquad = catchAsync(async (req, res) => {
+    const match = await loadOwnedMatch(req.params.matchId, req.user._id);
+
+    await Match.updateOne(
+        { _id: match._id, squadAcknowledgedAt: null },
+        { $set: { squadAcknowledgedAt: new Date() } }
+    );
+    const stored = await Match.findById(match._id, 'squadAcknowledgedAt');
+
+    return res.status(200).json(new ApiResponse(200, {
+        matchId: match._id,
+        squadAcknowledgedAt: stored.squadAcknowledgedAt,
+    }, req.t("SQUAD_ACKNOWLEDGED")));
+});
+
 // PATCH /v1/match/:matchId/squad/:side/playing-xi — moves players between the
 // Playing XI and the Bench at any point short of a finished match, including
 // after scoring starts (which PUT /squad refuses). Takes ids only: the squad's
@@ -3089,6 +3109,9 @@ const serializeMatchHistoryItems = async (matches) => {
             // without re-entering the scoring console, per the offline-sync
             // reject-and-alert design.
             syncStatus: match.syncStatus,
+            // True once the scorer has dealt with the Squad screen (see
+            // Match.squadAcknowledgedAt); false for a match that predates it.
+            squadAcknowledged: Boolean(match.squadAcknowledgedAt),
             currentInnings: currentInning
                 ? {
                     inningsNumber: currentInning.inningsNumber,
@@ -3224,4 +3247,4 @@ const getMatchHistory = catchAsync(async (req, res) => {
     }, req.t("MATCH_HISTORY_FETCHED")));
 });
 
-export { findOrCreatePlayerRecord, createMatch, saveSquad, getMatchSquad, savePlayingXi, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, serializeMatchHistoryItems, assignScorer, getScorerCandidates, createMatchWithJoinCode, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };
+export { findOrCreatePlayerRecord, createMatch, saveSquad, getMatchSquad, savePlayingXi, acknowledgeSquad, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, serializeMatchHistoryItems, assignScorer, getScorerCandidates, createMatchWithJoinCode, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };

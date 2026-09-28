@@ -298,6 +298,7 @@
   "SQUAD_SAVED": "Squad saved",
   "SQUAD_FETCHED": "Squad fetched",
   "PLAYING_XI_SAVED": "Playing XI saved",
+  "SQUAD_ACKNOWLEDGED": "Squad screen acknowledged",
   "SQUAD_PLAYER_NAMES_MUST_DIFFER": "Each player in a squad needs a different name",
   "SQUAD_PLAYER_NAME_INVALID": "Every player needs a name of up to 50 characters",
   "SQUAD_PLAYER_ON_BOTH_SIDES": "That player is already in the other team's squad — enter a different name if this is someone else",
