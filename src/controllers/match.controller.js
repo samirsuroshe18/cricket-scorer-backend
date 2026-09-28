@@ -417,6 +417,59 @@ const getMatchSquad = catchAsync(async (req, res) => {
     }, req.t("SQUAD_FETCHED")));
 });
 
+// PATCH /v1/match/:matchId/squad/:side/playing-xi — moves players between the
+// Playing XI and the Bench at any point short of a finished match, including
+// after scoring starts (which PUT /squad refuses). Takes ids only: the squad's
+// composition is otherwise PUT's business, so an id must already be on this
+// side's team roster, and one not yet in the squad's `players` is appended to
+// it — that is how an invitee who accepted mid-match gets promoted. Does not
+// touch `savedAt`, which only PUT stamps.
+const savePlayingXi = catchAsync(async (req, res) => {
+    const { matchId, side } = req.params;
+
+    if (!TEAM_SIDES.includes(side)) {
+        throw new ApiError(400, "INVALID_SIDE");
+    }
+    const requested = req.body?.playingXI;
+    if (!Array.isArray(requested)
+        || requested.some((id) => typeof id !== 'string' || !mongoose.Types.ObjectId.isValid(id))) {
+        throw new ApiError(400, "INVALID_ID");
+    }
+
+    const match = await loadOwnedMatch(matchId, req.user._id);
+    if (match.status === 'completed' || match.status === 'abandoned') {
+        throw new ApiError(400, "MATCH_ALREADY_COMPLETED");
+    }
+
+    const ids = [...new Set(requested)];
+    const team = await Team.findById(match[side], 'players');
+    const rostered = new Set((team?.players ?? []).map(String));
+    const found = await Player.countDocuments({ _id: { $in: ids }, isDeleted: false });
+    if (found !== ids.length || ids.some((id) => !rostered.has(id))) {
+        throw new ApiError(404, "PLAYER_NOT_ON_TEAM");
+    }
+
+    const otherSide = side === 'teamA' ? 'teamB' : 'teamA';
+    const onOtherSide = new Set((match.squads?.[otherSide]?.players ?? []).map(String));
+    if (ids.some((id) => onOtherSide.has(id))) {
+        throw new ApiError(400, "SQUAD_PLAYER_ON_BOTH_SIDES");
+    }
+
+    const current = (match.squads?.[side]?.players ?? []).map(String);
+    const squadPlayers = [...current, ...ids.filter((id) => !current.includes(id))];
+
+    await Match.updateOne({ _id: match._id }, {
+        $set: { [`squads.${side}.players`]: squadPlayers, [`squads.${side}.playingXI`]: ids },
+    });
+
+    const fresh = await Match.findById(match._id);
+    const players = await Player.find({ _id: { $in: squadPlayers } });
+    return res.status(200).json(new ApiResponse(200, {
+        side,
+        ...toSquadSideView(fresh, side, players),
+    }, req.t("PLAYING_XI_SAVED")));
+});
+
 // Explicit pick rather than spreading the Mongoose subdoc, which would leak internals.
 const serializeExtras = (extras) => ({
     wides: extras?.wides ?? 0,
@@ -3154,4 +3207,4 @@ const getMatchHistory = catchAsync(async (req, res) => {
     }, req.t("MATCH_HISTORY_FETCHED")));
 });
 
-export { findOrCreatePlayerRecord, createMatch, saveSquad, getMatchSquad, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, serializeMatchHistoryItems, assignScorer, getScorerCandidates, createMatchWithJoinCode, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };
+export { findOrCreatePlayerRecord, createMatch, saveSquad, getMatchSquad, savePlayingXi, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, serializeMatchHistoryItems, assignScorer, getScorerCandidates, createMatchWithJoinCode, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };
