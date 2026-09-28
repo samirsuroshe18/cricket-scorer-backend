@@ -296,6 +296,7 @@
   "NOTIFICATION_MARKED_READ": "Notification marked as read",
   "ALL_NOTIFICATIONS_MARKED_READ": "All notifications marked as read",
   "SQUAD_SAVED": "Squad saved",
+  "SQUAD_FETCHED": "Squad fetched",
   "SQUAD_PLAYER_NAMES_MUST_DIFFER": "Each player in a squad needs a different name",
   "SQUAD_PLAYER_NAME_INVALID": "Every player needs a name of up to 50 characters",
   "SQUAD_PLAYER_ON_BOTH_SIDES": "That player is already in the other team's squad — enter a different name if this is someone else",

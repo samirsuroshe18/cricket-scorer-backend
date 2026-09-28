@@ -20,6 +20,7 @@ import { resolveMatchResult } from '../utils/resolveMatchResult.js';
 import { resolveToss } from '../utils/resolveToss.js';
 import { resolveSquad } from '../utils/resolveSquad.js';
 import { mergePlayingXi } from '../utils/playingXi.js';
+import { toSquadSideView } from '../utils/squadView.js';
 import { resolveSyncDecision } from '../utils/resolveSync.js';
 import { generateScorecard, liveStrikeFigures } from '../utils/scorecard.js';
 import { applyCareerStatsIncrement } from '../utils/careerStats.js';
@@ -378,6 +379,42 @@ const saveSquad = catchAsync(async (req, res) => {
         keeperId: saved.keeperId,
         playingXI: playingXI === undefined ? null : playingXI.map(String),
     }, req.t("SQUAD_SAVED")));
+});
+
+// Match lookup + the creator / assigned-scorer gate the squad endpoints share.
+// A malformed id is the same 404 as an unknown one.
+const loadOwnedMatch = async (matchId, userId) => {
+    if (!mongoose.Types.ObjectId.isValid(matchId)) {
+        throw new ApiError(404, "MATCH_NOT_FOUND");
+    }
+    const match = await Match.findOne({ _id: matchId, isDeleted: false });
+    if (!match) {
+        throw new ApiError(404, "MATCH_NOT_FOUND");
+    }
+    if (!match.createdBy?.equals(userId) && !match.assignedScorer?.equals(userId)) {
+        throw new ApiError(403, "MATCH_NOT_OWNED");
+    }
+    return match;
+};
+
+// GET /v1/match/:matchId/squad — both sides as saved, plus whether an innings
+// exists (which decides whether the client saves with PUT or the playing-xi
+// PATCH). Readable in any match status.
+const getMatchSquad = catchAsync(async (req, res) => {
+    const match = await loadOwnedMatch(req.params.matchId, req.user._id);
+
+    const ids = TEAM_SIDES.flatMap((side) => match.squads?.[side]?.players ?? []);
+    const [players, inningsStarted] = await Promise.all([
+        Player.find({ _id: { $in: ids } }),
+        Inning.exists({ matchId: match._id }),
+    ]);
+
+    return res.status(200).json(new ApiResponse(200, {
+        matchId: match._id,
+        inningsStarted: Boolean(inningsStarted),
+        teamA: toSquadSideView(match, 'teamA', players),
+        teamB: toSquadSideView(match, 'teamB', players),
+    }, req.t("SQUAD_FETCHED")));
 });
 
 // Explicit pick rather than spreading the Mongoose subdoc, which would leak internals.
@@ -3117,4 +3154,4 @@ const getMatchHistory = catchAsync(async (req, res) => {
     }, req.t("MATCH_HISTORY_FETCHED")));
 });
 
-export { findOrCreatePlayerRecord, createMatch, saveSquad, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, serializeMatchHistoryItems, assignScorer, getScorerCandidates, createMatchWithJoinCode, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };
+export { findOrCreatePlayerRecord, createMatch, saveSquad, getMatchSquad, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, serializeMatchHistoryItems, assignScorer, getScorerCandidates, createMatchWithJoinCode, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };
