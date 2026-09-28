@@ -5,6 +5,8 @@ import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js'
 import { Player } from '../src/models/player.model.js';
 import { Team } from '../src/models/team.model.js';
 import { PlayerInvite } from '../src/models/playerInvite.model.js';
+import { Notification } from '../src/models/notification.model.js';
+import { User } from '../src/models/user.model.js';
 
 describe('/v1/player-invite', () => {
   let app;
@@ -97,14 +99,64 @@ describe('/v1/player-invite', () => {
       expect(stored.respondedAt).toBeInstanceOf(Date);
     });
 
-    it('is idempotent', async () => {
-      const { token, inviteId } = await setup();
+    it('puts the player on the team roster only now', async () => {
+      const { token, team, inviteId, playerId } = await setup();
+      expect((await Team.findById(team._id)).players.map(String)).not.toContain(playerId);
+
+      await accept(token, inviteId);
+
+      expect((await Team.findById(team._id)).players.map(String)).toEqual([playerId]);
+    });
+
+    it('notifies the inviter once with a payload that carries no inviteId', async () => {
+      const { scorer, token, team, inviteId } = await setup();
+
+      await accept(token, inviteId);
+
+      const notifications = await Notification.find({ recipient: scorer._id });
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0].type).toBe('player_invite_accepted');
+      expect(notifications[0].title).toContain('Rahul Sharma');
+      expect(notifications[0].title).toContain('Riverside U19');
+      expect(notifications[0].data).toEqual({
+        type: 'player_invite_accepted',
+        teamId: String(team._id),
+        teamName: 'Riverside U19',
+      });
+    });
+
+    it('is idempotent: a repeat accept adds no second roster entry and sends no second notification', async () => {
+      const { scorer, token, team, inviteId, playerId } = await setup();
       await accept(token, inviteId);
 
       const again = await accept(token, inviteId);
 
       expect(again.status).toBe(200);
       expect(again.body.data.status).toBe('accepted');
+      expect((await Team.findById(team._id)).players.map(String)).toEqual([playerId]);
+      expect(await Notification.countDocuments({ recipient: scorer._id })).toBe(1);
+    });
+
+    it('adds no duplicate when the player is already on a legacy roster', async () => {
+      const { scorer, token, team, inviteId, playerId } = await setup();
+      await Team.updateOne({ _id: team._id }, { $addToSet: { players: playerId } });
+
+      const res = await accept(token, inviteId);
+
+      expect(res.status).toBe(200);
+      expect((await Team.findById(team._id)).players.map(String)).toEqual([playerId]);
+      expect(await Notification.countDocuments({ recipient: scorer._id })).toBe(1);
+    });
+
+    it('still accepts, and notifies nobody, when the inviter account no longer exists', async () => {
+      const { scorer, token, team, inviteId, playerId } = await setup();
+      await User.deleteOne({ _id: scorer._id });
+
+      const res = await accept(token, inviteId);
+
+      expect(res.status).toBe(200);
+      expect((await Team.findById(team._id)).players.map(String)).toEqual([playerId]);
+      expect(await Notification.countDocuments({ recipient: scorer._id })).toBe(0);
     });
 
     it('lets two people with the same full name each accept and link their own player', async () => {
@@ -133,7 +185,7 @@ describe('/v1/player-invite', () => {
     });
 
     it('returns 409 PLAYER_ALREADY_CLAIMED and leaves the invite pending when another account claimed first', async () => {
-      const { token, inviteId, playerId } = await setup();
+      const { scorer, token, team, inviteId, playerId } = await setup();
       const { user: rival } = await createTestUser();
       await Player.updateOne({ _id: playerId }, { linkedUserId: rival._id });
 
@@ -142,6 +194,8 @@ describe('/v1/player-invite', () => {
       expect(res.status).toBe(409);
       expect(res.body.code).toBe('PLAYER_ALREADY_CLAIMED');
       expect((await PlayerInvite.findById(inviteId)).status).toBe('pending');
+      expect((await Team.findById(team._id)).players).toHaveLength(0);
+      expect(await Notification.countDocuments({ recipient: scorer._id })).toBe(0);
     });
 
     it('returns 404 INVITE_NOT_FOUND for another user and after the team is deleted, linking nothing', async () => {
@@ -163,9 +217,9 @@ describe('/v1/player-invite', () => {
       expect(res.status).toBe(401);
     });
 
-    it('returns 409 INVITE_CANCELLED once the scorer removes the player', async () => {
-      const { scorerToken, token, inviteId, team, playerId } = await setup();
-      await request(app).delete(`/api/v1/team/${team._id}/players/${playerId}`).set(auth(scorerToken));
+    it('returns 409 INVITE_CANCELLED once the scorer has cancelled the invite', async () => {
+      const { token, inviteId } = await setup();
+      await PlayerInvite.updateOne({ _id: inviteId }, { status: 'cancelled', respondedAt: new Date() });
 
       const res = await accept(token, inviteId);
 
@@ -175,7 +229,7 @@ describe('/v1/player-invite', () => {
   });
 
   describe('POST /:inviteId/decline', () => {
-    it('marks the invite declined and leaves the player on the roster, unlinked', async () => {
+    it('marks the invite declined and leaves the player off the roster, unlinked', async () => {
       const { token, team, inviteId, playerId } = await setup();
 
       const res = await decline(token, inviteId);
@@ -186,7 +240,23 @@ describe('/v1/player-invite', () => {
       expect(stored.status).toBe('declined');
       expect(stored.respondedAt).toBeInstanceOf(Date);
       expect((await Player.findById(playerId)).linkedUserId).toBeNull();
-      expect((await Team.findById(team._id)).players.map(String)).toContain(playerId);
+      expect((await Team.findById(team._id)).players.map(String)).not.toContain(playerId);
+    });
+
+    it('notifies the inviter once, and a repeat decline sends nothing', async () => {
+      const { scorer, token, team, inviteId } = await setup();
+
+      await decline(token, inviteId);
+      await decline(token, inviteId);
+
+      const notifications = await Notification.find({ recipient: scorer._id });
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0].type).toBe('player_invite_declined');
+      expect(notifications[0].data).toEqual({
+        type: 'player_invite_declined',
+        teamId: String(team._id),
+        teamName: 'Riverside U19',
+      });
     });
 
     it('is idempotent', async () => {
@@ -219,9 +289,9 @@ describe('/v1/player-invite', () => {
       expect((await PlayerInvite.findById(inviteId)).status).toBe('pending');
     });
 
-    it('returns 409 INVITE_CANCELLED once the scorer removes the player', async () => {
-      const { scorerToken, token, inviteId, team, playerId } = await setup();
-      await request(app).delete(`/api/v1/team/${team._id}/players/${playerId}`).set(auth(scorerToken));
+    it('returns 409 INVITE_CANCELLED once the scorer has cancelled the invite', async () => {
+      const { token, inviteId } = await setup();
+      await PlayerInvite.updateOne({ _id: inviteId }, { status: 'cancelled', respondedAt: new Date() });
 
       const res = await decline(token, inviteId);
 

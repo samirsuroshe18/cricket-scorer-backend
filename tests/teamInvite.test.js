@@ -37,7 +37,7 @@ describe('POST /v1/team/:teamId/invites', () => {
     return { scorer, token, invitee, team };
   };
 
-  it('creates the player, roster entry, pending invite and one notification', async () => {
+  it('creates the player, a pending invite and one notification, without rostering the invitee', async () => {
     const { scorer, token, invitee, team } = await setup();
 
     const res = await invite(token, team._id, { userId: String(invitee._id) });
@@ -52,7 +52,8 @@ describe('POST /v1/team/:teamId/invites', () => {
     const player = await Player.findById(res.body.data.player.playerId);
     expect(String(player.createdBy)).toBe(String(scorer._id));
     expect(player.linkedUserId).toBeNull();
-    expect((await Team.findById(team._id)).players.map(String)).toEqual([String(player._id)]);
+    expect((await Team.findById(team._id)).players).toHaveLength(0);
+    expect(res.body.data.player).not.toHaveProperty('inviteStatus');
 
     const stored = await PlayerInvite.findById(res.body.data.inviteId);
     expect(stored).toMatchObject({ status: 'pending' });
@@ -151,7 +152,7 @@ describe('POST /v1/team/:teamId/invites', () => {
     expect(first.body.data.player.playerName).toBe('Rahul Sharma');
     expect(other.body.data.player.playerName).toBe('Rahul Sharma (2)');
     expect(first.body.data.player.playerId).not.toBe(other.body.data.player.playerId);
-    expect((await Team.findById(team._id)).players).toHaveLength(2);
+    expect((await Team.findById(team._id)).players).toHaveLength(0);
     expect(await PlayerInvite.countDocuments({ status: 'pending' })).toBe(2);
     // one pending invite per player, so accepting one can never strand the other
     const perPlayer = await PlayerInvite.aggregate([{ $group: { _id: '$player', n: { $sum: 1 } } }]);

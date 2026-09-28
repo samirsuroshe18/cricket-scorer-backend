@@ -13,6 +13,8 @@ export const NOTIFICATION_TYPES = [
     'auction_started',
     'lot_sold',
     'player_invite',
+    'player_invite_accepted',
+    'player_invite_declined',
 ];
 
 const notificationSchema = new Schema(
