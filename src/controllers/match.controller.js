@@ -19,6 +19,7 @@ import { resolveUndo, resolveMatchUndo } from '../utils/resolveUndo.js';
 import { resolveMatchResult } from '../utils/resolveMatchResult.js';
 import { resolveToss } from '../utils/resolveToss.js';
 import { resolveSquad } from '../utils/resolveSquad.js';
+import { mergePlayingXi } from '../utils/playingXi.js';
 import { resolveSyncDecision } from '../utils/resolveSync.js';
 import { generateScorecard, liveStrikeFigures } from '../utils/scorecard.js';
 import { applyCareerStatsIncrement } from '../utils/careerStats.js';
@@ -346,11 +347,25 @@ const saveSquad = catchAsync(async (req, res) => {
     }
 
     const idFor = (name) => (name ? docs.find((doc) => doc.nameLower === name.toLowerCase())?.id ?? null : null);
+    const savedIds = docs.map((doc) => doc.id);
+    const requestedXi = Array.isArray(squad.playingXI)
+        ? squad.playingXI.map(idFor)
+        : squad.playingXI;
+    const playingXI = mergePlayingXi({
+        requested: requestedXi,
+        existing: match.squads?.[side]?.playingXI,
+        savedIds,
+    });
+
     const saved = {
-        players: docs.map((doc) => doc.id),
+        players: savedIds,
         captainId: idFor(squad.captain),
         viceCaptainId: idFor(squad.viceCaptain),
         keeperId: idFor(squad.keeper),
+        savedAt: new Date(),
+        // Omitted (not `[]`) when unset: `$set` replaces the whole side, so
+        // leaving it out is what keeps it un-set.
+        ...(playingXI !== undefined && { playingXI }),
     };
 
     await Match.updateOne({ _id: match._id }, { $set: { [`squads.${side}`]: saved } });
@@ -361,6 +376,7 @@ const saveSquad = catchAsync(async (req, res) => {
         captainId: saved.captainId,
         viceCaptainId: saved.viceCaptainId,
         keeperId: saved.keeperId,
+        playingXI: playingXI === undefined ? null : playingXI.map(String),
     }, req.t("SQUAD_SAVED")));
 });
 

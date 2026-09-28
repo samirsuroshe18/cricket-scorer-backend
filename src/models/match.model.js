@@ -24,6 +24,13 @@ const squadSideSchema = new Schema(
     captainId:     { type: Schema.Types.ObjectId, ref: 'Player', default: null },
     viceCaptainId: { type: Schema.Types.ObjectId, ref: 'Player', default: null },
     keeperId:      { type: Schema.Types.ObjectId, ref: 'Player', default: null },
+    // Subset of `players`; the Bench is `players` minus this, computed. Left
+    // `undefined` (not `[]`) until the scorer first chooses one: unset means
+    // "no restriction", while a set-but-empty XI restricts scoring to nobody.
+    playingXI:     { type: [{ type: Schema.Types.ObjectId, ref: 'Player' }], default: undefined },
+    // Stamped by PUT /squad/:side only — the client compares it with an invite's
+    // `respondedAt` to tell which accepted invitees are new since this save.
+    savedAt:       { type: Date, default: null },
   },
   { _id: false }
 );
