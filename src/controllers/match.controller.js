@@ -19,7 +19,7 @@ import { resolveUndo, resolveMatchUndo } from '../utils/resolveUndo.js';
 import { resolveMatchResult } from '../utils/resolveMatchResult.js';
 import { resolveToss } from '../utils/resolveToss.js';
 import { resolveSquad } from '../utils/resolveSquad.js';
-import { mergePlayingXi } from '../utils/playingXi.js';
+import { mergePlayingXi, assertInPlayingXi } from '../utils/playingXi.js';
 import { toSquadSideView } from '../utils/squadView.js';
 import { resolveSyncDecision } from '../utils/resolveSync.js';
 import { generateScorecard, liveStrikeFigures } from '../utils/scorecard.js';
@@ -847,6 +847,12 @@ const startInnings = catchAsync(async (req, res) => {
     // undetected. Innings 1 never has anything to collide with (both rosters
     // start empty); innings 2 can, once the sides have swapped and the other
     // team's roster from innings 1 is already committed.
+    // The Playing XI, when set for a side, is the only pool its players come
+    // from. Checked before resolveOpener so a rejected name is never created.
+    await assertInPlayingXi({ match, side: battingTeam, playerId: strikerId, name: striker });
+    await assertInPlayingXi({ match, side: battingTeam, playerId: nonStrikerId, name: nonStriker });
+    await assertInPlayingXi({ match, side: bowlingTeam, playerId: bowlerId, name: bowler });
+
     const strikerDoc = await resolveOpener({
         playerId: strikerId ?? null, name: striker, teamId: battingTeamId, opposingTeamId: bowlingTeamId,
         createdBy: req.user._id, notFoundCode: "STRIKER_NOT_FOUND",
@@ -1137,7 +1143,7 @@ const resolveBowler = async ({ bowlerId, bowlerName, teamId, opposingTeamId, cre
 // session-scoped alongside whatever deliveries surround it in the same
 // transaction. Mutates and saves `inning` in place; the caller decides what
 // else, if anything, needs saving in the same round trip.
-const applyBowlerSelection = async ({ match, inning, session, req, bowlerName, bowlerId }) => {
+const applyBowlerSelection = async ({ match, inning, session, req, bowlerName, bowlerId, enforcePlayingXi = false }) => {
     if (inning.status === 'completed') {
         throw new ApiError(400, "INNINGS_COMPLETED");
     }
@@ -1165,6 +1171,12 @@ const applyBowlerSelection = async ({ match, inning, session, req, bowlerName, b
     const previousBowlerId = previousOver?.bowlerId ?? null;
     const bowlingTeamId = inning.bowlingTeam === 'teamA' ? match.teamA : match.teamB;
     const battingTeamId = inning.battingTeam === 'teamA' ? match.teamA : match.teamB;
+
+    // Opt-in: selectBowler passes it, syncMatch never does — a queued bowler
+    // event was chosen from the XI as it stood when it was queued.
+    if (enforcePlayingXi) {
+        await assertInPlayingXi({ match, side: inning.bowlingTeam, playerId: bowlerId, name: bowlerName });
+    }
 
     // Checked by name, ahead of resolveBowler, only when no bowlerId was
     // given: typing the previous over's bowler's name straight back is the
@@ -1253,6 +1265,7 @@ const selectBowler = catchAsync(async (req, res) => {
         req,
         bowlerName,
         bowlerId,
+        enforcePlayingXi: true,
     });
 
     // "Your turn to bowl" — online path only, same reasoning as scoreBall's
@@ -1403,7 +1416,7 @@ const assertMatchWritable = (match, { allowCompleted }) => {
 // it. That is what lets a `bowler` event earlier in the batch satisfy
 // BOWLER_NOT_SELECTED for a `ball` event later in it, and what makes an
 // innings that completes mid-batch correctly refuse everything queued after.
-const applyDelivery = async ({ match, inning, session, req, delivery }) => {
+const applyDelivery = async ({ match, inning, session, req, delivery, enforcePlayingXi = false }) => {
     const { runs, extraType, runsFrom, wicketType, dismissedBatsman, incomingBatsmanName, idempotencyKey } = delivery;
 
     // Re-checked here rather than trusted from an earlier read: for scoreBall
@@ -1470,6 +1483,10 @@ const applyDelivery = async ({ match, inning, session, req, delivery }) => {
             // orphan Player (or orphan roster entry) from a delivery that
             // fails later in this same call is harmless, exactly as
             // elsewhere in this file.
+            // Opt-in, like applyBowlerSelection's: scoreBall passes it, sync doesn't.
+            if (enforcePlayingXi) {
+                await assertInPlayingXi({ match, side: inning.battingTeam, name: trimmedIncoming });
+            }
             incomingPlayer = await findOrCreatePlayer(trimmedIncoming, battingTeamId, bowlingTeamId, req.user._id);
         }
     }
@@ -1849,7 +1866,7 @@ const scoreBall = catchAsync(async (req, res) => {
                 throw new ApiError(400, "INNINGS_NOT_STARTED");
             }
 
-            result = await applyDelivery({ match, inning, session, req, delivery: input });
+            result = await applyDelivery({ match, inning, session, req, delivery: input, enforcePlayingXi: true });
         });
 
         const view = await finishBallDelivery({ match, req, result });
