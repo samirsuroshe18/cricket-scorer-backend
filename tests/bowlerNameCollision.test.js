@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
-import { createMatch, startLiveInnings, scoreDotBall } from './helpers/matchSetup.js';
+import { createMatch, startLiveInnings, scoreDotBall, addPlayerToXi } from './helpers/matchSetup.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 import { Player } from '../src/models/player.model.js';
 
@@ -54,18 +54,28 @@ describe('selectBowler bowlerId disambiguation', () => {
 
     await bowlOutOver(token, matchId); // over 1 (Opener) done
 
-    const rahul = await selectBowler(token, matchId, { bowlerName: 'Rahul' });
+    // A real "Rahul" already on the Playing XI (as a scorer's squad setup
+    // would put him there), picked by id — the not-yet-XI'd bare-name path
+    // this test used to exercise for the FIRST selection is no longer
+    // reachable now that start-innings requires a saved XI (see
+    // tests/playingXiRange.test.js): assertInPlayingXi rejects any name that
+    // isn't already an XI member before resolveBowler's own name-collision
+    // logic ever runs.
+    const rahulPlayer = await addPlayerToXi(app, token, matchId, 'teamB', 'Rahul');
+    const rahul = await selectBowler(token, matchId, { bowlerName: 'Rahul', bowlerId: rahulPlayer._id.toString() });
     expect(rahul.status).toBe(200);
 
     await bowlOutOver(token, matchId); // over 2 (Rahul) done
 
-    const suresh = await selectBowler(token, matchId, { bowlerName: 'Suresh' });
+    const sureshPlayer = await addPlayerToXi(app, token, matchId, 'teamB', 'Suresh');
+    const suresh = await selectBowler(token, matchId, { bowlerName: 'Suresh', bowlerId: sureshPlayer._id.toString() });
     expect(suresh.status).toBe(200);
 
     await bowlOutOver(token, matchId); // over 3 (Suresh) done
 
     // A second, different "Rahul" for over 4 — no bowlerId, so this must be
-    // treated as a new player, which collides with the existing one.
+    // treated as a new player, which collides with the existing one (the
+    // real Rahul, already on the roster/XI above).
     const secondRahul = await selectBowler(token, matchId, { bowlerName: 'Rahul' });
 
     expect(secondRahul.status).toBe(400);
@@ -82,13 +92,15 @@ describe('selectBowler bowlerId disambiguation', () => {
 
     await bowlOutOver(token, matchId); // over 1 (Opener) done
 
-    const rahul = await selectBowler(token, matchId, { bowlerName: 'Rahul' });
+    const rahulPlayer = await addPlayerToXi(app, token, matchId, 'teamB', 'Rahul');
+    const rahul = await selectBowler(token, matchId, { bowlerName: 'Rahul', bowlerId: rahulPlayer._id.toString() });
     expect(rahul.status).toBe(200);
     const rahulId = rahul.body.data.bowler.bowlerId;
 
     await bowlOutOver(token, matchId); // over 2 (Rahul) done
 
-    const suresh = await selectBowler(token, matchId, { bowlerName: 'Suresh' });
+    const sureshPlayer = await addPlayerToXi(app, token, matchId, 'teamB', 'Suresh');
+    const suresh = await selectBowler(token, matchId, { bowlerName: 'Suresh', bowlerId: sureshPlayer._id.toString() });
     expect(suresh.status).toBe(200);
 
     await bowlOutOver(token, matchId); // over 3 (Suresh) done

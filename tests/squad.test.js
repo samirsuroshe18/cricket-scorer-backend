@@ -256,33 +256,37 @@ describe('PUT /:matchId/squad/:side', () => {
 
     it('keeps a stored XI when a later PUT omits the key', async () => {
       const { token, matchId } = await setup();
-      const first = await putSquad(token, matchId, 'teamA', squadBody({ playingXI: ['Rohit Sharma'] }));
+      const first = await putSquad(token, matchId, 'teamA', squadBody({ playingXI: ['Rohit Sharma', 'Jasprit Bumrah'] }));
 
       const res = await putSquad(token, matchId, 'teamA', squadBody());
 
       expect(res.body.data.playingXI).toEqual(first.body.data.playingXI);
     });
 
-    it('removes a player dropped from the squad from the XI', async () => {
+    it('removes a player dropped from the squad from the XI, as long as the rest still meets the minimum', async () => {
       const { token, matchId } = await setup();
-      await putSquad(token, matchId, 'teamA', squadBody({ playingXI: ['Rohit Sharma', 'Rishabh Pant'] }));
+      await putSquad(token, matchId, 'teamA', squadBody({ playingXI: ['Rohit Sharma', 'Jasprit Bumrah', 'Rishabh Pant'] }));
 
-      const res = await putSquad(token, matchId, 'teamA', { players: [{ name: 'Rohit Sharma' }] });
+      const res = await putSquad(token, matchId, 'teamA', {
+        players: [{ name: 'Rohit Sharma' }, { name: 'Jasprit Bumrah' }],
+      });
 
-      expect(res.body.data.playingXI).toEqual([idsOf(res)['Rohit Sharma']]);
+      expect(res.body.data.playingXI).toEqual([idsOf(res)['Rohit Sharma'], idsOf(res)['Jasprit Bumrah']]);
     });
 
-    it('un-sets the XI on null and keeps an empty XI distinct from unset', async () => {
+    it('un-sets the XI on null', async () => {
       const { token, matchId } = await setup();
-      await putSquad(token, matchId, 'teamA', squadBody({ playingXI: ['Rohit Sharma'] }));
-
-      const empty = await putSquad(token, matchId, 'teamA', squadBody({ playingXI: [] }));
-      expect(empty.body.data.playingXI).toEqual([]);
+      await putSquad(token, matchId, 'teamA', squadBody({ playingXI: ['Rohit Sharma', 'Jasprit Bumrah'] }));
 
       const unset = await putSquad(token, matchId, 'teamA', squadBody({ playingXI: null }));
       expect(unset.body.data.playingXI).toBeNull();
       expect((await Match.findById(matchId)).squads.teamA.playingXI).toBeUndefined();
     });
+
+    // A set-but-empty XI is no longer reachable through the API at all — every
+    // match now carries a Playing XI minimum of at least 2, so a save of `[]`
+    // is rejected outright (see tests/playingXiRange.test.js) rather than
+    // persisting.
 
     it('rejects an XI name that is not in the squad', async () => {
       const { token, matchId } = await setup();

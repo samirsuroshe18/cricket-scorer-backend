@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
-import { createMatch, startLiveInnings, scoreDotBall } from './helpers/matchSetup.js';
+import { createMatch, startLiveInnings, scoreDotBall, addPlayerToXi } from './helpers/matchSetup.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 import { Inning } from '../src/models/inning.model.js';
 import { Player } from '../src/models/player.model.js';
@@ -41,15 +41,18 @@ describe('selectBowler under a concurrent race', () => {
       expect(res.status).toBe(200);
     }
 
-    const selectBowler = (bowlerName) =>
+    const selectBowler = (bowlerName, bowlerId) =>
       request(app)
         .post(`/api/v1/match/${matchId}/select-bowler`)
         .set('Authorization', `Bearer ${token}`)
-        .send({ bowlerName });
+        .send({ bowlerName, bowlerId });
+
+    const bowlerTwo = await addPlayerToXi(app, token, matchId, 'teamB', 'Bowler Two');
+    const bowlerThree = await addPlayerToXi(app, token, matchId, 'teamB', 'Bowler Three');
 
     const [resA, resB] = await Promise.all([
-      selectBowler('Bowler Two'),
-      selectBowler('Bowler Three'),
+      selectBowler('Bowler Two', bowlerTwo._id.toString()),
+      selectBowler('Bowler Three', bowlerThree._id.toString()),
     ]);
 
     const statuses = [resA.status, resB.status].sort();

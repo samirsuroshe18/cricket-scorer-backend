@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
-import { createMatch, startLiveInnings, scoreDotBall } from './helpers/matchSetup.js';
+import { createMatch, startLiveInnings, scoreDotBall, addPlayerToXi } from './helpers/matchSetup.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 import { Player } from '../src/models/player.model.js';
 
@@ -114,6 +114,7 @@ describe('GET /:playerId/career-stats', () => {
       const res = await scoreDotBall(app, token, matchId, { runs: 4 });
       expect(res.status).toBe(200);
     }
+    await addPlayerToXi(app, token, matchId, 'teamA', 'NewBatsman');
     const wicketRes = await scoreDotBall(app, token, matchId, {
       runs: 0,
       wicketType: 'bowled',

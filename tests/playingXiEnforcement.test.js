@@ -75,12 +75,18 @@ describe('Playing XI enforcement', () => {
   })();
 
   describe('start-innings', () => {
-    it('allows any names while a side has no XI set', async () => {
+    // Unlike the other online scoring endpoints (which skip the membership
+    // check entirely while a side's XI is unset), start-innings requires both
+    // sides to already have one saved — see tests/playingXiRange.test.js for
+    // the full range-gate coverage. A side left unset here still means
+    // PLAYING_XI_NOT_SET, not "anything goes".
+    it('rejects with PLAYING_XI_NOT_SET while a side has no XI set', async () => {
       const { token, matchId } = await setup({ batXi: null, bowlXi: null });
 
       const res = await startInnings(token, matchId, { strikerName: 'Someone New', bowlerName: 'Bowl Bench' });
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('PLAYING_XI_NOT_SET');
     });
 
     it('rejects an opener who is not in the batting XI, and a brand-new typed name', async () => {
@@ -118,15 +124,9 @@ describe('Playing XI enforcement', () => {
       expect(byId.status).toBe(200);
     });
 
-    it('rejects everyone when the XI is set but empty, yet allows everyone when it is unset', async () => {
-      const empty = await setup({ batXi: [], bowlXi: null });
-      const rejected = await startInnings(empty.token, empty.matchId);
-      expect(rejected.status).toBe(400);
-      expect(rejected.body.code).toBe('PLAYER_NOT_IN_PLAYING_XI');
-
-      const unset = await setup({ batXi: null, bowlXi: null });
-      expect((await startInnings(unset.token, unset.matchId)).status).toBe(200);
-    });
+    // An XI of size 0 can no longer be saved at all (the match-wide minimum
+    // floor is 2 — see tests/playingXiRange.test.js), so "set but empty" is
+    // gone as an achievable state; only "unset" remains, covered above.
   });
 
   describe('select-bowler', () => {
@@ -175,7 +175,7 @@ describe('Playing XI enforcement', () => {
       const { token, matchId, bowl } = await setup();
       await startInnings(token, matchId);
 
-      const moved = await patchXi(token, matchId, 'teamB', [bowl('Bowl Two')]);
+      const moved = await patchXi(token, matchId, 'teamB', [bowl('Bowl Two'), bowl('Bowl Bench')]);
       expect(moved.status).toBe(200);
 
       expect((await scoreDotBall(app, token, matchId)).status).toBe(200);

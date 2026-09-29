@@ -2,7 +2,7 @@ import request from 'supertest';
 import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
 import { randomUUID } from 'node:crypto';
-import { createMatch, startLiveInnings, scoreDotBall } from './helpers/matchSetup.js';
+import { createMatch, startLiveInnings, scoreDotBall, addPlayerToXi } from './helpers/matchSetup.js';
 import { Match } from '../src/models/match.model.js';
 import { Team } from '../src/models/team.model.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
@@ -219,6 +219,7 @@ describe('GET /v1/match/history', () => {
     await startLiveInnings(app, token, matchId);
     await scoreDotBall(app, token, matchId, { runs: 2 });
     await scoreDotBall(app, token, matchId, { runs: 0, extraType: 'wide' });
+    await addPlayerToXi(app, token, matchId, 'teamA', 'Third Batsman');
     await scoreDotBall(app, token, matchId, { wicketType: 'bowled', incomingBatsmanName: 'Third Batsman' });
 
     const res = await history(token);

@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
-import { createMatch, startLiveInnings, scoreDotBall } from './helpers/matchSetup.js';
+import { createMatch, startLiveInnings, scoreDotBall, addPlayerToXi } from './helpers/matchSetup.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 import { Match } from '../src/models/match.model.js';
 import { Player } from '../src/models/player.model.js';
@@ -83,12 +83,14 @@ describe('player identity is case-insensitive', () => {
 
     await bowlOutOver(token, matchId); // over 1 (Opener) done
 
-    const rahul = await selectBowler(token, matchId, { bowlerName: 'Rahul' });
+    const rahulPlayer = await addPlayerToXi(app, token, matchId, 'teamB', 'Rahul');
+    const rahul = await selectBowler(token, matchId, { bowlerName: 'Rahul', bowlerId: rahulPlayer._id.toString() });
     expect(rahul.status).toBe(200);
 
     await bowlOutOver(token, matchId); // over 2 (Rahul) done
 
-    const suresh = await selectBowler(token, matchId, { bowlerName: 'Suresh' });
+    const sureshPlayer = await addPlayerToXi(app, token, matchId, 'teamB', 'Suresh');
+    const suresh = await selectBowler(token, matchId, { bowlerName: 'Suresh', bowlerId: sureshPlayer._id.toString() });
     expect(suresh.status).toBe(200);
 
     await bowlOutOver(token, matchId); // over 3 (Suresh) done

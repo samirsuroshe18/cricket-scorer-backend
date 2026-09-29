@@ -53,32 +53,31 @@ describe('GET /:matchId/squad', () => {
   it('returns a saved side with roles, jersey numbers, designations, XI and savedAt', async () => {
     const { token, matchId } = await setup();
     await putSquad(token, matchId, 'teamA', {
-      players: [{ name: 'Rohit', role: 'batsman' }, { name: 'Bumrah', role: 'bowler' }],
+      players: [{ name: 'Rohit', role: 'batsman' }, { name: 'Bumrah', role: 'bowler' }, { name: 'Kohli' }],
       captain: 'Rohit',
-      playingXI: ['Bumrah'],
+      // Two members, not one — every match now carries a Playing XI minimum
+      // of at least 2 (see tests/playingXiRange.test.js).
+      playingXI: ['Bumrah', 'Kohli'],
     });
     await Player.updateOne({ nameLower: 'rohit' }, { jerseyNumber: 45 });
 
     const res = await getSquad(token, matchId);
 
     const side = res.body.data.teamA;
-    expect(side.players.map((p) => p.name)).toEqual(['Rohit', 'Bumrah']);
+    expect(side.players.map((p) => p.name)).toEqual(['Rohit', 'Bumrah', 'Kohli']);
     expect(side.players[0]).toMatchObject({ role: 'batsman', jerseyNumber: 45 });
     expect(side.players[1].jerseyNumber).toBeNull();
     expect(side.captainId).toBe(side.players[0].playerId);
-    expect(side.playingXI).toEqual([side.players[1].playerId]);
+    expect(side.playingXI).toEqual([side.players[1].playerId, side.players[2].playerId]);
     expect(side.savedAt).toEqual(expect.any(String));
     expect(res.body.data.teamB.players).toEqual([]);
   });
 
-  it('keeps an empty XI distinct from an unset one', async () => {
-    const { token, matchId } = await setup();
-    await putSquad(token, matchId, 'teamA', { players: [{ name: 'Rohit' }], playingXI: [] });
-
-    const res = await getSquad(token, matchId);
-
-    expect(res.body.data.teamA.playingXI).toEqual([]);
-  });
+  // A set-but-empty XI is no longer reachable through the API at all — every
+  // match now carries a Playing XI minimum of at least 2, so a save of `[]`
+  // is rejected outright (PLAYING_XI_TOO_SMALL; see
+  // tests/playingXiRange.test.js) rather than persisting. Only "never set"
+  // (playingXI: null, above) remains.
 
   it('omits soft-deleted players', async () => {
     const { token, matchId } = await setup();

@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
-import { createMatch, startLiveInnings, scoreDotBall } from './helpers/matchSetup.js';
+import { createMatch, startLiveInnings, scoreDotBall, addPlayerToXi } from './helpers/matchSetup.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 import { Match } from '../src/models/match.model.js';
 import { Player } from '../src/models/player.model.js';
@@ -33,8 +33,8 @@ describe('notification triggers', () => {
   const unclaimPlayer = (token, playerId) =>
     request(app).post(`/api/v1/player/${playerId}/unclaim`).set('Authorization', `Bearer ${token}`).send();
 
-  const selectBowler = (token, matchId, bowlerName) =>
-    request(app).post(`/api/v1/match/${matchId}/select-bowler`).set('Authorization', `Bearer ${token}`).send({ bowlerName });
+  const selectBowler = (token, matchId, bowlerName, bowlerId) =>
+    request(app).post(`/api/v1/match/${matchId}/select-bowler`).set('Authorization', `Bearer ${token}`).send({ bowlerName, bowlerId });
 
   const assignScorer = (token, matchId, scorerId) =>
     request(app).patch(`/api/v1/match/${matchId}/scorer`).set('Authorization', `Bearer ${token}`).send({ scorerId });
@@ -122,6 +122,7 @@ describe('notification triggers', () => {
 
       const seedMatchId = await createMatch(app, token, { teamAName: 'Seed A2', teamBName: 'Seed B2' });
       await startLiveInnings(app, token, seedMatchId, { strikerName: 'First Striker' });
+      await addPlayerToXi(app, token, seedMatchId, 'teamA', 'Incoming Claimable');
       const strikerBefore = await scoreDotBall(app, token, seedMatchId, {
         wicketType: 'bowled',
         dismissedBatsman: 'striker',
@@ -136,6 +137,7 @@ describe('notification triggers', () => {
 
       const matchId = await createMatch(app, token, { teamAName: 'Real A2', teamBName: 'Real B2' });
       await startLiveInnings(app, token, matchId, { strikerName: 'First Striker' });
+      await addPlayerToXi(app, token, matchId, 'teamA', 'Incoming Claimable');
       const res = await scoreDotBall(app, token, matchId, {
         wicketType: 'bowled',
         dismissedBatsman: 'striker',
@@ -159,7 +161,8 @@ describe('notification triggers', () => {
       for (let i = 0; i < 6; i += 1) {
         await scoreDotBall(app, token, seedMatchId);
       }
-      await selectBowler(token, seedMatchId, 'Claimable Second Bowler');
+      const seedBowlerPlayer = await addPlayerToXi(app, token, seedMatchId, 'teamB', 'Claimable Second Bowler');
+      await selectBowler(token, seedMatchId, 'Claimable Second Bowler', seedBowlerPlayer._id.toString());
 
       const seedMatch = await Match.findById(seedMatchId);
       const bowlerPlayer = await Player.findOne({ createdBy: seedMatch.createdBy, nameLower: 'claimable second bowler' });
@@ -171,7 +174,8 @@ describe('notification triggers', () => {
       for (let i = 0; i < 6; i += 1) {
         await scoreDotBall(app, token, matchId);
       }
-      const res = await selectBowler(token, matchId, 'Claimable Second Bowler');
+      const bowlerXiPlayer = await addPlayerToXi(app, token, matchId, 'teamB', 'Claimable Second Bowler');
+      const res = await selectBowler(token, matchId, 'Claimable Second Bowler', bowlerXiPlayer._id.toString());
       expect(res.status).toBe(200);
 
       const notification = await Notification.findOne({ recipient: newBowlerUser._id, type: 'your_turn_to_bowl' });

@@ -2,7 +2,7 @@ import { jest } from '@jest/globals';
 import request from 'supertest';
 import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
-import { createMatch, startLiveInnings, scoreDotBall } from './helpers/matchSetup.js';
+import { createMatch, startLiveInnings, scoreDotBall, addPlayerToXi } from './helpers/matchSetup.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 import { BallEvent } from '../src/models/ballEvent.model.js';
 import { currentPartnership } from '../src/utils/scorecard.js';
@@ -41,6 +41,7 @@ describe('the public match fetch reports the current partnership, not just raw t
     expect((await scoreDotBall(app, token, matchId, { runs: 3 })).status).toBe(200);
 
     // A wicket ends it — total is now 7/1. A new pair starts.
+    await addPlayerToXi(app, token, matchId, 'teamA', 'New Batsman');
     const wicketRes = await scoreDotBall(app, token, matchId, {
       runs: 0,
       wicketType: 'bowled',
@@ -112,6 +113,7 @@ describe('the public match fetch reports the current partnership, not just raw t
           .sort({ absoluteBallSeq: -1 })
           .select('absoluteBallSeq')
           .then(async (doc) => {
+            await addPlayerToXi(app, token, matchId, 'teamA', 'New Batsman');
             const wicketRes = await scoreDotBall(app, token, matchId, {
               runs: 0,
               wicketType: 'bowled',
