@@ -2,7 +2,7 @@ import request from 'supertest';
 import { randomUUID } from 'node:crypto';
 import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
-import { createMatch, startLiveInnings, scoreDotBall } from './helpers/matchSetup.js';
+import { createMatch, startLiveInnings, scoreDotBall, addPlayerToXi } from './helpers/matchSetup.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 import { Inning } from '../src/models/inning.model.js';
 
@@ -50,7 +50,7 @@ describe('scoring flow', () => {
     const matchId = await createMatch(app, ownerToken, { teamAId: teamId, teamBName: 'Visitors', ...overrides });
     await request(app).patch(`/api/v1/match/${matchId}/scorer`).set('Authorization', `Bearer ${ownerToken}`).send({ scorerId: String(scorer._id) });
 
-    return { ownerToken, memberToken, scorerToken, strangerToken, matchId };
+    return { ownerToken, memberToken, scorerToken, strangerToken, matchId, scorer };
   };
 
   describe('POST /:matchId/start-innings', () => {
@@ -113,7 +113,10 @@ describe('scoring flow', () => {
     });
 
     it('lets the assigned scorer start the innings', async () => {
-      const { scorerToken, matchId } = await setupDelegatedMatch();
+      const { ownerToken, scorerToken, matchId } = await setupDelegatedMatch();
+      await addPlayerToXi(app, ownerToken, matchId, 'teamA', 'A');
+      await addPlayerToXi(app, ownerToken, matchId, 'teamA', 'B');
+      await addPlayerToXi(app, ownerToken, matchId, 'teamB', 'C');
 
       const res = await request(app)
         .post(`/api/v1/match/${matchId}/start-innings`)
@@ -163,11 +166,12 @@ describe('scoring flow', () => {
     it('assigns the named bowler for the next over', async () => {
       const { token } = await createTestUser();
       const matchId = await startAndCompleteOver1(token);
+      const bowlerTwo = await addPlayerToXi(app, token, matchId, 'teamB', 'Bowler Two');
 
       const res = await request(app)
         .post(`/api/v1/match/${matchId}/select-bowler`)
         .set('Authorization', `Bearer ${token}`)
-        .send({ bowlerName: 'Bowler Two' });
+        .send({ bowlerName: 'Bowler Two', bowlerId: bowlerTwo._id.toString() });
 
       expect(res.status).toBe(200);
       expect(res.body.data.bowler.bowlerName).toBe('Bowler Two');
@@ -206,16 +210,20 @@ describe('scoring flow', () => {
     });
 
     it('lets the assigned scorer select the bowler', async () => {
-      const { ownerToken, scorerToken, matchId } = await setupDelegatedMatch();
+      const { ownerToken, scorerToken, matchId, scorer } = await setupDelegatedMatch();
       await startLiveInnings(app, ownerToken, matchId);
       for (let i = 0; i < 6; i += 1) {
         await scoreDotBall(app, ownerToken, matchId);
       }
+      // Scoped under the scorer's own createdBy, matching resolveBowler's own
+      // (createdBy: req.user._id) id lookup for the actual select-bowler
+      // call below.
+      const bowlerTwo = await addPlayerToXi(app, scorerToken, matchId, 'teamB', 'Bowler Two', scorer._id);
 
       const res = await request(app)
         .post(`/api/v1/match/${matchId}/select-bowler`)
         .set('Authorization', `Bearer ${scorerToken}`)
-        .send({ bowlerName: 'Bowler Two' });
+        .send({ bowlerName: 'Bowler Two', bowlerId: bowlerTwo._id.toString() });
 
       expect(res.status).toBe(200);
     });
@@ -269,6 +277,7 @@ describe('scoring flow', () => {
       const { token } = await createTestUser();
       const matchId = await createMatch(app, token);
       await startLiveInnings(app, token, matchId);
+      await addPlayerToXi(app, token, matchId, 'teamA', 'Third Batsman');
 
       const res = await scoreDotBall(app, token, matchId, {
         wicketType: 'bowled',

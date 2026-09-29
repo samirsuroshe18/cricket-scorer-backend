@@ -1,6 +1,28 @@
 import ApiError from './ApiError.js';
 import { Player } from '../models/player.model.js';
 
+/** The hard floor `minPlayingXi` can never go below, regardless of who sets it. */
+export const MIN_PLAYING_XI_FLOOR = 2;
+
+/**
+ * True when `{ minPlayingXi, maxPlayingXi }` is a legal range: both integers,
+ * min at least [[MIN_PLAYING_XI_FLOOR]], max at least min. No ceiling on max.
+ */
+export const isValidPlayingXiRange = (minPlayingXi, maxPlayingXi) =>
+    Number.isInteger(minPlayingXi) && Number.isInteger(maxPlayingXi) &&
+    minPlayingXi >= MIN_PLAYING_XI_FLOOR && maxPlayingXi >= minPlayingXi;
+
+/**
+ * Throws when `count` (a side's about-to-be-saved Playing XI size) falls
+ * outside `match`'s stored range. Callers only invoke this once they've
+ * already decided the XI is being set (not left unset) — an unset XI carries
+ * no size restriction.
+ */
+export const assertPlayingXiSize = (match, count) => {
+    if (count < match.minPlayingXi) throw new ApiError(400, 'PLAYING_XI_TOO_SMALL');
+    if (count > match.maxPlayingXi) throw new ApiError(400, 'PLAYING_XI_TOO_LARGE');
+};
+
 /**
  * The Playing XI to store for one side after a squad save. Pure and DB-free.
  *

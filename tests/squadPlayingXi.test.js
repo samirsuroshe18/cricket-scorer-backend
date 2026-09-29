@@ -57,10 +57,10 @@ describe('PATCH /:matchId/squad/:side/playing-xi', () => {
     await startLiveInnings(app, token, matchId);
 
     expect((await putSquad(token, matchId, 'teamA', { players: [] })).status).toBe(409);
-    const res = await patchXi(token, matchId, 'teamA', { playingXI: [ids.Bumrah] });
+    const res = await patchXi(token, matchId, 'teamA', { playingXI: [ids.Bumrah, ids.Pant] });
 
     expect(res.status).toBe(200);
-    expect(res.body.data.playingXI).toEqual([ids.Bumrah]);
+    expect(res.body.data.playingXI).toEqual([ids.Bumrah, ids.Pant]);
   });
 
   it('appends a rostered player who is not yet in the squad, so an accepted invitee can be promoted', async () => {
@@ -76,30 +76,30 @@ describe('PATCH /:matchId/squad/:side/playing-xi', () => {
     expect((await Match.findById(matchId)).squads.teamA.players).toHaveLength(4);
   });
 
-  it('accepts [] as a deliberately empty XI, reading back [] not null', async () => {
-    const { token, matchId, ids } = await setup();
-    await patchXi(token, matchId, 'teamA', { playingXI: [ids.Rohit] });
+  // An empty XI is no longer a savable state at all — every match carries a
+  // minimum Playing XI size of at least 2 (see tests/playingXiRange.test.js).
+  it('rejects an empty XI with PLAYING_XI_TOO_SMALL', async () => {
+    const { token, matchId } = await setup();
 
     const res = await patchXi(token, matchId, 'teamA', { playingXI: [] });
 
-    expect(res.status).toBe(200);
-    expect(res.body.data.playingXI).toEqual([]);
-    expect((await getSquad(token, matchId)).body.data.teamA.playingXI).toEqual([]);
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('PLAYING_XI_TOO_SMALL');
   });
 
   it('collapses duplicate ids', async () => {
     const { token, matchId, ids } = await setup();
 
-    const res = await patchXi(token, matchId, 'teamA', { playingXI: [ids.Rohit, ids.Rohit] });
+    const res = await patchXi(token, matchId, 'teamA', { playingXI: [ids.Rohit, ids.Rohit, ids.Bumrah] });
 
-    expect(res.body.data.playingXI).toEqual([ids.Rohit]);
+    expect(res.body.data.playingXI).toEqual([ids.Rohit, ids.Bumrah]);
   });
 
   it('does not change savedAt', async () => {
     const { token, matchId, ids } = await setup();
     const before = (await Match.findById(matchId)).squads.teamA.savedAt;
 
-    const res = await patchXi(token, matchId, 'teamA', { playingXI: [ids.Rohit] });
+    const res = await patchXi(token, matchId, 'teamA', { playingXI: [ids.Rohit, ids.Bumrah] });
 
     expect(res.status).toBe(200);
     expect((await Match.findById(matchId)).squads.teamA.savedAt).toEqual(before);

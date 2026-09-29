@@ -60,8 +60,12 @@ describe('start-innings opener/bowler id disambiguation', () => {
     expect(second.bowler.bowlerId).toBe(first.bowler.bowlerId);
     expect(second.bowler.bowlerName).toBe('Bowler One');
 
+    // Striker, Non-Striker, Bowler One, plus one filler player the bowling
+    // side's Playing XI needed to satisfy this match's minimum size of 2 (the
+    // scoring pair alone would leave it at 1) — see startLiveInnings in
+    // tests/helpers/matchSetup.js.
     const players = await Player.find({});
-    expect(players).toHaveLength(3);
+    expect(players).toHaveLength(4);
   });
 
   it('rejects a malformed strikerId with INVALID_STRIKER_ID', async () => {
@@ -82,7 +86,15 @@ describe('start-innings opener/bowler id disambiguation', () => {
     expect(res.body.code).toBe('INVALID_STRIKER_ID');
   });
 
-  it('rejects a strikerId that names a real player not on the batting side\'s roster with STRIKER_NOT_FOUND', async () => {
+  // Since start-innings now requires both sides to already have a saved
+  // Playing XI (see tests/playingXiRange.test.js), assertInPlayingXi's
+  // by-id check always runs — and an id from the wrong side's roster is
+  // also, trivially, not a member of *this* side's XI, so it is caught
+  // there as PLAYER_NOT_IN_PLAYING_XI before resolveOpener's own roster
+  // lookup ever gets a chance to report the more specific *_NOT_FOUND.
+  // That lookup (and its error codes) stays in place regardless, as a
+  // defensive check for the (no longer API-reachable) unset-XI case.
+  it('rejects a strikerId from the wrong roster with PLAYER_NOT_IN_PLAYING_XI', async () => {
     const { token } = await createTestUser();
     const matchId = await createMatch(app, token);
 
@@ -100,11 +112,11 @@ describe('start-innings opener/bowler id disambiguation', () => {
         bowlerName: 'Bowler',
       });
 
-    expect(res.status).toBe(404);
-    expect(res.body.code).toBe('STRIKER_NOT_FOUND');
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('PLAYER_NOT_IN_PLAYING_XI');
   });
 
-  it('rejects a nonStrikerId not on the batting side\'s roster with NON_STRIKER_NOT_FOUND', async () => {
+  it('rejects a nonStrikerId from the wrong roster with PLAYER_NOT_IN_PLAYING_XI', async () => {
     const { token } = await createTestUser();
     const matchId = await createMatch(app, token);
 
@@ -120,11 +132,11 @@ describe('start-innings opener/bowler id disambiguation', () => {
         bowlerName: 'Bowler',
       });
 
-    expect(res.status).toBe(404);
-    expect(res.body.code).toBe('NON_STRIKER_NOT_FOUND');
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('PLAYER_NOT_IN_PLAYING_XI');
   });
 
-  it('rejects a bowlerId not on the bowling side\'s roster with BOWLER_NOT_FOUND', async () => {
+  it('rejects a bowlerId from the wrong roster with PLAYER_NOT_IN_PLAYING_XI', async () => {
     const { token } = await createTestUser();
     const matchId = await createMatch(app, token);
 
@@ -140,7 +152,7 @@ describe('start-innings opener/bowler id disambiguation', () => {
         bowlerId: first.strike.strikerId,
       });
 
-    expect(res.status).toBe(404);
-    expect(res.body.code).toBe('BOWLER_NOT_FOUND');
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('PLAYER_NOT_IN_PLAYING_XI');
   });
 });

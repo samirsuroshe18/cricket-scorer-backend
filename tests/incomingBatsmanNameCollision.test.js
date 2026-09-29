@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
-import { createMatch, startLiveInnings, scoreDotBall } from './helpers/matchSetup.js';
+import { createMatch, startLiveInnings, scoreDotBall, addPlayerToXi } from './helpers/matchSetup.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 import { Player } from '../src/models/player.model.js';
 
@@ -43,10 +43,12 @@ describe('incoming batsman name reused from earlier in the innings', () => {
     });
 
     // Alex replaces Striker.
+    await addPlayerToXi(app, token, matchId, 'teamA', 'Alex');
     const first = await bowledOut(app, token, matchId, 'Alex');
     expect(first.status).toBe(200);
 
     // Rahul replaces Alex — Alex is now dismissed and off the crease.
+    await addPlayerToXi(app, token, matchId, 'teamA', 'Rahul');
     const second = await bowledOut(app, token, matchId, 'Rahul');
     expect(second.status).toBe(200);
 

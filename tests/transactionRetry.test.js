@@ -4,7 +4,7 @@ import request from 'supertest';
 import { MongoServerError } from 'mongodb';
 import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
-import { createMatch, startLiveInnings, scoreDotBall } from './helpers/matchSetup.js';
+import { createMatch, startLiveInnings, scoreDotBall, addPlayerToXi } from './helpers/matchSetup.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 import { Match } from '../src/models/match.model.js';
 import { Inning } from '../src/models/inning.model.js';
@@ -83,6 +83,9 @@ describe('transaction retries do not reuse a mutated in-memory Match document', 
   it('start-innings still persists Match.status after a retry, even though the in-memory flip already happened on the failed attempt', async () => {
     const { token } = await createTestUser();
     const matchId = await createMatch(app, token);
+    await addPlayerToXi(app, token, matchId, 'teamA', 'Striker');
+    await addPlayerToXi(app, token, matchId, 'teamA', 'Non-Striker');
+    await addPlayerToXi(app, token, matchId, 'teamB', 'Bowler One');
 
     // `match.status` flips to 'live' in memory the first time through, then
     // the transaction's own commit — the only remaining write — is forced to
@@ -167,10 +170,11 @@ describe('transaction retries do not reuse a mutated in-memory Match document', 
     }
 
     // A new bowler is owed before over 2 can start at all.
+    const bowlerTwoPlayer = await addPlayerToXi(app, token, matchId, 'teamB', 'Bowler Two');
     const bowlerRes = await request(app)
       .post(`/api/v1/match/${matchId}/select-bowler`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ bowlerName: 'Bowler Two' });
+      .send({ bowlerName: 'Bowler Two', bowlerId: bowlerTwoPlayer._id.toString() });
     expect(bowlerRes.status).toBe(200);
 
     // Simulates the loser of a real race: another concurrent delivery's
@@ -203,6 +207,9 @@ describe('transaction retries do not reuse a mutated in-memory Match document', 
   it('the loser of a concurrent start-innings race gets a clean INNINGS_ALREADY_STARTED, not a raw 500', async () => {
     const { token } = await createTestUser();
     const matchId = await createMatch(app, token);
+    await addPlayerToXi(app, token, matchId, 'teamA', 'Striker');
+    await addPlayerToXi(app, token, matchId, 'teamA', 'Non-Striker');
+    await addPlayerToXi(app, token, matchId, 'teamB', 'Bowler One');
 
     // Simulates the loser of two concurrent start-innings calls for the same
     // match: another request's Inning.create() already won the unique

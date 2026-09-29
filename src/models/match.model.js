@@ -41,6 +41,13 @@ const matchSchema = new Schema(
     teamA:           { type: Schema.Types.ObjectId, ref: 'Team', required: true },
     teamB:           { type: Schema.Types.ObjectId, ref: 'Team', required: true },
     totalOvers:      { type: Number, required: true, min: 1, max: 50 },
+    // The Playing XI size this match requires from both sides, set at
+    // creation and adjustable later via PATCH .../playing-xi-range. min can
+    // never go below 2; max has no ceiling. Enforced at savePlayingXi/
+    // saveSquad (when an XI is actually saved) and at start-innings (which
+    // requires both sides to already have one) — never at POST /sync.
+    minPlayingXi:    { type: Number, required: true, default: 2, min: 2 },
+    maxPlayingXi:    { type: Number, required: true, default: 11, min: 2 },
     tossWinner:      { type: String, enum: TEAM_SIDE },
     tossDecision:    { type: String, enum: ['bat', 'bowl'] },
     battingFirst:    { type: String, enum: TEAM_SIDE },

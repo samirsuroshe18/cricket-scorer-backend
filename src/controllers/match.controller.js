@@ -19,7 +19,7 @@ import { resolveUndo, resolveMatchUndo } from '../utils/resolveUndo.js';
 import { resolveMatchResult } from '../utils/resolveMatchResult.js';
 import { resolveToss } from '../utils/resolveToss.js';
 import { resolveSquad } from '../utils/resolveSquad.js';
-import { mergePlayingXi, assertInPlayingXi } from '../utils/playingXi.js';
+import { mergePlayingXi, assertInPlayingXi, isValidPlayingXiRange, assertPlayingXiSize } from '../utils/playingXi.js';
 import { toSquadSideView } from '../utils/squadView.js';
 import { resolveSyncDecision } from '../utils/resolveSync.js';
 import { generateScorecard, liveStrikeFigures } from '../utils/scorecard.js';
@@ -196,6 +196,8 @@ const resolveTeamSide = async (name, existingTeamId, createdBy) => {
 
 const createMatch = catchAsync(async (req, res) => {
     const { teamAName, teamBName, teamAId, teamBId, totalOvers, tossWinner, tossDecision } = req.body;
+    const minPlayingXi = req.body.minPlayingXi ?? 2;
+    const maxPlayingXi = req.body.maxPlayingXi ?? 11;
 
     const [sideA, sideB] = await Promise.all([
         resolveTeamSide(teamAName, teamAId, req.user._id),
@@ -223,6 +225,10 @@ const createMatch = catchAsync(async (req, res) => {
         throw new ApiError(400, "INVALID_OVERS_FORMAT");
     }
 
+    if (!isValidPlayingXiRange(minPlayingXi, maxPlayingXi)) {
+        throw new ApiError(400, "INVALID_PLAYING_XI_RANGE");
+    }
+
     const toss = resolveToss({ tossWinner, tossDecision });
     if (!toss.valid) {
         throw new ApiError(400, "INVALID_TOSS_RESULT");
@@ -237,6 +243,8 @@ const createMatch = catchAsync(async (req, res) => {
         teamA: teamA._id,
         teamB: teamB._id,
         totalOvers,
+        minPlayingXi,
+        maxPlayingXi,
         tossWinner: toss.tossWinner ?? undefined,
         tossDecision: toss.tossDecision ?? undefined,
         battingFirst: toss.battingFirst,
@@ -251,6 +259,8 @@ const createMatch = catchAsync(async (req, res) => {
         teamA: { id: teamA._id, name: teamA.name, logoUrl: teamA.logoUrl ?? null },
         teamB: { id: teamB._id, name: teamB.name, logoUrl: teamB.logoUrl ?? null },
         totalOvers: match.totalOvers,
+        minPlayingXi: match.minPlayingXi,
+        maxPlayingXi: match.maxPlayingXi,
         tossWinner: match.tossWinner ?? null,
         tossDecision: match.tossDecision ?? null,
         status: match.status,
@@ -357,6 +367,10 @@ const saveSquad = catchAsync(async (req, res) => {
         existing: match.squads?.[side]?.playingXI,
         savedIds,
     });
+
+    if (playingXI !== undefined) {
+        assertPlayingXiSize(match, playingXI.length);
+    }
 
     const saved = {
         players: savedIds,
@@ -475,6 +489,8 @@ const savePlayingXi = catchAsync(async (req, res) => {
         throw new ApiError(400, "SQUAD_PLAYER_ON_BOTH_SIDES");
     }
 
+    assertPlayingXiSize(match, ids.length);
+
     const current = (match.squads?.[side]?.players ?? []).map(String);
     const squadPlayers = [...current, ...ids.filter((id) => !current.includes(id))];
 
@@ -488,6 +504,30 @@ const savePlayingXi = catchAsync(async (req, res) => {
         side,
         ...toSquadSideView(fresh, side, players),
     }, req.t("PLAYING_XI_SAVED")));
+});
+
+// PATCH /v1/match/:matchId/playing-xi-range — adjusts the Playing XI size
+// range set at creation. Not gated on match status: unlike squad edits, a
+// range change has no direct effect on a scoring write in flight, only on
+// the next save/start it's checked against.
+const savePlayingXiRange = catchAsync(async (req, res) => {
+    const { matchId } = req.params;
+    const minPlayingXi = req.body?.minPlayingXi;
+    const maxPlayingXi = req.body?.maxPlayingXi;
+
+    if (!isValidPlayingXiRange(minPlayingXi, maxPlayingXi)) {
+        throw new ApiError(400, "INVALID_PLAYING_XI_RANGE");
+    }
+
+    const match = await loadOwnedMatch(matchId, req.user._id);
+
+    await Match.updateOne({ _id: match._id }, { $set: { minPlayingXi, maxPlayingXi } });
+
+    return res.status(200).json(new ApiResponse(200, {
+        matchId: match._id,
+        minPlayingXi,
+        maxPlayingXi,
+    }, req.t("PLAYING_XI_RANGE_SAVED")));
 });
 
 // Explicit pick rather than spreading the Mongoose subdoc, which would leak internals.
@@ -842,6 +882,19 @@ const startInnings = catchAsync(async (req, res) => {
     // needs no extra query.
     if (existing && existing.totalBalls > 0) {
         throw new ApiError(400, "INNINGS_ALREADY_STARTED");
+    }
+
+    // Both sides must already carry a saved Playing XI, within this match's
+    // range, before the match can start — unlike the scoring endpoints'
+    // membership check, this does not skip an unset XI. Checked for both
+    // sides regardless of who bats first, since the range is set for the
+    // match, not a role.
+    for (const checkedSide of TEAM_SIDES) {
+        const xi = match.squads?.[checkedSide]?.playingXI;
+        if (xi === undefined) {
+            throw new ApiError(400, "PLAYING_XI_NOT_SET");
+        }
+        assertPlayingXiSize(match, xi.length);
     }
 
     // Innings 2 bats the side that bowled in innings 1 — the opposite of
@@ -3247,4 +3300,4 @@ const getMatchHistory = catchAsync(async (req, res) => {
     }, req.t("MATCH_HISTORY_FETCHED")));
 });
 
-export { findOrCreatePlayerRecord, createMatch, saveSquad, getMatchSquad, savePlayingXi, acknowledgeSquad, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, serializeMatchHistoryItems, assignScorer, getScorerCandidates, createMatchWithJoinCode, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };
+export { findOrCreatePlayerRecord, createMatch, saveSquad, getMatchSquad, savePlayingXi, savePlayingXiRange, acknowledgeSquad, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, serializeMatchHistoryItems, assignScorer, getScorerCandidates, createMatchWithJoinCode, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT };

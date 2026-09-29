@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
-import { createMatch, startLiveInnings, scoreDotBall } from './helpers/matchSetup.js';
+import { createMatch, startLiveInnings, scoreDotBall, addPlayerToXi } from './helpers/matchSetup.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 import { Player } from '../src/models/player.model.js';
 import { PlayerMatchStats } from '../src/models/playerMatchStats.model.js';
@@ -110,6 +110,7 @@ describe('career stats — end to end', () => {
       const res = await scoreDotBall(app, token, match2, { runs });
       expect(res.status).toBe(200);
     }
+    await addPlayerToXi(app, token, match2, 'teamA', 'NewBatsman');
     const wicketRes = await scoreDotBall(app, token, match2, {
       runs: 0,
       wicketType: 'bowled',
@@ -130,6 +131,7 @@ describe('career stats — end to end', () => {
       const res = await scoreDotBall(app, token, match2, { runs: 0 });
       expect(res.status).toBe(200);
     }
+    await addPlayerToXi(app, token, match2, 'teamB', 'NewBatsman2');
     const secondWicket = await scoreDotBall(app, token, match2, {
       runs: 0,
       wicketType: 'bowled',
@@ -172,7 +174,15 @@ describe('career stats — end to end', () => {
     expect(career.bestBowling).toMatchObject({ wickets: 1, runs: 0 });
   });
 
-  it('rejects an incoming batsman name that collides with a player already rostered on the opposing team', async () => {
+  // PLAYER_ON_OPPOSING_TEAM is resolveDelivery/resolveBowler's own
+  // roster-collision check, but it can no longer fire via a bare typed name:
+  // start-innings now requires both sides to already have a saved Playing XI
+  // (see tests/playingXiRange.test.js), so assertInPlayingXi rejects any name
+  // that isn't already an XI member — including "the opposing side's own
+  // player" — as PLAYER_NOT_IN_PLAYING_XI before resolveDelivery/resolveBowler
+  // ever run. The underlying opposing-roster check stays in place regardless,
+  // as a defensive check for the (no longer API-reachable) unset-XI case.
+  it('rejects an incoming batsman name colliding with a player on the opposing team, via the XI check that now runs first', async () => {
     const { token } = await createTestUser();
     const matchId = await createMatch(app, token, { totalOvers: 1 });
 
@@ -185,10 +195,8 @@ describe('career stats — end to end', () => {
     });
 
     // A wicket falls, and the incoming batsman is named "Vijay" — the exact
-    // name already rostered on the OPPOSING (bowling) side this match. Two
-    // different real people can plausibly share a name across two ad-hoc
-    // sides; this must be rejected, not silently merged into the bowler's
-    // own Player document.
+    // name already rostered on the OPPOSING (bowling) side this match, and
+    // not a member of the batting side's own XI either way.
     const res = await scoreDotBall(app, token, matchId, {
       runs: 0,
       wicketType: 'bowled',
@@ -197,7 +205,7 @@ describe('career stats — end to end', () => {
     });
 
     expect(res.status).toBe(400);
-    expect(res.body.code).toBe('PLAYER_ON_OPPOSING_TEAM');
+    expect(res.body.code).toBe('PLAYER_NOT_IN_PLAYING_XI');
 
     // Confirms the rejection actually protected the data: still exactly one
     // "Vijay" Player document, not a merge and not a second one either.
@@ -205,7 +213,7 @@ describe('career stats — end to end', () => {
     expect(vijayDocs).toHaveLength(1);
   });
 
-  it('rejects a mid-match bowler change whose name collides with a player already rostered on the opposing (batting) team', async () => {
+  it('rejects a mid-match bowler change colliding with a player on the opposing team, via the XI check that now runs first', async () => {
     const { token } = await createTestUser();
     const matchId = await createMatch(app, token, { totalOvers: 2 });
 
@@ -222,13 +230,12 @@ describe('career stats — end to end', () => {
     }
 
     // Over 2's bowler, for Team B, is named "Rahul" — the exact name
-    // already rostered on the OPPOSING (batting) side this match. This is
-    // resolveBowler's own opposing-roster check, distinct from
-    // findOrCreatePlayer's — both must enforce the same rule.
+    // already rostered on the OPPOSING (batting) side this match, and not a
+    // member of the bowling side's own XI either way.
     const res = await selectBowler(token, matchId, { bowlerName: 'Rahul' });
 
     expect(res.status).toBe(400);
-    expect(res.body.code).toBe('PLAYER_ON_OPPOSING_TEAM');
+    expect(res.body.code).toBe('PLAYER_NOT_IN_PLAYING_XI');
 
     const rahulDocs = await Player.find({ nameLower: 'rahul' });
     expect(rahulDocs).toHaveLength(1);

@@ -94,13 +94,13 @@ describe('POST /:matchId/squad/acknowledge', () => {
     await request(app)
       .put(`/api/v1/match/${matchId}/squad/teamA`)
       .set(auth(token))
-      .send({ players: [{ name: 'Rohit' }], playingXI: ['Rohit'] });
+      .send({ players: [{ name: 'Rohit' }, { name: 'Bumrah' }], playingXI: ['Rohit', 'Bumrah'] });
 
     expect((await acknowledge(token, matchId)).status).toBe(200);
 
     const match = await Match.findById(matchId);
-    expect(match.squads.teamA.players).toHaveLength(1);
-    expect(match.squads.teamA.playingXI).toHaveLength(1);
+    expect(match.squads.teamA.players).toHaveLength(2);
+    expect(match.squads.teamA.playingXI).toHaveLength(2);
   });
 
   describe('in GET /v1/match/history', () => {

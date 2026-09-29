@@ -3,7 +3,7 @@ import request from 'supertest';
 import { randomUUID } from 'node:crypto';
 import { buildTestApp } from './helpers/buildTestApp.js';
 import { createTestUser } from './helpers/authTestUser.js';
-import { createMatch, startLiveInnings, scoreDotBall } from './helpers/matchSetup.js';
+import { createMatch, startLiveInnings, scoreDotBall, addPlayerToXi } from './helpers/matchSetup.js';
 import { connectTestDb, disconnectTestDb, clearTestDb } from './setup/testDb.js';
 
 describe('GET /:matchId/bowlers', () => {
@@ -49,9 +49,11 @@ describe('GET /:matchId/bowlers', () => {
 
     expect(res.status).toBe(200);
     const names = res.body.data.bowlers.map((b) => b.name).sort();
-    // Bowler One (opening bowler) plus Striker/Non-Striker, batting on the
-    // OTHER side, must not appear — only the bowling side's roster does.
-    expect(names).toEqual(['Bowler One']);
+    // Bowler One (opening bowler) plus the filler player the bowling side's
+    // Playing XI needed to satisfy this match's minimum size of 2 (see
+    // startLiveInnings in tests/helpers/matchSetup.js) — Striker/Non-Striker,
+    // batting on the OTHER side, must still not appear.
+    expect(names).toEqual(['Bowler One', 'XI Filler teamB']);
   });
 
   it('reports legal deliveries bowled this innings for each bowler, zero for anyone who has not bowled', async () => {
@@ -63,6 +65,7 @@ describe('GET /:matchId/bowlers', () => {
     for (let i = 0; i < 6; i++) {
       await scoreDotBall(app, token, matchId);
     }
+    await addPlayerToXi(app, token, matchId, 'teamB', 'Bowler Two');
     await selectBowler(token, matchId, { bowlerName: 'Bowler Two' });
 
     const res = await getBowlers(token, matchId);
@@ -81,11 +84,14 @@ describe('GET /:matchId/bowlers', () => {
     for (let i = 0; i < 6; i++) {
       await scoreDotBall(app, token, matchId);
     }
+    await addPlayerToXi(app, token, matchId, 'teamB', 'Amy');
     await selectBowler(token, matchId, { bowlerName: 'Amy' });
 
     const res = await getBowlers(token, matchId);
 
-    expect(res.body.data.bowlers.map((b) => b.name)).toEqual(['Zed', 'Amy']);
+    // Plus the bowling side's filler player, tied with Amy at 0 deliveries
+    // and ordered after her alphabetically.
+    expect(res.body.data.bowlers.map((b) => b.name)).toEqual(['Zed', 'Amy', 'XI Filler teamB']);
   });
 
   it('rejects a caller who neither created nor is assigned to the match', async () => {

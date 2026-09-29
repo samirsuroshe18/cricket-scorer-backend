@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createMatch, saveSquad, getMatchSquad, savePlayingXi, acknowledgeSquad, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, assignScorer, getScorerCandidates } from "../controllers/match.controller.js";
+import { createMatch, saveSquad, getMatchSquad, savePlayingXi, savePlayingXiRange, acknowledgeSquad, startInnings, selectBowler, scoreBall, undoBall, syncMatch, getMatchScorecard, getMatchBowlers, getPublicMatch, abandonMatch, deleteMatch, getMatchHistory, assignScorer, getScorerCandidates } from "../controllers/match.controller.js";
 import { verifyJwt } from "../middlewares/auth.middleware.js";
 
 const router = Router();
@@ -25,6 +25,7 @@ router.route('/:matchId/squad').get(verifyJwt, getMatchSquad);
 router.route('/:matchId/squad/acknowledge').post(verifyJwt, acknowledgeSquad);
 router.route('/:matchId/squad/:side').put(verifyJwt, saveSquad);
 router.route('/:matchId/squad/:side/playing-xi').patch(verifyJwt, savePlayingXi);
+router.route('/:matchId/playing-xi-range').patch(verifyJwt, savePlayingXiRange);
 router.route('/:matchId/start-innings').post(verifyJwt, startInnings);
 router.route('/:matchId/select-bowler').post(verifyJwt, selectBowler);
 router.route('/:matchId/score-ball').post(verifyJwt, scoreBall);
