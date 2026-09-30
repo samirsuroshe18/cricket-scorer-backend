@@ -129,7 +129,7 @@ Six triggers exist today, each fired strictly after its transaction commits (nev
 
 Full contract, including why `Player` has no default notification target: [docs/api.md](../docs/api.md) → `## Notifications`, `## POST /v1/player/:playerId/claim`.
 
-Covered by `tests/notificationTriggers.test.js` (8), `tests/notifications.test.js` (6), plus additions to `assignScorer`/`auctionStart`/`auctionSweep`/`careerStatsEndpoint`/`matchHistory` test files — 928/928 passing (verified 2026-09-17).
+Covered by `tests/notificationTriggers.test.js` (8), `tests/notifications.test.js` (6), plus additions to `assignScorer`/`auctionStart`/`auctionSweep`/`careerStatsEndpoint`/`matchHistory` test files — full suite is 1335/1335 passing across 138 files (verified 2026-10-01).
 
 ## Team invitations & the Playing XI
 
